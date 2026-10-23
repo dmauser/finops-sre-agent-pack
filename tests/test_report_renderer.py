@@ -782,8 +782,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
-            "4cfefec879f0c8d54f3c63c5e0b923888f058f73d6db941525c83e6e94b84d2b",
-            "9f8f482467bc6825dce88c1dd4abc9d379076d01c0de57810f6bd0554f482993",
+            "a97c5a522f5d8653f5d6b15162d1f33dae15c49799aba80a66acdd8cdb1f9277",
+            "8b7783935d3120dc13ffb49166298e6addaaebc894aeb41595e87bd0f599c91f",
         ),
         (
             models.build_budget_status_model,
@@ -794,8 +794,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_cost_optimization_model,
             _optimization,
-            "c631687b3dc79165ba738e8bf5d484acdd98c337ead990dfbd4e3caf69225b95",
-            "af52875fbc4a710dcb951e5975a8bbdb1a5944cf20e4b6746b104bb05126453a",
+            "f79dc3af86ced160438f1935f8b3b1e44b57bcf21a23783a91befc6bb7fd8de8",
+            "36e0aafb2b0ef5a2b9477d85f39040e1ed451d8bec40417b8c8701dec550049c",
         ),
         (
             models.build_ai_spend_model,

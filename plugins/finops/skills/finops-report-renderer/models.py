@@ -574,7 +574,7 @@ def build_rightsizing_savings_model(
                 ],
                 "rows": [
                     [
-                        row["resource_id"],
+                        _display_resource(row["resource_id"]),
                         row["resource_type"] or "—",
                         row["kind"],
                         row["sku"] or "—",
@@ -595,7 +595,7 @@ def build_rightsizing_savings_model(
                 "columns": ["Resource", "Type", "Current monthly cost", "Evidence"],
                 "rows": [
                     [
-                        row["resource_id"],
+                        _display_resource(row["resource_id"]),
                         row["resource_type"] or "—",
                         _money(row["current"]),
                         row["evidence"],
@@ -1213,7 +1213,7 @@ def build_cost_optimization_model(
                 "columns": ["Resource", "Kind", "Action", "Savings", "Validation"],
                 "rows": [
                     [
-                        row["resource_id"],
+                        _display_resource(row["resource_id"]),
                         row["kind"],
                         row["action"],
                         _money(row["savings"]),
@@ -3605,7 +3605,7 @@ def build_commitment_model(
                 -(cost or Decimal(0)),
                 rid.casefold(),
                 [
-                    rid,
+                    _display_resource(rid),
                     _text(row.get("license"), f"{prefix}.license"),
                     _text(row.get("current_license_type"), f"{prefix}.current_license_type"),
                     _money(cost, currency),
