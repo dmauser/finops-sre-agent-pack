@@ -140,7 +140,10 @@ Use this canonical UsageDetails transport contract in every consuming FinOps ski
   currencies). Report its `currency`, `cost_source`, `cost_metric`, and `warnings`. A null
   `costInUSD` alone is **not** evidence of missing Cost Management Reader access — only
   `missing_cost_count` (rows with no cost value at all) is.
-- If any request returns 413, retry that request with `%24top=100`, then `20`. Use verified,
+- If any request returns 413, retry that request with `%24top=100`, then `20`. If a request
+  **times out** (exit code 124), do not drop straight to `%24top=100` (that multiplies the page
+  count tenfold): retry with `%24top=500`, then `250`, and if it still times out split the window
+  into calendar-month `usageStart` slices at `%24top=1000`, one chain per slice. Use verified,
   half-open `usageStart` date slices only if bounded pages still fail, and de-duplicate the
   combined rows.
 - If retrieval remains incomplete, retain the available rows only with an explicit partial-cost
@@ -148,8 +151,8 @@ Use this canonical UsageDetails transport contract in every consuming FinOps ski
 - **Finish the chain first.** In live runs, "partial" was almost always caused by the agent
   stopping pagination early (spending its tool-call/context budget on other API calls or on
   echoing page contents), not by an API failure. So: pull UsageDetails **once per run** and
-  follow every `nextLink` until it is null **before** any other analysis call; persist each page
-  straight into the sandbox without summarizing it in chat; project the **union** of fields every
+  follow every `nextLink` until it is null **before** any other analysis call, without summarizing
+  pages in chat; project the **union** of fields every
   consumer needs in that single pull (add `pricingModel`, `meterCategory`, `quantity`,
   `unitOfMeasure`, `tags` up front) so no
   skill re-pulls; and bound the window to what the analysis needs (trailing 30 days, or
@@ -164,19 +167,31 @@ requests because ordering and newly settled usage can differ between calls. Deco
 returned `nextLink`, then GET it as-is without re-adding initial query parameters. Apply the exact
 case-insensitive RG boundary with `filter_usage_details` only after the complete chain is assembled.
 
-Persist every projected response page with the exact URL used for that request:
-`{"request_url": "...", "value": [...], "nextLink": "..."}`. Then use `usage.py` so code,
-not the model, validates chain continuity and combines the pages:
+**Page fast: one tool call per page.** `az` prints `nextLink` first in the output, and the runtime
+already saves every `RunAzCliReadCommands` result under `tmp/ToolOutputs/`. So issue the next
+`az rest` call immediately with the shown `nextLink` (decode `&amp;` to `&`). Do **not** run a
+Python/terminal step between pages to save, count, or print a page, and do not loop `az` in a
+subprocess (it has no Azure credentials). After the chain ends, rebuild every page with its exact
+request URL in **one** Python call and let `usage.py` (code, not the model) validate continuity:
 
 ```python
 from usage import prepare_usage_details
+from usage import find_usage_tool_output_chains, load_usage_tool_output_pages
 
+chain = find_usage_tool_output_chains("tmp/ToolOutputs")[-1]  # newest chain; one per scope/slice
+usage_pages = load_usage_tool_output_pages(first_request_url, chain)
 coverage = prepare_usage_details(
     usage_pages,
     managed_resources,
     management_group_expansions=mg_descendants,
 )
 ```
+
+`first_request_url` is the exact URL of the chain's first `az rest` call. If the final page's output
+was not saved to `tmp/ToolOutputs` (small outputs may be shown inline only), append it as a
+`{"request_url": <preceding decoded nextLink>, "value": [...], "nextLink": null}` envelope. Manually
+persisted envelopes `{"request_url": "...", "value": [...], "nextLink": "..."}` remain valid input;
+never use a placeholder `request_url`.
 
 `prepare_usage_details` rejects restarted/mixed chains, requires the final `nextLink` to be
 retrieved, merges all rows, normalizes each row's `cost`/`currency`, and calls

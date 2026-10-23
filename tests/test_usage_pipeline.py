@@ -1,6 +1,7 @@
 """Tests for deterministic UsageDetails page-chain preparation."""
 
 import importlib.util
+import pathlib
 import sys
 from pathlib import Path
 
@@ -239,3 +240,38 @@ def test_projected_billing_cost_fields_without_or_operator():
     assert float(normalized[0]["cost"]) == 2.7
     assert meta["currency"] == "EUR"
     assert meta["cost_source"] == "billing_currency"
+
+
+def _save_tool_output(path, envelope, mtime):
+    import json, os
+    path.write_text(json.dumps({"cliExecutionResult": {"output": json.dumps(envelope)}}))
+    os.utime(path, (mtime, mtime))
+
+
+def test_tool_output_chain_is_rebuilt_without_per_page_saves(tmp_path):
+    first = "https://management.azure.com/subscriptions/sub/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&%24top=1000"
+    nxt = "https://management.azure.com/next?a=1&amp;skiptoken=2"
+    row = {"id": "r1", "date": "2026-09-01", "cost": 1.0, "instanceName": RG + "/providers/x/y/z"}
+    _save_tool_output(tmp_path / "t_RunAzCliReadCommands_a.json", {"nextLink": nxt, "value": [row]}, 100)
+    (tmp_path / "t_RunAzCliReadCommands_err.json").write_text('{"cliExecutionResult": {"output": "timed out"}}')
+    _save_tool_output(tmp_path / "t_RunAzCliReadCommands_other.json", {"value": [{"name": "alert"}], "nextLink": None}, 150)
+    row2 = dict(row, id="r2")
+    _save_tool_output(tmp_path / "t_RunAzCliReadCommands_b.json", {"nextLink": None, "value": [row2]}, 200)
+
+    chains = usage.find_usage_tool_output_chains(str(tmp_path))
+    assert [[pathlib.Path(p).name for p in c] for c in chains] == [
+        ["t_RunAzCliReadCommands_a.json", "t_RunAzCliReadCommands_b.json"]
+    ]
+    pages = usage.load_usage_tool_output_pages(first, chains[0])
+    assert pages[1]["request_url"] == "https://management.azure.com/next?a=1&skiptoken=2"
+    result = usage.prepare_usage_details(pages, [RG])
+    assert result["chain_complete"] and result["page_count"] == 2
+    assert len(result["included_rows"]) == 2
+
+
+def test_tool_output_loader_rejects_files_after_chain_end(tmp_path):
+    a, b = tmp_path / "x_RunAzCliReadCommands_1.json", tmp_path / "x_RunAzCliReadCommands_2.json"
+    _save_tool_output(a, {"nextLink": None, "value": []}, 1)
+    _save_tool_output(b, {"nextLink": None, "value": []}, 2)
+    with pytest.raises(ValueError):
+        usage.load_usage_tool_output_pages("https://x", [str(a), str(b)])

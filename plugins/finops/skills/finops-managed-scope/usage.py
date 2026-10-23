@@ -1,5 +1,8 @@
 """Deterministic preparation of projected Consumption UsageDetails pages."""
 
+import glob
+import json
+import os
 from decimal import Decimal, InvalidOperation
 from html import unescape
 from urllib.parse import parse_qsl, urlsplit
@@ -330,3 +333,90 @@ def prepare_usage_details(
         "remaining_next_link": expected_request_url,
         "partial": not chain_complete,
     }
+
+
+_USAGE_ROW_KEYS = {"date", "cost", "costinbillingcurrency", "billingcost"}
+
+
+def _tool_output_envelope(path):
+    """Return the projected `{value, nextLink}` envelope saved by RunAzCliReadCommands, or None."""
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    for _ in range(3):
+        if isinstance(data, dict) and isinstance(data.get("value"), list):
+            return data
+        if not isinstance(data, dict):
+            return None
+        inner = data.get("cliExecutionResult") or data
+        output = inner.get("output") if isinstance(inner, dict) else None
+        if not isinstance(output, str):
+            return None
+        try:
+            data = json.loads(output)
+        except ValueError:
+            return None
+    return None
+
+
+def _looks_like_usage_page(envelope):
+    if envelope is None or set(envelope) - {"value", "nextLink"}:
+        return False
+    rows = envelope["value"]
+    if not rows:
+        return "nextLink" in envelope
+    first = rows[0]
+    return isinstance(first, dict) and bool(_USAGE_ROW_KEYS & {k.casefold() for k in first})
+
+
+def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCliReadCommands*.json"):
+    """Group saved UsageDetails tool outputs into continuation chains, in fetch order.
+
+    The SRE Agent runtime saves every RunAzCliReadCommands result under `tmp/ToolOutputs`. Files
+    are ordered by modification time; non-UsageDetails outputs and failed/timed-out calls are
+    skipped, and a page without a nextLink closes its chain. Returns a list of path lists. Pass
+    each chain, with the exact URL of its first request, to `load_usage_tool_output_pages`.
+    """
+
+    paths = sorted(glob.glob(os.path.join(directory, pattern)), key=lambda p: (os.path.getmtime(p), p))
+    chains, current = [], []
+    for path in paths:
+        envelope = _tool_output_envelope(path)
+        if not _looks_like_usage_page(envelope):
+            continue
+        current.append(path)
+        if not _text(envelope.get("nextLink")):
+            chains.append(current)
+            current = []
+    if current:
+        chains.append(current)
+    return chains
+
+
+def load_usage_tool_output_pages(initial_url, paths):
+    """Rebuild page envelopes for `prepare_usage_details` from saved tool outputs.
+
+    `paths` are the saved RunAzCliReadCommands outputs of one chain in fetch order and
+    `initial_url` is the exact URL of the first request. Each later page's `request_url` is the
+    preceding page's decoded nextLink, so the pages need no per-page save step.
+    """
+
+    pages = []
+    request_url = _text(initial_url)
+    if not request_url:
+        raise ValueError("initial_url is required")
+    for index, path in enumerate(paths):
+        envelope = _tool_output_envelope(path)
+        if envelope is None:
+            raise ValueError(f"tool output {index} is not a UsageDetails page: {path}")
+        next_link = _text(envelope.get("nextLink"))
+        pages.append({"request_url": request_url, "value": envelope["value"], "nextLink": next_link})
+        if not next_link:
+            if index != len(paths) - 1:
+                raise ValueError(f"tool output {index} ends the chain but more files follow: {path}")
+            break
+        request_url = unescape(next_link)
+    return pages

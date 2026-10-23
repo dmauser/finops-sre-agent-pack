@@ -64,7 +64,8 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
-- **Primary anti-413 sequence:** bounded `%24top=1000`; on 413 retry with `100`, then `20`.
+- **Primary anti-413 sequence:** bounded `%24top=1000`; on 413 retry with `100`, then `20`. On a
+  timeout (exit 124) retry with `500`, then `250`, then calendar-month slices (see `finops-managed-scope`).
 - **`--query` projection (retained-payload hygiene):** keeps only `{date, cost, meterCategory,
   resourceGroup, resourceId, tags}` plus `nextLink`, so the concatenated dataset stays small.
 - **Paginate the complete result:** follow `nextLink` until absent. `nextLink` already carries the
