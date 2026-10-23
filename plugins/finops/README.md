@@ -80,6 +80,22 @@ configured with the twelve FinOps skills and the built-in Live Report authoring 
 default execution target for all seven scheduled tasks. Budget planning may return a human-run
 script, but the agent and scheduled tasks never execute it. Existing agents are not modified.
 
+> **Installed the plugin from the portal and `/agent` doesn't list FinOps?** That is expected: an
+> SRE Agent plugin carries only skills (and MCP server requirements). Custom agents and scheduled
+> tasks are never created by a plugin install. Either run `install-api.sh` (it detects the existing
+> plugin and adds the agent and tasks), or create the agent by hand:
+>
+> 1. Open **Builder → Agent Canvas → Create custom agent**, name it `finops-investigator`.
+> 2. Paste `properties.instructions` from [`agents/finops-investigator.json`](agents/finops-investigator.json),
+>    replacing `{{AGENT_RESOURCE_ID}}` with your agent's full ARM resource ID.
+> 3. Tools: `RunAzCliReadCommands`, `ExecutePythonCode`, `ListReports`, `GetReport`, `SaveReport`.
+>    Do not add any write tool.
+> 4. Choose Skills: every `finops-*` skill plus `live_report_authoring`.
+> 5. Save, refresh the chat, then type `/agent` and select `finops-investigator`.
+>
+> Skills themselves never appear under `/`; the agent loads them automatically when a question
+> matches, or when you name one ("Use finops-waste-finder on my subscription").
+
 GitHub correlation and email delivery depend on connector tools already configured on the target
 SRE Agent. Attach them during installation with `FINOPS_MCP_TOOLS` (comma-separated MCP tool
 identifiers) and, when required, `FINOPS_CONNECTORS`. The investigator continues with Azure evidence
@@ -142,9 +158,11 @@ Install this repository as a **plugin**, not as a code source. A plugin import l
 the bundled Python cores, the agent, and the scheduled tasks into SRE Agent; a code source is a
 repository the agent reads to correlate incidents with changes.
 
-1. **Install the pack** — use `install-api.sh` below (recommended: it also creates the agent,
-   scheduled tasks, and RBAC), or in the portal open **Builder → Plugins**, add this repository as a
-   marketplace (or *Install from URL*), and install `finops`.
+1. **Install the pack** — use `install-api.sh` below (recommended: it also creates the
+   `finops-investigator` agent, the scheduled tasks that produce the Live Reports, and RBAC). A
+   portal install (**Builder → Plugins → Add marketplace** or *Install from URL*) imports **only the
+   skills**: no agent appears under `/agent` and no Live Reports are produced until you also run the
+   installer or create them by hand (see [Agent](#agent)).
 2. **Set the managed scope** — add the subscriptions / resource groups the agent should analyze to
    its managed resources. Every skill enforces this boundary; scheduled runs fail closed without it.
 3. **Grant read-only cost access** — Cost Management Reader (`MI_OBJECT_ID=...` lets the installer
