@@ -347,3 +347,23 @@ def test_save_and_load_finops_inputs_are_deterministic(tmp_path):
     bad.write_text('{"cliExecutionResult": {"output": "timed out"}}')
     with pytest.raises(ValueError):
         usage.save_finops_input("tags", source_path=str(bad), directory=str(out))
+
+
+def test_tool_output_chains_split_abandoned_attempt_from_retry(tmp_path):
+    row = {"id": "r1", "date": "2026-10-01", "cost": 1.0, "instanceName": "/subscriptions/aaa/resourceGroups/g/providers/x/y/z"}
+    first = USAGE_A + "?api-version=2023-05-01&%24top=500"
+    _save_with_command(tmp_path / "1_RunAzCliReadCommands.json",
+                       {"nextLink": USAGE_A + "?skiptoken=old", "value": [row]}, 10, first)
+    (tmp_path / "2_RunAzCliReadCommands.json").write_text('{"cliExecutionResult": {"output": "timed out"}}')
+    _save_with_command(tmp_path / "3_RunAzCliReadCommands.json",
+                       {"nextLink": USAGE_A + "?skiptoken=p2", "value": [row]}, 30, first)
+    _save_with_command(tmp_path / "4_RunAzCliReadCommands.json",
+                       {"nextLink": None, "value": [row]}, 40, USAGE_A + "?skiptoken=p2")
+
+    chains = usage.find_usage_tool_output_chains(str(tmp_path), request_url_prefix=USAGE_A)
+    assert [[pathlib.Path(p).name for p in c] for c in chains] == [
+        ["1_RunAzCliReadCommands.json"],
+        ["3_RunAzCliReadCommands.json", "4_RunAzCliReadCommands.json"],
+    ]
+    pages = usage.load_usage_tool_output_pages(first, chains[-1])
+    assert usage.prepare_usage_details(pages, ["/subscriptions/aaa"])["chain_complete"]

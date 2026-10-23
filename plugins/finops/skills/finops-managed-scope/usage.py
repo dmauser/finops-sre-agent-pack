@@ -442,8 +442,11 @@ def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCl
 
     The SRE Agent runtime saves every RunAzCliReadCommands result under `tmp/ToolOutputs`. Files
     are ordered by modification time; non-UsageDetails outputs and failed/timed-out calls are
-    skipped, and a page without a nextLink closes its chain. Returns a list of path lists. Pass
-    each chain, with the exact URL of its first request, to `load_usage_tool_output_pages`.
+    skipped, and a page without a nextLink closes its chain. A page whose saved request URL is not
+    the open chain's nextLink starts a new chain, so an attempt abandoned after a timeout never
+    absorbs the retry's pages. Returns a list of path lists; use the last chain whose final page
+    has no nextLink. Pass each chain, with the exact URL of its first request, to
+    `load_usage_tool_output_pages`.
 
     The directory persists across scheduled-task executions, so isolate the current run:
 
@@ -475,10 +478,17 @@ def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCl
         if not _looks_like_usage_page(envelope):
             continue
         next_link = _text(envelope.get("nextLink"))
+        saved_url = _tool_output_request_url(raw)
         if prefix is not None:
-            url = _tool_output_request_url(raw) or (expected_url if current else None) or next_link
+            url = saved_url or (expected_url if current else None) or next_link
             if not url or not _normalize_request_url(url).startswith(prefix):
                 continue
+        if (current and saved_url and expected_url
+                and _normalize_request_url(saved_url) != _normalize_request_url(expected_url)):
+            # Not the continuation of the open chain (e.g. a retry after a timed-out page):
+            # close the abandoned chain and start a new one.
+            chains.append(current)
+            current, expected_url = [], None
         current.append(path)
         if not next_link:
             chains.append(current)

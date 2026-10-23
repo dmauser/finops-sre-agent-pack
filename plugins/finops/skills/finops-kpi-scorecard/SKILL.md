@@ -113,7 +113,8 @@ card = kpi_scorecard(allocation=allocation, budgets=budgets, commitments=commitm
                      prior_forecast=accuracy["prior_forecast"],
                      actual_spend=accuracy["actual_spend"],
                      prior_forecast_source=accuracy["source"],
-                     advisor_cost_score=advisor_cost_score)
+                     advisor_cost_score=advisor_cost_score,
+                     period_days=days_of_usage_analyzed)  # anomaly KPI daily-spend denominator
 owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, source="optimization")
 ```
 

@@ -543,6 +543,7 @@ def kpi_scorecard(
     actual_spend=None,
     advisor_cost_score=None,
     prior_forecast_source=None,
+    period_days=None,
 ):
     """Score the FinOps practice against KPI targets, including tag and budget governance checks.
 
@@ -564,6 +565,8 @@ def kpi_scorecard(
                    the KPI detail
     advisor_cost_score  Azure Advisor Cost score (0-100) for the scope; reported as a benchmark,
                    not scored, because Microsoft publishes no target for it
+    period_days    days covered by allocation total_usd; sets the daily-spend denominator of the
+                   anomaly KPI. Without it the forecast's 30-day run rate is used, then total/30
 
     Each KPI: {id, name, capability, value, unit, target, higher_is_better, status, action,
     detail}. status is pass | warn | fail | unknown (source not provided). The maturity indication
@@ -697,7 +700,13 @@ def kpi_scorecard(
     if anomalies is not None:
         impact = sum(_num(a.get("impact_usd")) or 0.0 for a in anomalies
                      if _is_increase(a))
-    daily_spend = (total / 30.0) if total else None
+    run_rate = _num((forecast or {}).get("run_rate_30d")) if (forecast or {}).get("available") else None
+    if total and _num(period_days):
+        daily_spend = total / _num(period_days)
+    elif run_rate:
+        daily_spend = run_rate / 30.0
+    else:
+        daily_spend = (total / 30.0) if total else None
     add("anomaly_impact_pct", "Unexplained spike impact as % of daily spend", "Anomaly management",
         _pct(impact, daily_spend) if (impact is not None and daily_spend) else None, "%",
         "Investigate open spikes (finops-cost-anomaly-detection) and record the cause.")

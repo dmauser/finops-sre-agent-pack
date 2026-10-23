@@ -301,3 +301,15 @@ def test_route_to_owners_never_leaves_action_blank():
     assert actions["/r/b"] == "Resize to D2s_v5"
     assert actions["/r/a"].startswith("Review the finding")
     assert actions["rg-x"].startswith("Confirm the cost drop")
+
+
+def test_anomaly_kpi_uses_period_days_or_run_rate():
+    alloc = {"total_usd": 660.0}
+    anomalies = [{"impact_usd": 30.0, "direction": "up"}]
+    by_days = sc.kpi_scorecard(allocation=alloc, anomalies=anomalies, period_days=22)
+    kpi = next(k for k in by_days["kpis"] if k["id"] == "anomaly_impact_pct")
+    assert kpi["value"] == 100.0  # 30 / (660 / 22)
+    by_rate = sc.kpi_scorecard(allocation=alloc, anomalies=anomalies,
+                                      forecast={"available": True, "run_rate_30d": 900.0})
+    kpi = next(k for k in by_rate["kpis"] if k["id"] == "anomaly_impact_pct")
+    assert kpi["value"] == 100.0  # 30 / (900 / 30)
