@@ -436,8 +436,18 @@ def _looks_like_usage_page(envelope):
     return isinstance(first, dict) and bool(_USAGE_ROW_KEYS & {k.casefold() for k in first})
 
 
+def _tool_output_thread(path):
+    """Return the thread id prefix of a saved tool output name (`<thread>_RunAzCli...json`), or ''."""
+
+    match = _THREAD_PREFIX.match(os.path.basename(path))
+    return match.group(1).casefold() if match else ""
+
+
+_THREAD_PREFIX = re.compile(r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})_")
+
+
 def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCliReadCommands*.json",
-                                  *, after_timestamp=None, request_url_prefix=None):
+                                  *, after_timestamp=None, request_url_prefix=None, thread_id=None):
     """Group saved UsageDetails tool outputs into continuation chains, in fetch order.
 
     The SRE Agent runtime saves every RunAzCliReadCommands result under `tmp/ToolOutputs`. Files
@@ -459,17 +469,28 @@ def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCl
                         URL is read from the command saved with the output; when absent it is
                         inferred from the previous page's nextLink or the page's own nextLink. A
                         page whose URL cannot be determined is skipped. None keeps every page.
+    thread_id           Keep only outputs saved by this conversation thread. The runtime names each
+                        file `<thread-id>_RunAzCliReadCommands_<call-id>.json`; take the id from the
+                        saved-output path of this run's first `az rest` call. None keeps every thread.
+
+    Outputs from different thread-id prefixes are never chained together, so scheduled tasks that
+    page the same UsageDetails URL concurrently cannot interleave into one corrupted chain.
     """
 
     if after_timestamp is not None:
         after_timestamp = float(after_timestamp)
     prefix = _normalize_request_url(request_url_prefix) if request_url_prefix else None
 
+    wanted_thread = _text(thread_id).casefold() if thread_id else None
+
     paths = sorted(glob.glob(os.path.join(directory, pattern)), key=lambda p: (os.path.getmtime(p), p))
-    chains, current = [], []
-    expected_url = None
+    chains = []
+    open_chains = {}  # thread prefix -> (paths, expected next URL)
     for path in paths:
         if after_timestamp is not None and os.path.getmtime(path) < after_timestamp:
+            continue
+        thread = _tool_output_thread(path)
+        if wanted_thread is not None and thread != wanted_thread:
             continue
         raw = _read_tool_output(path)
         envelope = _unwrap_tool_output(raw)
@@ -477,6 +498,7 @@ def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCl
             continue
         if not _looks_like_usage_page(envelope):
             continue
+        current, expected_url = open_chains.get(thread, ([], None))
         next_link = _text(envelope.get("nextLink"))
         saved_url = _tool_output_request_url(raw)
         if prefix is not None:
@@ -492,11 +514,10 @@ def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCl
         current.append(path)
         if not next_link:
             chains.append(current)
-            current, expected_url = [], None
+            open_chains.pop(thread, None)
         else:
-            expected_url = unescape(next_link)
-    if current:
-        chains.append(current)
+            open_chains[thread] = (current, unescape(next_link))
+    chains.extend(current for current, _ in open_chains.values() if current)
     return chains
 
 

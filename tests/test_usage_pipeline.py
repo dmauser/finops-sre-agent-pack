@@ -367,3 +367,24 @@ def test_tool_output_chains_split_abandoned_attempt_from_retry(tmp_path):
     ]
     pages = usage.load_usage_tool_output_pages(first, chains[-1])
     assert usage.prepare_usage_details(pages, ["/subscriptions/aaa"])["chain_complete"]
+
+
+def test_tool_output_chains_separate_concurrent_threads(tmp_path):
+    ta, tb = "2c3229cc-a873-44fa-8e60-aad5cc118dbf", "cd4c5191-c68f-498c-a1b7-c681057aa266"
+    row = {"id": "r1", "date": "2026-10-01", "cost": 1.0}
+    nxt = USAGE_A + "?api-version=2023-11-01&%24skiptoken="
+    # Two scheduled tasks page the same URL at the same time; their files interleave by mtime.
+    _save_tool_output(tmp_path / f"{ta}_RunAzCliReadCommands_1.json", {"nextLink": nxt + "a1", "value": [row]}, 100)
+    _save_tool_output(tmp_path / f"{tb}_RunAzCliReadCommands_1.json", {"nextLink": nxt + "b1", "value": [row]}, 101)
+    _save_tool_output(tmp_path / f"{ta}_RunAzCliReadCommands_2.json", {"nextLink": nxt + "a2", "value": [row]}, 102)
+    _save_tool_output(tmp_path / f"{tb}_RunAzCliReadCommands_2.json", {"nextLink": None, "value": [row]}, 103)
+    _save_tool_output(tmp_path / f"{ta}_RunAzCliReadCommands_3.json", {"nextLink": None, "value": [row]}, 104)
+
+    names = [[pathlib.Path(p).name.split("_")[0][:2] + pathlib.Path(p).stem[-1] for p in c]
+             for c in usage.find_usage_tool_output_chains(str(tmp_path), request_url_prefix=USAGE_A)]
+    assert names == [["cd1", "cd2"], ["2c1", "2c2", "2c3"]]
+
+    only_a = usage.find_usage_tool_output_chains(str(tmp_path), thread_id=ta.upper())
+    assert [len(c) for c in only_a] == [3]
+    pages = usage.load_usage_tool_output_pages(USAGE_A + "?api-version=2023-11-01", only_a[0])
+    assert usage.prepare_usage_details(pages, ["/subscriptions/aaa"])["chain_complete"]

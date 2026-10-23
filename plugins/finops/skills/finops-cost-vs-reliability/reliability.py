@@ -35,7 +35,7 @@ _TOP_DRIVERS = 10
 _BAD_HEALTH_STATES = {"unavailable", "degraded"}
 
 
-_MIN_PAIN_COST = 1.0
+_MIN_PAIN_COST = 10.0
 
 def _norm(text) -> str:
     return str(text or "").strip().lower()
@@ -357,7 +357,7 @@ def analyze_cost_vs_reliability(
         health_score = row_stats["health_score"]
         advisor_score = row_stats["advisor_score"]
         score = alert_score + health_score + advisor_score
-        # Below $1/month the ratio explodes and stops being comparable.
+        # Below $10/month the ratio explodes and stops being comparable.
         pain = None if monthly < _MIN_PAIN_COST else round(score / (monthly / 1000.0), 2)
         sev_counts = {sev: row_stats["sev_counts"].get(sev, 0) for sev in SEV_WEIGHTS}
         by_resource.append({

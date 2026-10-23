@@ -149,6 +149,24 @@ def _resource_group_of(resource_id):
     return "—"
 
 
+def _case_canonicalizer(values):
+    """Map case-insensitive Azure names (resource groups, providers) to one display spelling.
+
+    The most frequent spelling wins; ties prefer mixed case over all-lower/all-upper.
+    """
+
+    counts = {}
+    for value in values:
+        if value:
+            counts.setdefault(value.casefold(), {}).setdefault(value, 0)
+            counts[value.casefold()][value] += 1
+    preferred = {
+        key: max(spellings, key=lambda v: (spellings[v], v not in (v.lower(), v.upper()), v))
+        for key, spellings in counts.items()
+    }
+    return lambda value: preferred.get(value.casefold(), value) if value else value
+
+
 def _display_resource(value):
     if value.casefold().startswith("/subscriptions/") and "/providers/" in value.casefold():
         group = _resource_group_of(value)
@@ -2258,6 +2276,8 @@ def build_cost_vs_reliability_model(
         extra_warnings=generated,
     )
     chart_rows = resources[:10]
+    rg_name = _case_canonicalizer(row[2] for row in resources)
+    service_name = _case_canonicalizer(row[3] for row in resources)
     return _model(
         "FinOps: Cost vs Reliability",
         "Weekly view of Azure spend against transparent weighted reliability signals.",
@@ -2300,8 +2320,8 @@ def build_cost_vs_reliability_model(
                 "rows": [
                     [
                         row[0],
-                        row[2],
-                        row[3],
+                        rg_name(row[2]),
+                        service_name(row[3]),
                         _money(row[4]),
                         str(row[5]),
                         "/".join(str(value) for value in row[6]),

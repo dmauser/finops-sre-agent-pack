@@ -179,6 +179,13 @@ Before the first `az rest` call of the run, record the run start in a Python ste
 persists across scheduled-task executions, so without it pages from earlier runs merge into the
 current chain (a live run assembled a 28-page chain of mixed dates instead of 4 pages).
 
+Scheduled tasks that run at the same time page the same UsageDetails URL into the same
+directory, and their files interleave by time (a live run merged three concurrent tasks' pages
+into 6/4/2-page chains and reported $911 instead of $1,130). The runtime names each saved output
+`<thread-id>_RunAzCliReadCommands_<call-id>.json`, and the chain finder never chains files with
+different thread-id prefixes. Also pass `thread_id`: the id is the prefix of the saved-output
+path shown for this run's first `az rest` call.
+
 ```python
 from usage import prepare_usage_details
 from usage import find_usage_tool_output_chains, load_usage_tool_output_pages
@@ -186,6 +193,7 @@ from usage import find_usage_tool_output_chains, load_usage_tool_output_pages
 chains = find_usage_tool_output_chains(
     "tmp/ToolOutputs",
     after_timestamp=run_start,  # ignore outputs from earlier executions
+    thread_id=thread_id,  # ignore outputs from concurrent tasks
     request_url_prefix=f"/subscriptions/{sub_id}/providers/Microsoft.Consumption/usageDetails",
 )
 chain = chains[-1]  # newest chain for this subscription; one per scope/slice

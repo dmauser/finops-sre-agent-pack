@@ -1259,3 +1259,10 @@ def test_display_resource_shortens_arm_ids_only():
     rid = "/subscriptions/s/resourceGroups/rg-a/providers/Microsoft.App/agents/agent-1"
     assert models._display_resource(rid) == "agent-1 (rg-a)"
     assert models._display_resource("Virtual WAN") == "Virtual WAN"
+
+
+def test_case_canonicalizer_prefers_common_mixed_case_spelling():
+    name = models._case_canonicalizer(["Microsoft.Compute", "microsoft.compute", "Microsoft.Compute", "RG-A", "rg-a"])
+    assert name("MICROSOFT.COMPUTE") == "Microsoft.Compute"
+    assert name("RG-A") == "rg-a"  # tie: deterministic spelling
+    assert name("other") == "other"

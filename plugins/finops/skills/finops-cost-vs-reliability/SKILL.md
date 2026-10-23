@@ -179,7 +179,7 @@ Produce:
   joined resource count, unmatched reliability count, subscription-level event count, and whether cost
   was partial.
 - **Spend + pain table**: resource, service, monthly $, share of spend, alert count/severity counts,
-  health events, Advisor HA count, reliability score, pain per $1K (blank below $1/month spend), risk band, and primary signal.
+  health events, Advisor HA count, reliability score, pain per $1K (blank below $10/month spend), risk band, and primary signal.
 - **Service rollup**: service, monthly $, resources, alerts, health events, Advisor HA count,
   reliability score, and risk band.
 - **High pain / low spend** investment candidates: resources with high pain but low spend — recommend

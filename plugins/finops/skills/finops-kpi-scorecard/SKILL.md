@@ -72,7 +72,7 @@ Pass raw Azure responses between steps through deterministic files, not ToolOutp
 (see `finops-managed-scope` section 6). Save each one with `usage.save_finops_input` before running
 the analysis: Advisor → `tmp/finops-data/advisor.json`, Resource Graph inventory →
 `inventory.json`, budgets → `budgets.json`, tags → `tags.json`. UsageDetails pages are rebuilt
-with `find_usage_tool_output_chains(..., after_timestamp=run_start, request_url_prefix=...)`.
+with `find_usage_tool_output_chains(..., after_timestamp=run_start, thread_id=<this run's thread id>, request_url_prefix=...)`.
 
 The forecast and month-over-month inputs need earlier months. For MOSP/MCA subscriptions the
 UsageDetails date filter is ignored and only the current billing period is returned
