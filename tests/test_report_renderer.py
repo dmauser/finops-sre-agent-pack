@@ -785,7 +785,7 @@ def test_all_adapters_render_empty_states(builder, empty):
             models.build_monthly_review_model,
             _monthly,
             "85657923896814482a757fc3a3f78f7b66a858fb59a6bb9594ef5c958b5b1d65",
-            "0d0a3015b6fc05cd04e9403247fe5300ea8427455db603b5a43fc19fc130eaae",
+            "c3efa78279dfd0184140ef8f933c37effc0f94d8ab5a11cd6085b48fa0ae4285",
         ),
     ],
 )
@@ -1025,3 +1025,8 @@ def test_table_cells_keep_numbers_whole_and_wrap_long_ids():
     rid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.App/agents/a"
     assert renderer._cell(rid).startswith('<td class="long">')
     assert renderer._cell("governance") == "<td>governance</td>"
+
+
+def test_threshold_cells_stay_on_one_line():
+    assert renderer._cell("\u2265 100.0%").startswith('<td class="num">')
+

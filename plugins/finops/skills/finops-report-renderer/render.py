@@ -63,7 +63,7 @@ def _metrics(model):
     return '<div class="metrics">' + "".join(rendered) + "</div>"
 
 
-_NUMERIC_CELL = re.compile(r"^[-+]?[$€£]?[-+]?[\d.,]+\s?(%|[A-Z]{3}|AAU)?$")
+_NUMERIC_CELL = re.compile(r"^(?:[≥≤<>]\s?)?[-+]?[$€£]?[-+]?[\d.,]+\s?(%|[A-Z]{3}|AAU)?$")
 
 
 def _cell(value):
