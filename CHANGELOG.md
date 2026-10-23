@@ -4,7 +4,10 @@
 
 ### Added
 
-- **Faster UsageDetails paging**: one `az rest` call per page with no Python step between pages;`n  new `find_usage_tool_output_chains` / `load_usage_tool_output_pages` rebuild the chain from the`n  runtime's saved tool outputs in one step. Timeouts fall back to `%24top=500`/`250` (not `100`), and`n  the monthly review pulls the two closed months once and reuses them for every step.
+- **Faster UsageDetails paging**: one `az rest` call per page with no Python step between pages;
+  new `find_usage_tool_output_chains` / `load_usage_tool_output_pages` rebuild the chain from the
+  runtime's saved tool outputs in one step. Timeouts fall back to `%24top=500`/`250` (not `100`), and
+  the monthly review pulls the two closed months once and reuses them for every step.
 - **Monthly Review Live Report**: `monthly-finops-review` now also saves the `FinOps: Monthly Review`
   Live Report (new `build_monthly_review_model` adapter) while keeping email delivery. The six
   report skills now save their Live Report when run from chat for the full managed scope.
