@@ -3217,10 +3217,10 @@ def build_cost_allocation_model(
         {
             "title": f"Showback by {dimension}",
             "description": (
-                "Direct cost per owner, shared cost redistributed, and the fully loaded total. "
+                f"Direct cost per {dimension} value, shared cost redistributed, and the fully loaded total. "
                 "Unallocated spend stays visible and is never spread onto owners."
             ),
-            "columns": ["Owner", "Direct", "Shared", "Fully loaded", "% of total", "Resources", "Via inheritance"],
+            "columns": [dimension[:1].upper() + dimension[1:], "Direct", "Shared", "Fully loaded", "% of total", "Resources", "Via inheritance"],
             "rows": showback,
             "emptyMessage": "No cost rows were allocated.",
         },
@@ -3286,9 +3286,9 @@ def build_cost_allocation_model(
         rows = [r[3] for r in sorted(rows, key=lambda r: r[:3])]
         sections.append(
             {
-                "title": "Month-over-month by owner",
-                "description": "Variance per owner between the two analyzed windows.",
-                "columns": ["Owner", "Previous", "Current", "Change", "Change %"],
+                "title": f"Month-over-month by {dimension}",
+                "description": f"Variance per {dimension} value between the two analyzed windows.",
+                "columns": [dimension[:1].upper() + dimension[1:], "Previous", "Current", "Change", "Change %"],
                 "rows": rows,
                 "emptyMessage": "No month-over-month rows were produced.",
             }
