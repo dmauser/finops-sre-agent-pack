@@ -1,0 +1,9 @@
+{
+  "analyzers": {
+    "core": {
+      "rules": {
+        "no-hardcoded-env-urls": { "level": "off" }
+      }
+    }
+  }
+}

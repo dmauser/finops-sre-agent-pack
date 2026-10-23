@@ -171,6 +171,10 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 
 ## How to deploy with Azure SRE Agent
 
+> **Onboarding guide:** [docs/ONBOARDING.md](../../docs/ONBOARDING.md) covers the one-command
+> automated deployment ([`deploy/deploy.sh`](deploy/deploy.sh): agent, plugin, subagent, scheduled
+> report, RBAC) and the equivalent manual portal steps.
+
 Install this repository as a **plugin**, not as a code source. A plugin import loads the skills,
 the bundled Python cores, the agent, and the scheduled tasks into SRE Agent; a code source is a
 repository the agent reads to correlate incidents with changes.
@@ -231,6 +235,9 @@ GRANT_COMMITMENT_READERS=1 MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<
 ```
 
 Configuration: required `AGENT_RESOURCE_ID`; optional `ENDPOINT` (consistency check only),
+`PLUGIN_SOURCE=marketplace` (or `direct` to install from the GitHub URL with auto-update, like the
+portal's *Install from URL*; `deploy/deploy.sh` uses `direct`), `PLUGIN_PATH=plugins/finops`,
+`TASK_IDS=all` (comma-separated task ids from `scheduled-tasks/task-manifest.json` to install a subset),
 `MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=dmauser/finops-sre-agent-pack`,
 `GITHUB_PAT`, `FINOPS_AGENT_NAME=finops-investigator`, `TASK_AGENT_NAME=finops-investigator`,
 `FINOPS_MCP_TOOLS`, `FINOPS_CONNECTORS`, `TASK_NAME`,

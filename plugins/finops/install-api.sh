@@ -25,6 +25,9 @@
 #     ./install-api.sh
 #   # private repo clone (until the repo is public) needs a GitHub PAT:
 #   GITHUB_PAT=<pat> AGENT_RESOURCE_ID=<id> ./install-api.sh
+#   # portal-equivalent "Install from URL" (auto-update) instead of a marketplace, one task only:
+#   PLUGIN_SOURCE=direct TASK_IDS=cost-optimization-report AGENT_RESOURCE_ID=<id> ./install-api.sh
+#   # to create the agent resource itself as well, use deploy/deploy.sh
 #
 set -euo pipefail
 umask 077
@@ -39,6 +42,9 @@ TOKEN_RESOURCE="${TOKEN_RESOURCE:-https://azuresre.dev}"
 
 MARKETPLACE_NAME="${MARKETPLACE_NAME:-finops-pack}"
 PLUGIN_NAME="${PLUGIN_NAME:-finops}"
+PLUGIN_SOURCE="${PLUGIN_SOURCE:-marketplace}"     # marketplace | direct (portal "Install from URL")
+PLUGIN_PATH="${PLUGIN_PATH:-plugins/finops}"      # plugin folder inside the repo (direct mode)
+TASK_IDS="${TASK_IDS:-all}"                       # comma-separated task ids from task-manifest.json, or "all"
 SKILL_NAME="${SKILL_NAME:-finops-cost-anomaly-detection}"
 REPO_SLUG="${REPO_SLUG:-dmauser/finops-sre-agent-pack}"   # owner/repo (marketplace sourceUrl)
 SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
@@ -79,6 +85,10 @@ case "$FINOPS_AGENT_NAME" in
 esac
 [ -z "${FINOPS_EXTRA_TOOLS:-}" ] || \
   die "FINOPS_EXTRA_TOOLS is no longer supported: the FinOps agent core tool set is fixed and read-only."
+case "$PLUGIN_SOURCE" in
+  marketplace|direct) ;;
+  *) die "PLUGIN_SOURCE must be 'marketplace' or 'direct'.";;
+esac
 
 [ -n "$AGENT_RESOURCE_ID" ] || \
   die "AGENT_RESOURCE_ID is required. ENDPOINT-only installation cannot enforce dynamic managed scope."
@@ -91,7 +101,7 @@ fi
 if [ -n "$GITHUB_REPO" ] && [[ ! "$GITHUB_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
   die "GITHUB_REPO must use owner/repo format, or unset it to disable GitHub correlation."
 fi
-export AGENT_RESOURCE_ID TASK_AGENT_NAME MODEL_TIER ALERT_EMAIL GITHUB_REPO
+export AGENT_RESOURCE_ID TASK_AGENT_NAME MODEL_TIER ALERT_EMAIL GITHUB_REPO TASK_IDS
 
 if [ -z "$GITHUB_REPO" ]; then
   warn "GITHUB_REPO not set — scheduled anomaly detection will skip GitHub correlation."
@@ -398,7 +408,9 @@ else
   warn "Without them the commitment report shows 'Commitment inventory unavailable' (coverage still computed)."
 fi
 
-# ---- 2. Register the marketplace -------------------------------------------
+# ---- 2. Register the marketplace (marketplace mode) -------------------------
+# Direct mode mirrors the portal's Plugins > "Install from URL" and needs no marketplace.
+if [ "$PLUGIN_SOURCE" = "marketplace" ]; then
 say "Registering marketplace '$MARKETPLACE_NAME' -> $REPO_SLUG"
 mk_body="$INSTALL_WORK_DIR/marketplace.json"
 MARKETPLACE_NAME="$MARKETPLACE_NAME" REPO_SLUG="$REPO_SLUG" SOURCE_FORMAT="$SOURCE_FORMAT" \
@@ -450,11 +462,63 @@ case "$HTTP_CODE" in
   200|201|202) ok "Plugin install requested (HTTP $HTTP_CODE)";;
   *) die "Plugin install failed (HTTP $HTTP_CODE): $resp";;
 esac
+else
+# ---- 2/3. Direct install from the GitHub URL (direct mode) -------------------
+say "Installing plugin '$PLUGIN_NAME' directly from https://github.com/$REPO_SLUG ($PLUGIN_PATH)"
+api GET /api/v2/plugins/installations
+case "$HTTP_CODE" in
+  200) ;;
+  *) die "Could not list plugin installations (HTTP $HTTP_CODE): $RESP_BODY";;
+esac
+existing_install="$(printf '%s' "$RESP_BODY" | PLUGIN_NAME="$PLUGIN_NAME" python3 -c '
+import json, os, sys
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else data.get("value", [])
+for item in items:
+    spec = item.get("spec") or {}
+    if spec.get("pluginName") == os.environ["PLUGIN_NAME"]:
+        source = spec.get("source") or {}
+        origin = spec.get("marketplaceName") or source.get("repo") or "?"
+        print((item.get("metadata") or {}).get("name", "") + " (" + str(origin) + ")")
+        break
+')" || die "Could not parse plugin installations."
+if [ -n "$existing_install" ]; then
+  ok "Plugin '$PLUGIN_NAME' already installed: $existing_install — skipping install"
+else
+  direct_body="$INSTALL_WORK_DIR/install-direct.json"
+  REPO_SLUG="$REPO_SLUG" PLUGIN_PATH="$PLUGIN_PATH" GITHUB_PAT="$GITHUB_PAT" python3 - "$direct_body" <<'PY'
+import json, os, sys
+doc = {
+    "sourceUrl": "https://github.com/" + os.environ["REPO_SLUG"],
+    "pathInRepo": os.environ["PLUGIN_PATH"],
+    "autoUpdate": True,
+}
+pat = os.environ.get("GITHUB_PAT") or ""
+if pat:
+    doc["credentials"] = {"authMethod": "pat", "pat": pat}
+open(sys.argv[1], "w").write(json.dumps(doc))
+PY
+  if api POST /api/v2/plugins/install-direct "$direct_body"; then
+    resp="$RESP_BODY"
+  else
+    rm -f -- "$direct_body"
+    die "Direct plugin install request failed before receiving an HTTP response."
+  fi
+  rm -f -- "$direct_body"
+  case "$HTTP_CODE" in
+    200|201|202)
+      printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if d.get("success") else 1)' 2>/dev/null \
+        || die "Direct plugin install failed: $resp"
+      ok "Plugin installed from URL with auto-update (HTTP $HTTP_CODE)";;
+    *) die "Direct plugin install failed (HTTP $HTTP_CODE): $resp";;
+  esac
+fi
+fi
 
 say "Waiting for all FinOps skills"
 for i in $(seq 1 60); do
   api GET /api/v2/plugins/installations
-  if printf '%s' "$RESP_BODY" | MARKETPLACE_NAME="$MARKETPLACE_NAME" PLUGIN_NAME="$PLUGIN_NAME" python3 -c '
+  if printf '%s' "$RESP_BODY" | PLUGIN_SOURCE="$PLUGIN_SOURCE" MARKETPLACE_NAME="$MARKETPLACE_NAME" PLUGIN_NAME="$PLUGIN_NAME" python3 -c '
 import json, os, sys
 expected = {
     "finops-cost-anomaly-detection",
@@ -477,9 +541,9 @@ except Exception:
 installations = data if isinstance(data, list) else data.get("value", [])
 for item in installations:
     spec = item.get("spec", {})
-    if (
-        spec.get("marketplaceName") == os.environ["MARKETPLACE_NAME"]
-        and spec.get("pluginName") == os.environ["PLUGIN_NAME"]
+    if spec.get("pluginName") == os.environ["PLUGIN_NAME"] and (
+        os.environ["PLUGIN_SOURCE"] == "direct"
+        or spec.get("marketplaceName") == os.environ["MARKETPLACE_NAME"]
     ):
         imported = {skill.get("skillName") for skill in spec.get("importedSkills", [])}
         raise SystemExit(0 if expected <= imported else 1)
@@ -737,7 +801,9 @@ while IFS=$'\x1f' read -r body_name name payload_agent cron task_id current_agen
   upsert_task "$task_body" "$name" "$payload_agent" "$cron" \
     "$task_id" "$current_agent" "$current_status"
 done < "$INSTALL_WORK_DIR/task-plan.tsv"
-[ "$task_index" -eq 7 ] || die "Canonical task renderer produced $task_index tasks; expected 7."
+EXPECTED_TASK_COUNT="$(tr -dc '0-9' < "$INSTALL_WORK_DIR/task-count.txt")"
+[ -n "$EXPECTED_TASK_COUNT" ] && [ "$task_index" -eq "$EXPECTED_TASK_COUNT" ] || \
+  die "Canonical task renderer produced $task_index tasks; expected ${EXPECTED_TASK_COUNT:-?}."
 
 LIVE_REPORT_NAMES=()
 while IFS= read -r report_name; do
@@ -763,11 +829,16 @@ python3 "$TASK_RENDERER" verify-install \
   --existing "$INSTALL_WORK_DIR/scheduled-tasks-after.json" \
   --expected "$INSTALL_WORK_DIR/expected-tasks.json" || \
   die "Scheduled-task verification failed."
-ok "all 7 scheduled tasks verified on $TASK_AGENT_NAME; retired duplicate absent"
+ok "all $EXPECTED_TASK_COUNT selected scheduled task(s) verified on $TASK_AGENT_NAME; retired duplicate absent"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Package: 12 skills, 1 agent, 7 tasks, 6 Live Reports\n'
-printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability, finops-managed-scope, finops-report-renderer (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Package: 12 skills, 1 agent, %s task(s) (TASK_IDS=%s), %s Live Report(s)\n' "$EXPECTED_TASK_COUNT" "$TASK_IDS" "$(grep -c . "$INSTALL_WORK_DIR/reports.txt" || true)"
+if [ "$PLUGIN_SOURCE" = "direct" ]; then
+  plugin_origin="direct install https://github.com/$REPO_SLUG/$PLUGIN_PATH (auto-update)"
+else
+  plugin_origin="marketplace $MARKETPLACE_NAME -> $REPO_SLUG"
+fi
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability, finops-managed-scope, finops-report-renderer (from %s)\n' "$plugin_origin"
 printf '  • Agent  : "%s" (standalone, autonomous, read-only; task target: "%s")\n' "$FINOPS_AGENT_NAME" "$TASK_AGENT_NAME"
 printf '  • Budget planning: advisory proposals may include a human-run script; the agent and installer execute no budget writes and add no budget-write RBAC\n'
 printf '  • Tasks  :\n'

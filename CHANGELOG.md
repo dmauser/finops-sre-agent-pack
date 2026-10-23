@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Automated onboarding**: `plugins/finops/deploy/deploy.sh` with Bicep (`main.bicep`,
+  `agent.bicep`) creates the SRE Agent, identity, monitoring and read-only RBAC (including Cost
+  Management Reader). It then installs the plugin from the GitHub URL with auto-update, creates
+  `finops-investigator`, and schedules the weekly Cost Optimization Live Report. It prompts only
+  for agent name, region and resource group.
+- `docs/ONBOARDING.md`: side-by-side automated and manual (portal) onboarding guides.
+- `install-api.sh`: `PLUGIN_SOURCE=direct` (install-direct, idempotent) and `TASK_IDS` to install a
+  subset of scheduled tasks; `render_tasks.py api` honours `TASK_IDS`.
+
 - **`finops-waste-finder`**: finds orphaned and idle non-compute resources: unattached public IPs,
   NAT gateways with no subnets, dead private endpoints, empty load balancers and application
   gateways, unconnected VPN/ExpressRoute gateways, snapshots older than 90 days, orphaned NICs, and

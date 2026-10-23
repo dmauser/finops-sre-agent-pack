@@ -38,6 +38,25 @@ This is a skill-and-policy addition only; it makes no SRE Agent runtime changes.
 
 ## Install
 
+There are two onboarding paths. Both produce the same agent, plugin, subagent, scheduled report
+task, and RBAC. **See [docs/ONBOARDING.md](docs/ONBOARDING.md) for the full guide.**
+
+- **Automated:** one command creates the SRE Agent (Bicep), installs the plugin from this repo
+  with auto-update, creates `finops-investigator`, and schedules the weekly Cost Optimization Live
+  Report. It prompts only for agent name, region, and resource group:
+
+  ```bash
+  ./plugins/finops/deploy/deploy.sh            # add --tasks all for every report, -y for CI
+  ```
+
+- **Manual (portal):** create the agent, then *Install from URL*, the subagent YAML, and the
+  scheduled task by hand. See [Option B](docs/ONBOARDING.md#option-b-manual-portal).
+
+To add the pack to an agent that already exists, use `deploy.sh -n <agent> -g <rg>` or the
+lower-level installer below.
+
+### Installer for an existing agent
+
 The supported installer installs the complete **`finops` plugin package** from this repository: all
 twelve skills, `finops-investigator`, seven scheduled tasks, and six Live Reports. It does not install
 unrelated plugins from the marketplace.

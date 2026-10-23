@@ -221,7 +221,7 @@ def render_api_payloads():
             for key, value in render_task(task).items()
             if key not in {"id", "yaml", "tags", "owner"}
         }
-        for task in load_manifest()
+        for task in select_tasks(load_manifest())
     ]
 
 
@@ -280,8 +280,24 @@ def write_or_check(check):
     return 0
 
 
+def select_tasks(tasks, selection=None):
+    """Filter manifest tasks by TASK_IDS (comma-separated ids; empty or "all" = every task)."""
+    raw = os.environ.get("TASK_IDS", "") if selection is None else selection
+    wanted = [item.strip() for item in raw.split(",") if item.strip()]
+    if not wanted or [item.casefold() for item in wanted] == ["all"]:
+        return list(tasks)
+    known = [task["id"] for task in tasks]
+    unknown = [item for item in wanted if item not in known]
+    if unknown:
+        raise ValueError(
+            "Unknown TASK_IDS: " + ", ".join(unknown) + ". Valid ids: " + ", ".join(known)
+        )
+    return [task for task in tasks if task["id"] in wanted]
+
+
 def write_install_plan(existing_path, output_dir):
     tasks, retired = _load_manifest_data()
+    tasks = select_tasks(tasks)
     existing = _task_list(json.loads(existing_path.read_text()))
     output_dir.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -350,6 +366,7 @@ def write_install_plan(existing_path, output_dir):
     (output_dir / "task-plan.tsv").write_text(
         "\n".join(rows) + "\n", encoding="utf-8"
     )
+    (output_dir / "task-count.txt").write_text(f"{len(rows)}\n", encoding="utf-8")
     (output_dir / "retired-plan.tsv").write_text(
         ("\n".join(retired_rows) + "\n") if retired_rows else "",
         encoding="utf-8",
