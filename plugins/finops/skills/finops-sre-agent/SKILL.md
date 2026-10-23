@@ -11,6 +11,9 @@ monthly agent-unit limit", or "should we consolidate agents". It answers *what e
 which flow and source drive it, and where to look first*. It is read-only and recommends actions
 only; it never stops, deletes, or reconfigures an agent.
 
+`finops-cost-optimization-report` and the Monthly Review also roll this skill's output up
+(`summarize_optimization(sre_agents=...)`, `build_monthly_review_model({..., "sre_agents": ...})`).
+
 For Azure OpenAI / Foundry model spend use `finops-for-ai`; for cost spikes use
 `finops-cost-anomaly-detection`; for owner/team showback use `finops-cost-allocation`.
 

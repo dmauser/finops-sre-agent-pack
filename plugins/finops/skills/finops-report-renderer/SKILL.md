@@ -82,11 +82,11 @@ All eight functions have the same keyword-only context arguments:
 | `build_cost_overview_model(overview, ...)` | A cost aggregation with `total_usd`, `daily` (`date`, `cost_usd`), `by_service` (`service`, `cost_usd`), and `by_resource_group` (`resource_group`, `cost_usd`). The aliases `daily_totals`, `top_services`, and `top_resource_groups` are accepted. |
 | `build_rightsizing_savings_model(result, ...)` | The list returned by `recommend_rightsizing`, or an object containing it as `findings`/`recommendations`. |
 | `build_budget_status_model(result, ...)` | The object returned by `evaluate_budgets`. |
-| `build_cost_optimization_model(result, ...)` | The object returned by `summarize_optimization`. |
+| `build_cost_optimization_model(result, ...)` | The object returned by `summarize_optimization`. When it carries `sre_agents`, an SRE Agent spend metric plus "SRE Agent spend" and "SRE Agent findings" sections are added. |
 | `build_ai_spend_model(result, ...)` | The object returned by `attribute_ai_costs`. |
 | `build_sre_agent_spend_model(result, ...)` | The object returned by `analyze_sre_agent_costs`. |
 | `build_cost_vs_reliability_model(result, ...)` | The object returned by `analyze_cost_vs_reliability`. |
-| `build_monthly_review_model(review, ...)` | `{"month", "scorecard", "forecast", "month_over_month", "routing", "unit_economics"}` holding `kpi_scorecard`, `forecast_spend`, `month_over_month`, `route_to_owners`, and `unit_economics` outputs. Only `scorecard` is required; missing inputs become warnings. |
+| `build_monthly_review_model(review, ...)` | `{"month", "scorecard", "forecast", "month_over_month", "routing", "unit_economics", "sre_agents"}` holding `kpi_scorecard`, `forecast_spend`, `month_over_month`, `route_to_owners`, `unit_economics`, and `analyze_sre_agent_costs` outputs. Only `scorecard` is required; missing inputs become warnings. |
 
 The adapters deterministically compute display metrics, charts, and tables from those structured
 outputs. They apply explicit stable tie-breakers, retain unknown/empty values, label unvalidated

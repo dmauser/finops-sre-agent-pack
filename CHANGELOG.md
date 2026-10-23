@@ -10,6 +10,10 @@
   tasks, incidents, incident analysis), ranks the costliest threads, projects month-end use against
   `monthlyAgentUnitLimit`, and flags deleted/stopped-but-billed, idle, consolidation, limit-risk,
   trial-waiver, and premium-model cases. New `build_sre_agent_spend_model` renderer adapter.
+- **SRE Agent rollup**: `summarize_optimization(sre_agents=...)` adds SRE Agent spend, always-on share,
+  and de-duplicated removable savings (idle/stopped agents *or* consolidation, never both) to the
+  Cost Optimization headline and priorities; the Cost Optimization and Monthly Review Live Reports
+  gain "SRE Agent spend" and "SRE Agent findings" sections.
 - **SRE Agent Spend task** `sre-agent-spend-report` (9th task, Mondays 18:30 UTC): weekly
   `FinOps: SRE Agent Spend` Live Report.
 - **Faster UsageDetails paging**: one `az rest` call per page with no Python step between pages;

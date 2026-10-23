@@ -8,6 +8,7 @@ Rolls the existing read-only FinOps analyses up into ONE executive summary:
   * budget status         (finops-budget-governance      -> evaluate_budgets -> dict)
   * waste cleanup         (finops-waste-finder           -> find_waste -> dict, optional)
   * rate optimization     (finops-commitment-advisor     -> analyze_commitments -> dict, optional)
+  * SRE Agent spend       (finops-sre-agent              -> analyze_sre_agent_costs -> dict, optional)
 
 Usage optimization (rightsizing + waste, de-duplicated by resource id) and rate optimization
 (commitments) are reported separately and never summed: buying commitments for capacity that
@@ -239,6 +240,77 @@ def _rate_priorities(rate_roll):
     return items
 
 
+_SRE_AGENT_HINTS = {
+    # hint type: (impact_type, title, action)
+    "idle_agent": ("savings", "Idle SRE Agent",
+                   "Consolidate its scope onto another agent or delete it"),
+    "stopped_agent_billed": ("savings", "Stopped SRE Agent still billed",
+                             "Delete it if no longer needed; stopping does not end billing"),
+    "consolidation_candidate": ("savings", "Consolidate SRE Agents",
+                                "Move scopes onto one agent and delete the rest"),
+    "deleted_agent_billed": ("risk", "Deleted SRE Agent still billed",
+                             "Confirm the agent is deleted and charges stop"),
+    "limit_risk": ("risk", "SRE Agent near its monthly AAU limit",
+                   "Raise the limit or reduce scheduled/incident load"),
+    "always_on_waived_verify": ("upcoming cost", "SRE Agent trial waiver ends",
+                                "Budget for always-on flow once the trial ends"),
+}
+_SRE_PER_AGENT_SAVINGS = ("idle_agent", "stopped_agent_billed")
+
+
+def _sre_agent_rollup(sre):
+    """Azure SRE Agent (AAU) spend from analyze_sre_agent_costs(), with de-duplicated savings.
+
+    Per-agent savings (idle / stopped-but-billed) and the consolidation hint describe the same
+    always-on dollars, so only the larger of the two is counted and ranked.
+    """
+    s = sre or {}
+    hints = [h for h in (s.get("hints") or []) if isinstance(h, dict)]
+    per_agent = [h for h in hints if h.get("type") in _SRE_PER_AGENT_SAVINGS]
+    consolidation = [h for h in hints if h.get("type") == "consolidation_candidate"]
+    per_agent_total = sum(_num(h.get("monthly_usd")) or 0.0 for h in per_agent)
+    consolidation_total = sum(_num(h.get("monthly_usd")) or 0.0 for h in consolidation)
+    if consolidation_total > per_agent_total:
+        savings_hints, savings = consolidation, consolidation_total
+    else:
+        savings_hints, savings = per_agent, per_agent_total
+    ranked = savings_hints + [
+        h for h in hints
+        if _SRE_AGENT_HINTS.get(h.get("type"), ("",))[0] in ("risk", "upcoming cost")
+    ]
+    return {
+        "total_usd": round(_num(s.get("total_usd")) or 0.0, 2),
+        "always_on_usd": round(_num(s.get("always_on_usd")) or 0.0, 2),
+        "active_usd": round(_num(s.get("active_usd")) or 0.0, 2),
+        "always_on_pct": _num(s.get("always_on_pct")),
+        "agent_count": s.get("agent_count") or 0,
+        "currency": s.get("currency"),
+        "window_start": s.get("window_start"),
+        "window_end": s.get("window_end"),
+        "potential_monthly_savings": round(savings, 2),
+        "by_agent": (s.get("by_agent") or [])[:_TOP_PER_SECTION],
+        "hints": hints[:_TOP_PER_SECTION],
+        "ranked_hints": ranked,
+        "warnings": list(s.get("warnings") or []),
+    }
+
+
+def _sre_agent_priorities(sre_roll):
+    items = []
+    for h in sre_roll["ranked_hints"]:
+        impact_type, title, action = _SRE_AGENT_HINTS[h.get("type")]
+        items.append({
+            "category": "sre_agent",
+            "impact_type": impact_type,
+            "impact_usd": _num(h.get("monthly_usd")),
+            "title": f"{title} — {h.get('target')}",
+            "detail": h.get("detail"),
+            "action": action,
+            "validated": None,
+        })
+    return items
+
+
 def _priorities(rightsizing, anomalies, budget_roll, governance, extra=()):
     """One blended, dollar-ranked action list. Each item is labelled with an impact_type so
     savings, overruns, spikes, and governance exposure are comparable but never conflated."""
@@ -308,7 +380,8 @@ def _priorities(rightsizing, anomalies, budget_roll, governance, extra=()):
 
 
 def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
-                           budgets=None, waste=None, commitments=None, as_of=None):
+                           budgets=None, waste=None, commitments=None, sre_agents=None,
+                           as_of=None):
     """Roll the FinOps analyses up into one executive optimization summary.
 
     anomalies    the list returned by detect_anomalies()          (or None)
@@ -317,12 +390,15 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
     budgets      the dict returned by evaluate_budgets()          (or None)
     waste        the dict returned by find_waste()                (or None)
     commitments  the dict returned by analyze_commitments()       (or None)
+    sre_agents   the dict returned by analyze_sre_agent_costs()   (or None)
     as_of        date the report is anchored to (defaults to today)
 
     Every input is optional; a missing analysis becomes an empty section rather than an error.
     `waste` and `commitments` add their own sections and headline keys only when provided:
     headline.waste_monthly_savings, usage_optimization_monthly_savings (rightsizing + waste),
     rate_optimization_monthly_savings, commitment_coverage_pct, unused_commitment_cost.
+    `sre_agents` adds an `sre_agents` section and headline.sre_agent_spend_usd,
+    sre_agent_always_on_pct, sre_agent_monthly_savings (kept separate from usage optimization).
     headline.potential_monthly_savings stays rightsizing-only for backward compatibility.
 
     Returns a dict:
@@ -348,11 +424,15 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
     governance_roll = _governance_rollup(alloc, budget_roll)
     waste_roll = _waste_rollup(waste, rightsizing) if waste is not None else None
     rate_roll = _commitment_rollup(commitments) if commitments is not None else None
+    sre_roll = _sre_agent_rollup(sre_agents) if sre_agents is not None else None
     extra = []
     if waste_roll is not None:
         extra += _waste_priorities(waste_roll)
     if rate_roll is not None:
         extra += _rate_priorities(rate_roll)
+    if sre_roll is not None:
+        extra += _sre_agent_priorities(sre_roll)
+        del sre_roll["ranked_hints"]
     priorities = _priorities(rightsizing_roll, anomaly_roll, budget_roll, governance_roll, extra)
 
     summary = budget_roll["summary"]
@@ -376,6 +456,10 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
         headline["rate_optimization_monthly_savings"] = rate_roll["potential_monthly_savings"]
         headline["commitment_coverage_pct"] = rate_roll["coverage_pct"]
         headline["unused_commitment_cost"] = rate_roll["unused_commitment_cost"]
+    if sre_roll is not None:
+        headline["sre_agent_spend_usd"] = sre_roll["total_usd"]
+        headline["sre_agent_always_on_pct"] = sre_roll["always_on_pct"]
+        headline["sre_agent_monthly_savings"] = sre_roll["potential_monthly_savings"]
 
     out = {
         "as_of": today.isoformat(),
@@ -390,4 +474,6 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
         out["waste"] = waste_roll
     if rate_roll is not None:
         out["commitments"] = rate_roll
+    if sre_roll is not None:
+        out["sre_agents"] = sre_roll
     return out

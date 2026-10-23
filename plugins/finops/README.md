@@ -400,14 +400,15 @@ The pack also installs eight **Live Reports** — self-contained HTML dashboards
   split into always-on flow (fixed until the agent is deleted) and active flow, with active flow by
   source (chat, scheduled tasks, incidents), the costliest threads, month-to-date use against each
   agent's monthly limit, and read-only hints (idle, stopped-but-billed, deleted-but-billed,
-  consolidation), from the `finops-sre-agent` skill.
+  consolidation), from the `finops-sre-agent` skill. The Cost Optimization and Monthly Review reports
+  also include SRE Agent spend and findings.
 - **`FinOps: Cost vs Reliability`** (weekly) — monthly cost joined to weighted reliability pain from
   alerts (primary), Resource Health, and Advisor HighAvailability, with a spend + pain table, service
   rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from the
   `finops-cost-vs-reliability` skill.
 - **`FinOps: Monthly Review`** (monthly, 1st at 15:00 UTC) — FinOps score and crawl/walk/run
   indication, KPI scorecard with tag and budget governance checks, month-end forecast vs budget,
-  month-over-month variance by owner, top resource movers, unit economics, and per-owner action
+  month-over-month variance by owner, top resource movers, unit economics, SRE Agent spend, and per-owner action
   lists from the `finops-kpi-scorecard` skill.
 
 When one of these report skills runs from chat for the full managed scope, it also saves (a new

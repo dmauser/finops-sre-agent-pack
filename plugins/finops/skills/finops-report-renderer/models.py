@@ -1065,6 +1065,10 @@ def build_cost_optimization_model(
         metrics, section = _optimization_commitments(result)
         extra_metrics.extend(metrics)
         extra_sections.append(section)
+    if "sre_agents" in result:
+        metric, sections = _sre_agent_rollup_sections(result["sre_agents"], "result.sre_agents")
+        extra_metrics.append(metric)
+        extra_sections.extend(sections)
 
     return _model(
         "FinOps: Cost Optimization",
@@ -1183,6 +1187,95 @@ def build_cost_optimization_model(
         ]
         + extra_sections,
     )
+
+
+def _sre_agent_rollup_sections(block, path):
+    """SRE Agent (AAU) metric + sections shared by the Cost Optimization and Monthly Review models.
+
+    `block` is analyze_sre_agent_costs() output or the summarize_optimization `sre_agents` rollup.
+    """
+
+    block = _object(block or {}, path)
+    currency = _text(block.get("currency"), f"{path}.currency", default="USD") or "USD"
+    total = _decimal(block.get("total_usd"), f"{path}.total_usd", optional=True)
+    always_on_pct = _decimal(block.get("always_on_pct"), f"{path}.always_on_pct", optional=True)
+    savings = _decimal(
+        block.get("potential_monthly_savings"), f"{path}.potential_monthly_savings", optional=True
+    )
+
+    agents = []
+    for index, row in enumerate(_objects(block.get("by_agent"), f"{path}.by_agent")):
+        prefix = f"{path}.by_agent[{index}]"
+        cost = _decimal(row.get("monthly_usd"), f"{prefix}.monthly_usd")
+        projected = _decimal(
+            row.get("projected_limit_pct"), f"{prefix}.projected_limit_pct", optional=True
+        )
+        agents.append(
+            (
+                _text(row.get("agentName"), f"{prefix}.agentName"),
+                _text(row.get("status"), f"{prefix}.status"),
+                cost,
+                _decimal(row.get("always_on_usd"), f"{prefix}.always_on_usd", optional=True),
+                _decimal(row.get("active_usd"), f"{prefix}.active_usd", optional=True),
+                projected,
+                _text(row.get("resourceId"), f"{prefix}.resourceId"),
+            )
+        )
+    agents.sort(key=lambda r: (-r[2], r[0].casefold(), r[0], r[6].casefold(), r[6]))
+
+    hints = []
+    for index, row in enumerate(_objects(block.get("hints"), f"{path}.hints")):
+        prefix = f"{path}.hints[{index}]"
+        hint_type = _text(row.get("type"), f"{prefix}.type")
+        hints.append(
+            (
+                hint_type,
+                _text(row.get("target"), f"{prefix}.target"),
+                _decimal(row.get("monthly_usd"), f"{prefix}.monthly_usd", optional=True),
+                _text(row.get("detail"), f"{prefix}.detail"),
+                "verify first" if hint_type in _VERIFY_HINTS else "review",
+            )
+        )
+    hints.sort(
+        key=lambda r: (
+            r[2] is None, -(r[2] or Decimal(0)), r[0].casefold(), r[0], r[1].casefold(), r[1], r[3]
+        )
+    )
+
+    detail = f"{_percent(always_on_pct)} always-on flow"
+    if savings is not None:
+        detail += f"; {_money(savings, currency)}/month removable"
+    metric = {"label": "SRE Agent spend", "value": _money(total, currency), "detail": detail}
+    sections = [
+        {
+            "title": "SRE Agent spend",
+            "description": (
+                "Azure Agent Unit (AAU) cost per SRE Agent. Always-on flow is billed until the "
+                "agent is deleted; stopping does not end it. See the FinOps: SRE Agent Spend report."
+            ),
+            "columns": ["Agent", "Status", "Spend", "Always-on", "Active", "Projected limit use"],
+            "rows": [
+                [
+                    r[0],
+                    r[1],
+                    _money(r[2], currency),
+                    _money(r[3], currency),
+                    _money(r[4], currency),
+                    _percent(r[5]),
+                ]
+                for r in agents
+            ],
+            "emptyMessage": "No SRE Agent spend was found in the managed scopes.",
+        },
+        {
+            "title": "SRE Agent findings",
+            "description": "Read-only hints; delete or consolidate agents only after owner review.",
+            "columns": ["Type", "Target", "Monthly impact", "Detail", "Action"],
+            "rows": [[r[0], r[1], _money(r[2], currency), r[3], r[4]] for r in hints],
+            "emptyMessage": "No SRE Agent findings were produced.",
+        },
+    ]
+    return metric, sections
 
 
 def _optimization_waste(result):
@@ -2261,7 +2354,8 @@ def build_monthly_review_model(
     `review` bundles the deterministic finops-kpi-scorecard and finops-cost-allocation outputs:
     {"month": "YYYY-MM", "scorecard": kpi_scorecard(...), "forecast": forecast_spend(...),
      "month_over_month": month_over_month(...), "routing": route_to_owners(...),
-     "unit_economics": unit_economics(...) or a list of them}. Only `scorecard` is required.
+     "unit_economics": unit_economics(...) or a list of them,
+     "sre_agents": analyze_sre_agent_costs(...) or None}. Only `scorecard` is required.
     """
 
     review = _object(review, "review")
@@ -2505,6 +2599,9 @@ def build_monthly_review_model(
         "critical" if counts["fail"] else "warning" if counts["warn"] else "good" if known else "neutral"
     )
     governance = [row for row in kpis if "governance" in row[1].casefold()]
+    sre_sections = []
+    if review.get("sre_agents") is not None:
+        _, sre_sections = _sre_agent_rollup_sections(review["sre_agents"], "review.sre_agents")
     return _model(
         "FinOps: Monthly Review",
         f"Monthly FinOps review for {month or 'the closed month'}: KPI scorecard, governance, "
@@ -2599,7 +2696,8 @@ def build_monthly_review_model(
                 "rows": [[r[1], r[2], r[3]] for r in actions],
                 "emptyMessage": "No KPI actions are open.",
             },
-        ],
+        ]
+        + sre_sections,
     )
 
 

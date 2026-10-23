@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ def _load(name, path):
 sre = _load("sreagent", SKILLS / "finops-sre-agent" / "sreagent.py")
 models = _load("finops_models_sre", SKILLS / "finops-report-renderer" / "models.py")
 render = _load("finops_render_sre", SKILLS / "finops-report-renderer" / "render.py")
+summarize = _load("finops_summarize_sre", SKILLS / "finops-cost-optimization-report" / "summarize.py")
 
 SUB = "/subscriptions/000/resourceGroups/sre/providers/Microsoft.App/agents/"
 OPS, LAB, GONE, TRIAL = (SUB + n for n in ("ops-agent", "lab-agent", "gone-agent", "trial-agent"))
@@ -233,3 +235,51 @@ def test_report_adapter_marks_verify_hints_and_handles_empty():
     assert "No SRE Agent spend" in hints["emptyMessage"]
     for hint in ("always_on_waived_verify", "deleted_agent_billed", "model_choice_verify"):
         assert hint in models._VERIFY_HINTS
+
+
+def _idle_pair():
+    days = ("2026-07-29", "2026-07-30", "2026-07-31")
+    lines = [_line(rid, d, 100.0) for d in days for rid in (OPS, LAB)]
+    agents = [
+        {"id": OPS, "name": "ops-agent", "powerState": "Running"},
+        {"id": LAB, "name": "lab-agent", "powerState": "Running"},
+    ]
+    return sre.analyze_sre_agent_costs(lines, agents, {OPS: _usage(), LAB: _usage()})
+
+
+def test_cost_optimization_rollup_dedupes_sre_savings_and_ranks_hints():
+    sre_result = _idle_pair()
+    out = summarize.summarize_optimization(sre_agents=sre_result, as_of=date(2026, 8, 1))
+    head = out["headline"]
+    assert head["sre_agent_spend_usd"] == pytest.approx(sre_result["total_usd"])
+    # two idle agents (2 x 292) beat one consolidation (292); never both
+    assert head["sre_agent_monthly_savings"] == pytest.approx(584.0)
+    assert head["potential_monthly_savings"] == 0
+    block = out["sre_agents"]
+    assert block["agent_count"] == 2
+    assert "ranked_hints" not in block
+    sre_items = [p for p in out["priorities"] if p["category"] == "sre_agent"]
+    assert sre_items and all(p["impact_type"] == "savings" for p in sre_items)
+    json.dumps(out)
+
+
+def test_cost_optimization_rollup_is_absent_without_sre_input():
+    out = summarize.summarize_optimization(as_of=date(2026, 8, 1))
+    assert "sre_agents" not in out
+    assert "sre_agent_spend_usd" not in out["headline"]
+
+
+def test_sre_rollup_renders_in_cost_optimization_and_monthly_models():
+    sre_result = _idle_pair()
+    out = summarize.summarize_optimization(sre_agents=sre_result, as_of=date(2026, 8, 1))
+    ctx = {"refreshed_at": "2026-08-01T00:00:00Z"}
+    model = models.build_cost_optimization_model(out, **ctx)
+    titles = [s["title"] for s in model["sections"]]
+    assert "SRE Agent spend" in titles and "SRE Agent findings" in titles
+    assert any(m["label"] == "SRE Agent spend" for m in model["metrics"])
+
+    monthly = models.build_monthly_review_model(
+        {"scorecard": {}, "sre_agents": sre_result}, **ctx)
+    assert "SRE Agent spend" in [s["title"] for s in monthly["sections"]]
+    plain = models.build_monthly_review_model({"scorecard": {}}, **ctx)
+    assert "SRE Agent spend" not in [s["title"] for s in plain["sections"]]

@@ -1,6 +1,6 @@
 ---
 name: finops-cost-optimization-report
-description: Executive FinOps rollup for Azure — one report bundling cost anomalies, rightsizing and waste-cleanup savings, rate optimization (reservations, savings plans, Hybrid Benefit), budget status, and governance (policy) findings. It orchestrates the existing read-only skills (finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-cost-allocation, finops-budget-governance), then rolls their outputs up with the bundled summarize.py using the runtime's sandbox Python tool into an executive headline, a single dollar-ranked priorities list, and per-section detail. Read-only — no writes; "policy findings" reuse existing tag-hygiene and budget-gate signals rather than a new data source. Use for a periodic FinOps review, a cost-optimization summary, or an executive "where should we act" briefing.
+description: Executive FinOps rollup for Azure — one report bundling cost anomalies, rightsizing and waste-cleanup savings, rate optimization (reservations, savings plans, Hybrid Benefit), Azure SRE Agent (AAU) spend, budget status, and governance (policy) findings. It orchestrates the existing read-only skills (finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-sre-agent, finops-cost-allocation, finops-budget-governance), then rolls their outputs up with the bundled summarize.py using the runtime's sandbox Python tool into an executive headline, a single dollar-ranked priorities list, and per-section detail. Read-only — no writes; "policy findings" reuse existing tag-hygiene and budget-gate signals rather than a new data source. Use for a periodic FinOps review, a cost-optimization summary, or an executive "where should we act" briefing.
 ---
 
 ## When to use this skill
@@ -15,7 +15,7 @@ budget, and what spend is ungoverned.
 For a single dimension use the underlying skill directly: cost spikes →
 `finops-cost-anomaly-detection`; idle/oversized resources → `finops-rightsizing-advisor`; orphaned
 network/snapshot/logging waste → `finops-waste-finder`; reservations, savings plans, and licenses →
-`finops-commitment-advisor`; who owns the spend → `finops-cost-allocation`; budget status →
+`finops-commitment-advisor`; Azure SRE Agent cost → `finops-sre-agent`; who owns the spend → `finops-cost-allocation`; budget status →
 `finops-budget-governance`; right-sizing a budget → `finops-budget-editor`.
 
 ## Required access
@@ -65,10 +65,15 @@ pull and call — do **not** re-implement their logic here:
 4. **finops-commitment-advisor** → `analyze_commitments(...)` → a rate-optimization dict.
 5. **finops-cost-allocation** → `allocate_costs(costs, tags, dimension=...)` → an allocation dict.
 6. **finops-budget-governance** → `evaluate_budgets(budgets)` → a budget-status dict.
+7. **finops-sre-agent** → `analyze_sre_agent_costs(sre_lines, agents, daily_usage, monthly_usage)` →
+   an SRE Agent spend dict. Take `sre_lines` from the shared pull's included rows with
+   `is_sre_agent_line`. The agent inventory and per-agent
+   `dailyUsageDetails` / `usages` GETs follow that skill's Steps 2-3. If they fail, pass only
+   the line items (the always-on/active split is then estimated).
 
 The heavy/`413`-prone step is the shared **cost line-item pull** used by anomaly, allocation,
 rightsizing, waste, and commitment coverage — pull it **once** (AmortizedCost, trailing 30 days,
-projected with the union of fields every core needs: `pricingModel`, `meterCategory`, `quantity`,
+projected with the union of fields every core needs: `pricingModel`, `meterCategory`, `meterName`, `consumedService`, `quantity`,
 `unitOfMeasure`, `tags`) and
 feed every core. If any one analysis fails or is out of
 scope, keep going with the rest; `summarize.py` treats a missing input as an empty section. Do
@@ -100,7 +105,7 @@ commitment inventory → the Reservations Reader / Savings plan Reader grant.
 ```bash
 az rest --method get \
   --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&%24top=1000" \
-  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, pricingModel: properties.pricingModel, meterCategory: properties.meterCategory, quantity: properties.quantity, unitOfMeasure: properties.unitOfMeasure, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}" \
+  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, pricingModel: properties.pricingModel, meterCategory: properties.meterCategory, meterName: properties.meterName, consumedService: properties.consumedService, quantity: properties.quantity, unitOfMeasure: properties.unitOfMeasure, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}" \
   -o json
 ```
 
@@ -158,6 +163,7 @@ report = summarize_optimization(
     budgets=budgets_dict,           # from evaluate_budgets (or None)
     waste=waste_dict,               # from find_waste (or None)
     commitments=commitments_dict,   # from analyze_commitments (or None)
+    sre_agents=sre_agent_dict,      # from analyze_sre_agent_costs (or None)
 )
 ```
 
@@ -168,22 +174,25 @@ report = summarize_optimization(
   `untagged_usd`, `unallocated_pct`. When waste is supplied: `waste_monthly_savings` and
   `usage_optimization_monthly_savings` (rightsizing + waste, de-duplicated by resource id). When
   commitments are supplied: `rate_optimization_monthly_savings`, `commitment_coverage_pct`,
-  `unused_commitment_cost`.
+  `unused_commitment_cost`. When SRE Agent spend is supplied: `sre_agent_spend_usd`,
+  `sre_agent_always_on_pct`, and `sre_agent_monthly_savings` (idle/stopped agents or
+  consolidation, whichever is larger, never both; kept separate from usage optimization).
 - **priorities**: ONE dollar-ranked action list across all sources. Each item carries an
   **`impact_type`** — `savings` (rightsizing, waste, commitment purchase), `unused commitment`,
-  `risk` (expiring commitment), `overrun` (budget gate), `spike` (anomaly), or `governance`
-  (untagged spend / tag hygiene) — so amounts are never silently conflated. Only the headline
+  `risk` (expiring commitment), `overrun` (budget gate), `spike` (anomaly), `governance`
+  (untagged spend / tag hygiene), or `upcoming cost` (SRE Agent trial waiver ending). SRE Agent
+  items use category `sre_agent` — so amounts are never silently conflated. Only the headline
   commitment family (reservation **or** savings plan) is ranked; the other is an alternative.
   Unknown-dollar items are kept and sort last.
-- **rightsizing / waste / commitments / anomalies / budgets / governance**: the per-section detail
+- **rightsizing / waste / commitments / sre_agents / anomalies / budgets / governance**: the per-section detail
   for the dashboard.
 
 ### Step 3 — Report
 
 Produce an **executive summary** dashboard: the **headline** metrics up top; the **top priorities**
 table next (rank, category, impact, action) — this is the "where to act first" list; then a section
-per analysis (rightsizing, waste cleanup, rate optimization, anomalies, budget status,
-governance/policy findings). Label each priority by its `impact_type` and **never sum savings,
+per analysis (rightsizing, waste cleanup, rate optimization, SRE Agent spend, anomalies, budget
+status, governance/policy findings). Label each priority by its `impact_type` and **never sum savings,
 overruns, spikes, and governance exposure into one number** — they are different kinds of dollars.
 Report usage optimization (rightsizing + waste) and rate optimization (commitments) as separate
 numbers: committing to capacity that is about to be removed double-counts the same dollars, so
