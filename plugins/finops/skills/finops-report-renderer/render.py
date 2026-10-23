@@ -1,6 +1,7 @@
 """Deterministic CSP-compliant static HTML renderer for FinOps reports."""
 
 import html
+import re
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,19 @@ def _metrics(model):
     return '<div class="metrics">' + "".join(rendered) + "</div>"
 
 
+_NUMERIC_CELL = re.compile(r"^[-+]?[$€£]?[-+]?[\d.,]+\s?(%|[A-Z]{3}|AAU)?$")
+
+
+def _cell(value):
+    """Render one table cell: keep numbers on one line, let long tokens (resource IDs) wrap."""
+    text = str(value)
+    if _NUMERIC_CELL.match(text.strip()):
+        return f'<td class="num">{_escape(text)}</td>'
+    if any(len(token) > 32 for token in text.split()):
+        return f'<td class="long">{_escape(text)}</td>'
+    return f"<td>{_escape(text)}</td>"
+
+
 def _sections(model):
     rendered = []
     for index, section in enumerate(_list(model.get("sections"), "sections")):
@@ -81,9 +95,7 @@ def _sections(model):
                 raise ValueError(
                     f"sections[{index}].rows[{row_index}] must match columns"
                 )
-            body.append(
-                "<tr>" + "".join(f"<td>{_escape(cell)}</td>" for cell in row) + "</tr>"
-            )
+            body.append("<tr>" + "".join(_cell(cell) for cell in row) + "</tr>")
 
         if body:
             content = (
@@ -221,11 +233,12 @@ h1,h2,p {{ margin-top:0; }}
 .table-wrap {{ overflow-x:auto; }} table {{ width:100%; border-collapse:collapse; }}
 th,td {{ padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; }} th {{ color:#44516a; font-size:.84rem; text-transform:uppercase; }}
 .chart-wrap {{ height:320px; }} .empty {{ color:#718096; font-style:italic; }}
-code,td {{ overflow-wrap:anywhere; }}
+code,td.long {{ overflow-wrap:anywhere; }} td.num {{ white-space:nowrap; }}
 @media (max-width:640px) {{
   body {{ padding:12px; }} header,section {{ padding:14px; }} h1 {{ font-size:1.5rem; }}
   .metrics {{ grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }}
   .metric-value {{ font-size:1.35rem; }} th,td {{ padding:8px 6px; font-size:.86rem; }}
+  table {{ min-width:720px; }} td.long {{ min-width:180px; }}
   .chart-wrap {{ height:240px; }}
 }}
 </style>

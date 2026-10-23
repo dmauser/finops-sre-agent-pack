@@ -749,43 +749,43 @@ def test_all_adapters_render_empty_states(builder, empty):
             models.build_cost_overview_model,
             _overview,
             "b50527d4e68a9c69e6cac6b590f1530754d2f4026de5e92dbc8928b65dd5d2a9",
-            "af75b18066a58f8d8e833305fd9522cf3412668973edeb324454a1b4a86dd31d",
+            "e3e81d10758a60466905d3af9334ee080ecd65c1899924cb7f0a575963320080",
         ),
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
             "582d55595fb372e18e87690e04380614a2ba67cc84a3535f0441674e5095801f",
-            "ef9cc2e13ea72ccdad9bf4050c58ed249a5b91ecb7d316ddb79996632d27f96c",
+            "55d9e13622467d0b84b80f2e3d20e228524249abc5eeb12ed98c1e1220eb3868",
         ),
         (
             models.build_budget_status_model,
             _budgets,
             "07f8af03e2ff258a9252aa7ef8697235ec6379ddf6ad10bf6ab031ef929c4732",
-            "b08cb075f0f899798584e49c823a54c6a3734f4954101da4f5f28d1a290b855e",
+            "5d8a108e977ffb5db5d9305f530fe781a692bc1589ab787bfb75e1dd6be48d14",
         ),
         (
             models.build_cost_optimization_model,
             _optimization,
             "c631687b3dc79165ba738e8bf5d484acdd98c337ead990dfbd4e3caf69225b95",
-            "058b4cb0ef682972968de8185794e789f9f5c111712a5f41f554e0e39dfa901d",
+            "3b2542247b3210afe302b6d1a8d46d02b53b8e1953e2cfcbcbd07cd1928594d8",
         ),
         (
             models.build_ai_spend_model,
             _ai_spend,
             "ec0c391f9b5454c1f86bcf5db3c5c2489d7a5a32c0ccda2681afb827045142ff",
-            "df08b0615103c836d52cdb21f375aa88127a2d12c49d2ffc2a2ea088ad5b692b",
+            "3da503c23d3d5fbe1bb04e72e7a8a02458c04e0aef32e363c5f2fe2d82b6deca",
         ),
         (
             models.build_cost_vs_reliability_model,
             _reliability,
             "71af9517bf5436e8b8f7d23045995cac37f18cb2d6a9bd83cbc13d03c24a8111",
-            "3a9710ae9d9dfa79397b017bc72d7231a4f4847575458b6268038668a890b994",
+            "39835a611d8b4f036e81c12d47309b8efd265ce0915d257a3cea35888514f693",
         ),
         (
             models.build_monthly_review_model,
             _monthly,
             "85657923896814482a757fc3a3f78f7b66a858fb59a6bb9594ef5c958b5b1d65",
-            "324b37959a8acbec29ec3a14944dd9987313e134457ea8730d00bceaa0fcd6be",
+            "932aa258d5ae15457c4f42178200dea9c1479b000629058525dbc62cb3508715",
         ),
     ],
 )
@@ -1017,3 +1017,11 @@ def test_refreshed_time_is_human_readable_and_chart_titled():
     assert "@media (max-width:640px)" in output
     model["refreshedAt"] = "today"
     assert "Last refreshed: today" in renderer.render_report(model)
+
+
+def test_table_cells_keep_numbers_whole_and_wrap_long_ids():
+    assert renderer._cell("$508.05") == '<td class="num">$508.05</td>'
+    assert renderer._cell("98.1%") == '<td class="num">98.1%</td>'
+    rid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.App/agents/a"
+    assert renderer._cell(rid).startswith('<td class="long">')
+    assert renderer._cell("governance") == "<td>governance</td>"
