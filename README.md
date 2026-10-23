@@ -29,6 +29,7 @@ the [Microsoft FinOps Framework](https://learn.microsoft.com/en-us/cloud-computi
 - [Managed scope](#managed-scope)
 - [Safety model](#safety-model)
 - [Install](#install)
+  - [Install with GitHub Copilot](#install-with-github-copilot)
   - [Automated deployment](#automated-deployment)
   - [Manual (portal)](#manual-portal)
   - [Installer for an existing agent](#installer-for-an-existing-agent)
@@ -238,8 +239,39 @@ run; you do not need to reinstall the plugin.
 
 ## Install
 
-There are two onboarding paths. Both produce the same agent, plugin, subagent, scheduled tasks, and
+There are three onboarding paths. All produce the same agent, plugin, subagent, scheduled tasks, and
 RBAC. See **[docs/ONBOARDING.md](docs/ONBOARDING.md)** for the full guide.
+
+### Install with GitHub Copilot
+
+Let an AI coding agent run the install for you. This works with [GitHub Copilot CLI](https://github.com/features/copilot/cli)
+or Copilot agent mode in VS Code, on a machine with `az`, `git`, `curl`, `python3`, and bash (WSL on
+Windows). Sign in first with `az login`, then paste this prompt:
+
+```text
+Install the Azure SRE Agent FinOps pack from https://github.com/dmauser/finops-sre-agent-pack.
+
+1. Clone the repository and read README.md and docs/ONBOARDING.md.
+2. Check the prerequisites: az (signed in), git, curl, python3, bash. Show me the current
+   subscription with `az account show` and confirm it is the right one.
+3. Ask me whether to create a new SRE Agent or add the pack to an existing one.
+   - New agent: ask for the agent name, Azure region, and resource group.
+   - Existing agent: ask for the agent name and resource group.
+4. Ask whether to schedule only the weekly Cost Optimization report (default) or all reports.
+5. Run plugins/finops/deploy/deploy.sh with --dry-run first, show me the plan, and wait for my
+   approval. Then run it for real, for example:
+     ./plugins/finops/deploy/deploy.sh -n <agent> -l <region> -g <rg> [--tasks all]
+6. Tell me which roles from the README "Permissions" table I still need to grant myself
+   (Reader on managed scopes, Reservations/Savings plan Reader, Carbon Optimization Reader),
+   with the exact az commands, but do not run role assignments without my approval.
+7. Summarize what was installed and how to open the Live Reports in the SRE Agent portal.
+
+Do not modify or delete any existing Azure resources other than the SRE Agent you create or
+the agent I name.
+```
+
+The agent asks before it creates anything, and the pack itself stays read-only after install (see
+[Safety model](#safety-model)).
 
 ### Automated deployment
 
