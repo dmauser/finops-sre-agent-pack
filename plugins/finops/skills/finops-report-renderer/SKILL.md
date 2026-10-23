@@ -94,7 +94,7 @@ model = {
     "partial": False,
     "warnings": [],
     "metrics": [
-        {"label": "30-day spend", "value": "$123.45", "detail": "ActualCost"},
+        {"label": "30-day spend", "value": "$123.45", "detail": "AmortizedCost"},
     ],
     "chart": {
         "type": "line",

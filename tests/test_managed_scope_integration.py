@@ -10,6 +10,8 @@ FINOPS = ROOT / "plugins" / "finops"
 SKILL_NAMES = {
     "finops-cost-anomaly-detection",
     "finops-rightsizing-advisor",
+    "finops-waste-finder",
+    "finops-commitment-advisor",
     "finops-cost-allocation",
     "finops-budget-governance",
     "finops-budget-editor",

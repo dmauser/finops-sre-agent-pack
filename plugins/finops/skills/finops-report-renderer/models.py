@@ -272,8 +272,15 @@ def build_cost_overview_model(
     """Adapt a deterministic 30-day cost aggregation to the generic report model."""
 
     overview = _object(overview, "overview")
+    metric = _text(
+        _field(overview, "cost_metric", "costMetric"), "overview.cost_metric",
+        default="AmortizedCost",
+    ) or "AmortizedCost"
+    currency = _text(
+        _field(overview, "currency"), "overview.currency", default="USD"
+    ) or "USD"
     total = _decimal(
-        _field(overview, "total_usd", "totalUsd"), "overview.total_usd"
+        _field(overview, "total_usd", "totalUsd", "total_cost", "total"), "overview.total_usd"
     )
     daily = []
     for index, row in enumerate(
@@ -335,16 +342,16 @@ def build_cost_overview_model(
     )
     chart = {
         "type": "line",
-        "label": "Daily ActualCost (USD)",
+        "label": f"Daily {metric} ({currency})",
         "labels": [date for date, _ in daily],
         "values": [_chart_number(cost) for _, cost in daily],
     }
     return _model(
         "FinOps: Cost Overview",
-        "Daily-refreshed 30-day Azure ActualCost snapshot; recent UsageDetails can still be settling.",
+        f"Daily-refreshed 30-day Azure {metric} snapshot; recent UsageDetails can still be settling.",
         context,
         [
-            {"label": "30-day spend", "value": _money(total), "detail": "ActualCost"},
+            {"label": "30-day spend", "value": _money(total, currency), "detail": metric},
             {
                 "label": "Days represented",
                 "value": str(len(daily)),
@@ -362,14 +369,14 @@ def build_cost_overview_model(
                 "title": "Top services",
                 "description": "Service totals ranked by cost.",
                 "columns": ["Service", "Cost"],
-                "rows": [[name, _money(cost)] for name, cost in services],
+                "rows": [[name, _money(cost, currency)] for name, cost in services],
                 "emptyMessage": "No service cost rows were produced.",
             },
             {
                 "title": "Top resource groups",
                 "description": "Resource-group totals ranked by cost.",
                 "columns": ["Resource group", "Cost"],
-                "rows": [[name, _money(cost)] for name, cost in groups],
+                "rows": [[name, _money(cost, currency)] for name, cost in groups],
                 "emptyMessage": "No resource-group cost rows were produced.",
             },
         ],
@@ -630,6 +637,10 @@ def build_budget_status_model(
     )
 
     generated = []
+    if len({row["currency"] for row in budgets}) > 1:
+        generated.append(
+            "Budgets use more than one currency; portfolio totals are not summed across currencies."
+        )
     if has_run_rate:
         generated.append("Run-rate forecasts are estimates, not Azure forecastSpend.")
     if has_zero_spend:
@@ -656,15 +667,25 @@ def build_budget_status_model(
             chart_labels.append(f"{row['name']} — forecast")
             chart_values.append(_chart_number(row["forecast_pct"]))
 
+    summary_currency = _text(
+        summary.get("currency"), "result.summary.currency", default=""
+    )
+    if not summary_currency:
+        currencies = {row["currency"] for row in budgets}
+        summary_currency = currencies.pop() if len(currencies) == 1 else ""
+    mixed_currency = not summary_currency and bool(budgets)
     total_amount = _decimal(
-        summary.get("total_amount"), "result.summary.total_amount"
+        summary.get("total_amount"), "result.summary.total_amount", optional=mixed_currency
     )
     total_current = _decimal(
-        summary.get("total_current"), "result.summary.total_current"
+        summary.get("total_current"), "result.summary.total_current", optional=mixed_currency
     )
     total_forecast = _decimal(
-        summary.get("total_forecast"), "result.summary.total_forecast"
+        summary.get("total_forecast"), "result.summary.total_forecast", optional=mixed_currency
     )
+    if mixed_currency:
+        total_amount = total_current = total_forecast = None
+    summary_currency = summary_currency or "USD"
     over = _integer(summary.get("over_budget"), "result.summary.over_budget")
     forecast_over = _integer(
         summary.get("forecast_over"), "result.summary.forecast_over"
@@ -677,11 +698,11 @@ def build_budget_status_model(
         "Daily Azure budget-governance snapshot; currentSpend is updated asynchronously.",
         context,
         [
-            {"label": "Portfolio budget", "value": _money(total_amount), "detail": "Configured amount"},
-            {"label": "Current spend", "value": _money(total_current), "detail": "Azure currentSpend"},
+            {"label": "Portfolio budget", "value": _money(total_amount, summary_currency), "detail": "Configured amount" if not mixed_currency else "Mixed currencies"},
+            {"label": "Current spend", "value": _money(total_current, summary_currency), "detail": "Azure currentSpend"},
             {
                 "label": "Forecast spend",
-                "value": _money(total_forecast),
+                "value": _money(total_forecast, summary_currency),
                 "detail": "Azure or labeled run-rate forecast",
             },
             {
@@ -1025,6 +1046,16 @@ def build_cost_optimization_model(
     untagged = _decimal(
         headline.get("untagged_usd"), "result.headline.untagged_usd"
     )
+    extra_metrics = []
+    extra_sections = []
+    if "waste" in result:
+        metric, section = _optimization_waste(result)
+        extra_metrics.append(metric)
+        extra_sections.append(section)
+    if "commitments" in result:
+        metrics, section = _optimization_commitments(result)
+        extra_metrics.extend(metrics)
+        extra_sections.append(section)
 
     return _model(
         "FinOps: Cost Optimization",
@@ -1046,7 +1077,8 @@ def build_cost_optimization_model(
                 "tone": "critical" if budgets_over + budgets_forecast else "good",
             },
             {"label": "Untagged spend", "value": _money(untagged), "detail": "Governance exposure"},
-        ],
+        ]
+        + extra_metrics,
         {
             "type": "bar",
             "label": "Estimated monthly savings (USD)",
@@ -1139,8 +1171,171 @@ def build_cost_optimization_model(
                 "rows": [list(row) for row in governance_rows],
                 "emptyMessage": "No governance findings were produced.",
             },
-        ],
+        ]
+        + extra_sections,
     )
+
+
+def _optimization_waste(result):
+    block = _object(result["waste"] or {}, "result.waste")
+    currency = _text(block.get("currency"), "result.waste.currency", default="USD") or "USD"
+    savings = _decimal(
+        block.get("potential_monthly_savings"),
+        "result.waste.potential_monthly_savings",
+        optional=True,
+    )
+    rows = []
+    for index, row in enumerate(_objects(block.get("top"), "result.waste.top")):
+        prefix = f"result.waste.top[{index}]"
+        rows.append(
+            [
+                _text(row.get("resourceId"), f"{prefix}.resourceId"),
+                _text(row.get("kind"), f"{prefix}.kind"),
+                _text(row.get("reason"), f"{prefix}.reason"),
+                _money(
+                    _decimal(row.get("monthlyCost"), f"{prefix}.monthlyCost", optional=True),
+                    currency,
+                ),
+                _money(
+                    _decimal(
+                        row.get("estMonthlySavings"),
+                        f"{prefix}.estMonthlySavings",
+                        optional=True,
+                    ),
+                    currency,
+                ),
+                _text(row.get("recommendedAction"), f"{prefix}.recommendedAction"),
+            ]
+        )
+    metric = {
+        "label": "Waste cleanup savings",
+        "value": _money(savings, currency),
+        "detail": "Orphaned, idle, and stale resources",
+        "tone": "good",
+    }
+    section = {
+        "title": "Waste cleanup",
+        "description": (
+            "Orphaned, idle, and stale resources not already listed under rightsizing; "
+            "confirm with the owner before deleting."
+        ),
+        "columns": ["Resource", "Kind", "Reason", "Monthly cost", "Savings", "Action"],
+        "rows": rows,
+        "emptyMessage": "No waste findings were produced.",
+    }
+    return metric, section
+
+
+def _optimization_commitments(result):
+    block = _object(result["commitments"] or {}, "result.commitments")
+    currency = (
+        _text(block.get("currency"), "result.commitments.currency", default="USD") or "USD"
+    )
+    savings = _decimal(
+        block.get("potential_monthly_savings"),
+        "result.commitments.potential_monthly_savings",
+        optional=True,
+    )
+    coverage = _decimal(
+        block.get("coverage_pct"), "result.commitments.coverage_pct", optional=True
+    )
+    unused = _decimal(
+        block.get("unused_commitment_cost"),
+        "result.commitments.unused_commitment_cost",
+        optional=True,
+    )
+    best = _text(block.get("best_family"), "result.commitments.best_family")
+    rows = []
+    for index, row in enumerate(_objects(block.get("purchases"), "result.commitments.purchases")):
+        prefix = f"result.commitments.purchases[{index}]"
+        family = _text(row.get("family"), f"{prefix}.family")
+        rows.append(
+            [
+                "buy" + (" (headline)" if family == best else " (alternative)"),
+                f"{family.replace('_', ' ')} {_text(row.get('term'), f'{prefix}.term')}",
+                _text(row.get("sku"), f"{prefix}.sku"),
+                _money(
+                    _decimal(
+                        row.get("est_monthly_savings"),
+                        f"{prefix}.est_monthly_savings",
+                        optional=True,
+                    ),
+                    _text(row.get("currency"), f"{prefix}.currency", default=currency)
+                    or currency,
+                ),
+                "Purchase after usage optimization",
+            ]
+        )
+    for index, row in enumerate(
+        _objects(block.get("underutilized"), "result.commitments.underutilized")
+    ):
+        prefix = f"result.commitments.underutilized[{index}]"
+        util = _decimal(row.get("utilization"), f"{prefix}.utilization", optional=True)
+        rows.append(
+            [
+                "underutilized",
+                _text(row.get("kind"), f"{prefix}.kind").replace("_", " "),
+                _text(row.get("name"), f"{prefix}.name"),
+                _percent(util),
+                _text(row.get("action"), f"{prefix}.action"),
+            ]
+        )
+    for index, row in enumerate(_objects(block.get("expiring"), "result.commitments.expiring")):
+        prefix = f"result.commitments.expiring[{index}]"
+        days = _integer(row.get("days_to_expiry"), f"{prefix}.days_to_expiry")
+        rows.append(
+            [
+                "expiring",
+                _text(row.get("kind"), f"{prefix}.kind").replace("_", " "),
+                _text(row.get("name"), f"{prefix}.name"),
+                f"{days} days",
+                "Decide renewal (auto-renew is off)",
+            ]
+        )
+    for index, row in enumerate(
+        _objects(block.get("hybrid_benefit"), "result.commitments.hybrid_benefit")
+    ):
+        prefix = f"result.commitments.hybrid_benefit[{index}]"
+        rows.append(
+            [
+                "hybrid benefit",
+                _text(row.get("license"), f"{prefix}.license"),
+                _text(row.get("resourceId"), f"{prefix}.resourceId"),
+                _money(
+                    _decimal(row.get("monthly_cost"), f"{prefix}.monthly_cost", optional=True),
+                    currency,
+                ),
+                "Verify license entitlement, then enable",
+            ]
+        )
+    metrics = [
+        {
+            "label": "Rate optimization savings",
+            "value": _money(savings, currency),
+            "detail": (
+                f"Best family: {best.replace('_', ' ')}; alternatives not summed"
+                if best
+                else "Commitment purchases; alternatives not summed"
+            ),
+            "tone": "good",
+        },
+        {
+            "label": "Commitment coverage",
+            "value": _percent(coverage),
+            "detail": f"Unused commitment {_money(unused, currency)}",
+        },
+    ]
+    section = {
+        "title": "Rate optimization (commitments)",
+        "description": (
+            "Reservation and savings plan options cover the same usage and are alternatives; "
+            "only the headline family is counted. Optimize usage before committing."
+        ),
+        "columns": ["Type", "Commitment", "Target", "Value", "Action"],
+        "rows": rows,
+        "emptyMessage": "No commitment findings were produced.",
+    }
+    return metrics, section
 
 
 def build_ai_spend_model(
@@ -1299,7 +1494,7 @@ def build_ai_spend_model(
         "Weekly Azure OpenAI, Foundry, Cognitive Services, and Machine Learning cost snapshot.",
         context,
         [
-            {"label": "Total AI spend", "value": _money(total), "detail": "Monthly ActualCost"},
+            {"label": "Total AI spend", "value": _money(total), "detail": "Monthly UsageDetails cost"},
             {"label": "AI resources", "value": str(resource_count), "detail": "Attributed resources"},
             {"label": "Models", "value": str(model_count), "detail": "Token-meter models"},
             {"label": "Model-token spend", "value": _money(token_spend), "detail": "Kept separate from compute"},
@@ -1637,7 +1832,7 @@ def build_cost_vs_reliability_model(
         "Weekly view of Azure spend against transparent weighted reliability signals.",
         context,
         [
-            {"label": "Monthly spend", "value": _money(total), "detail": "ActualCost"},
+            {"label": "Monthly spend", "value": _money(total), "detail": "UsageDetails cost"},
             {"label": "Costed resources", "value": str(resource_count), "detail": "UsageDetails resources"},
             {"label": "Reliability signals", "value": str(signal_count), "detail": "Alerts, health, and Advisor HA"},
             {

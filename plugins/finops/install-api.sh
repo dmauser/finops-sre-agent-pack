@@ -40,7 +40,7 @@ TOKEN_RESOURCE="${TOKEN_RESOURCE:-https://azuresre.dev}"
 MARKETPLACE_NAME="${MARKETPLACE_NAME:-finops-pack}"
 PLUGIN_NAME="${PLUGIN_NAME:-finops}"
 SKILL_NAME="${SKILL_NAME:-finops-cost-anomaly-detection}"
-REPO_SLUG="${REPO_SLUG:-nirmash/finops-sre-agent-pack}"   # owner/repo (marketplace sourceUrl)
+REPO_SLUG="${REPO_SLUG:-dmauser/finops-sre-agent-pack}"   # owner/repo (marketplace sourceUrl)
 SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
 GITHUB_PAT="${GITHUB_PAT:-}"                      # set for a private repo; else host-default identity
 FINOPS_AGENT_NAME="${FINOPS_AGENT_NAME:-finops-investigator}"
@@ -426,6 +426,8 @@ import json, os, sys
 expected = {
     "finops-cost-anomaly-detection",
     "finops-rightsizing-advisor",
+    "finops-waste-finder",
+    "finops-commitment-advisor",
     "finops-cost-allocation",
     "finops-budget-governance",
     "finops-budget-editor",
@@ -450,12 +452,12 @@ for item in installations:
         raise SystemExit(0 if expected <= imported else 1)
 raise SystemExit(1)
 '; then
-    ok "All ten FinOps skills ready"
+    ok "All twelve FinOps skills ready"
     break
   fi
   printf '  … skills not ready (%d/60)\n' "$i"
   sleep 2
-  [ "$i" -eq 60 ] && die "Timed out waiting for all ten FinOps skills."
+  [ "$i" -eq 60 ] && die "Timed out waiting for all twelve FinOps skills."
 done
 
 # ---- 4. Upsert the FinOps investigator agent -------------------------------
@@ -563,6 +565,8 @@ required_skills = {
     "finops-managed-scope",
     "finops-cost-anomaly-detection",
     "finops-rightsizing-advisor",
+    "finops-waste-finder",
+    "finops-commitment-advisor",
     "finops-cost-allocation",
     "finops-budget-governance",
     "finops-budget-editor",
@@ -575,7 +579,7 @@ configured_skills = properties.get("allowedSkills")
 if not isinstance(configured_skills, list) or not required_skills <= set(configured_skills):
     raise SystemExit(
         "Managed-scope safety error: properties.allowedSkills must include all "
-        "ten FinOps skills."
+        "twelve FinOps skills."
     )
 for placeholder in placeholders:
     instructions = instructions.replace(placeholder, os.environ["AGENT_RESOURCE_ID"])
@@ -729,8 +733,8 @@ python3 "$TASK_RENDERER" verify-install \
 ok "all 7 scheduled tasks verified on $TASK_AGENT_NAME; retired duplicate absent"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Package: 10 skills, 1 agent, 7 tasks, 6 Live Reports\n'
-printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability, finops-managed-scope, finops-report-renderer (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Package: 12 skills, 1 agent, 7 tasks, 6 Live Reports\n'
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability, finops-managed-scope, finops-report-renderer (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
 printf '  • Agent  : "%s" (standalone, autonomous, read-only; task target: "%s")\n' "$FINOPS_AGENT_NAME" "$TASK_AGENT_NAME"
 printf '  • Budget planning: advisory proposals may include a human-run script; the agent and installer execute no budget writes and add no budget-write RBAC\n'
 printf '  • Tasks  :\n'

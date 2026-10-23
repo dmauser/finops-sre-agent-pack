@@ -13,8 +13,9 @@ periodic cost summary, use `cost-optimization-report` instead.
 ## Required access
 
 - **Cost Management Reader** on the subscription (or billing scope) for the agent's managed
-  identity. Without it, `costInUSD` comes back null. This is a one-time RBAC grant (see the
-  plugin README).
+  identity. Without it, UsageDetails returns no cost values. This is a one-time RBAC grant (see the
+  plugin README). (Enterprise Agreement rows legitimately have no `costInUSD`; their billing-currency
+  `cost` is used instead.)
 - Read-only `az` (`RunAzCliReadCommands`), the GitHub connector (for change correlation), and
   sandbox Python: use `ExecutePythonCode` when available, otherwise `RunInTerminal` with
   `python3`. No POST/write APIs are used.
@@ -59,8 +60,8 @@ The controls solve different problems:
    short half-open `usageStart` slices, paginate each slice, and de-duplicate the combined rows.
 
 ```bash
-az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000" \
-  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"
+az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&\$top=1000" \
+  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
 - **Primary anti-413 sequence:** bounded `\$top=1000`; on 413 retry with `100`, then `20`.
@@ -78,7 +79,9 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
   truncated, spend understated"** so the numbers aren't trusted as complete.
 - The projected rows already match the shape `detect.py` expects:
   `{date, cost, meterCategory, resourceGroup, resourceId, tags}` — `date` from
-  `properties.date`, `cost` from `properties.costInUSD`. For `resourceId` use
+  `properties.date`, `cost` from `properties.costInUSD` (normalized by `prepare_usage_details`
+  to the billing-currency cost for Enterprise Agreement rows). Use `metric=AmortizedCost` so a
+  reservation or savings plan purchase is not flagged as an anomaly. For `resourceId` use
   **`properties.instanceName`** (in modern billing the full ARM resource id lives there and
   `properties.resourceId` is null); fall back to `properties.resourceId` when `instanceName`
   is absent.
@@ -152,7 +155,7 @@ anomalies" line.
 | Microsoft Fabric cost | Not in the Consumption surface — out of scope; state it explicitly |
 | Weak tag coverage | Where tags are missing, correlate on resource/RG identity instead of team/owner |
 | Correlation != causation | Present candidate causes with evidence; do not claim certainty |
-| Cost Management Reader missing | `costInUSD` is null — stop and report the missing grant, don't guess |
+| Cost Management Reader missing | `prepare_usage_details` reports `missing_cost_count` for rows with no cost at all — stop and report the missing grant, don't guess (a null `costInUSD` on EA rows is expected, not missing access) |
 
 ## Testing
 

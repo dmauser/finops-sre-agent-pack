@@ -29,7 +29,7 @@ aren't dropped. See the pack README's "AI resource taxonomy" note.
 
 ## Required access
 
-- **Cost Management Reader** on the subscription (`costInUSD` is null without it). **Reader** for the
+- **Cost Management Reader** on the subscription (UsageDetails returns no cost values without it; EA rows use billing-currency `cost`). **Reader** for the
   optional Resource Graph `kind` lookup.
 - Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
   available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
@@ -70,7 +70,7 @@ details are specific to this skill:
    and `meterName` on top of the usual cost fields:
 
    ```
-   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, consumedService: properties.consumedService, meterCategory: properties.meterCategory, meterSubCategory: properties.meterSubCategory, meterName: properties.meterName, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"
+   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType, consumedService: properties.consumedService, meterCategory: properties.meterCategory, meterSubCategory: properties.meterSubCategory, meterName: properties.meterName, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"
    ```
 
    In modern billing the full ARM resource id is in `properties.instanceName`; the projection falls

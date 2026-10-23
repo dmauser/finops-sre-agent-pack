@@ -15,7 +15,7 @@ use `finops-rightsizing-advisor`.
 
 ## Required access
 
-- **Cost Management Reader** on the subscription (`costInUSD` is null without it) and **Reader** for
+- **Cost Management Reader** on the subscription (UsageDetails returns no cost values without it; EA rows use billing-currency `cost`) and **Reader** for
   Resource Graph tags.
 - Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
   available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
@@ -57,7 +57,7 @@ Follow the canonical Consumption UsageDetails transport contract in `finops-mana
 trailing ~30 days. This skill's projection must explicitly retain `tags`:
 
 ```
---query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"
+--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
 After managed-scope filtering, aggregate `cost` by resource id into

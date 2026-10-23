@@ -116,8 +116,11 @@ result = evaluate_budgets(budgets)   # the value[] array from Step 1
   `status`, and the budget's own **breached_notifications**.
 - **status** buckets: `over_budget` (already ≥ amount) → `forecast_over` (projected ≥ amount) →
   `at_risk` (≥ 80% used or an Actual threshold breached) → `on_track`.
-- **summary**: portfolio totals (`total_amount`, `total_current`, `total_forecast`) and a count of each
-  status.
+- **summary**: portfolio totals (`total_amount`, `total_current`, `total_forecast`, `currency`) and a
+  count of each status. Totals are never summed across currencies: when budgets use more than one
+  currency the `total_*` fields are `null` and `totals_by_currency` carries one total per currency.
+  Run-rate forecasts use the real calendar length of the budget's current Monthly/Quarterly/Annual
+  reset window, anchored at `timePeriod.startDate`.
 - **gates**: the budgets in `over_budget` / `forecast_over` — the ones that warrant a **process gate**
   (a human decision before more is spent), each with a one-line reason.
 - **no_budgets**: `True` when nothing is defined — report it and recommend creating a budget.

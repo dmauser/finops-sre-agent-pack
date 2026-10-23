@@ -668,8 +668,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_cost_overview_model,
             _overview,
-            "2db6ec2066af56a3980bde5a4e452f1e40f5c45d91d42ba83e6bcfd1767f98e6",
-            "9182994ba8ec44703c987b25f9ac68d34f8453e5808d2a10af9cd4abfac81a53",
+            "b50527d4e68a9c69e6cac6b590f1530754d2f4026de5e92dbc8928b65dd5d2a9",
+            "af87b075e4e4a3a44edaa50b8506deaaeb39f8ae1664afc2934fd21f62edb4ac",
         ),
         (
             models.build_rightsizing_savings_model,
@@ -692,14 +692,14 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_ai_spend_model,
             _ai_spend,
-            "25086384ce560ced1ffd97a95af5c8f0a36d721bb92826239c5c33ae955dddd4",
-            "6862824e1ff5b5912e19d93468720f3c96b94b4b9db2c55eaddc5f7eb502402c",
+            "ec0c391f9b5454c1f86bcf5db3c5c2489d7a5a32c0ccda2681afb827045142ff",
+            "05feddb26916b458454324ae8779f0d68b812cd9a7c4b3983ff5221aeed1a4b4",
         ),
         (
             models.build_cost_vs_reliability_model,
             _reliability,
-            "cfbb7d50575bdcb7bc6b99159fae40c368d8324a429b48ce13f95be809109b1c",
-            "ed12a0061be4f377a10aca6ecfad2dd8c3b9271132dff4590035d9cdb60ba991",
+            "71af9517bf5436e8b8f7d23045995cac37f18cb2d6a9bd83cbc13d03c24a8111",
+            "71176fb06191a382547b35f47863f2963c425dbf7b214cb25b440f594a96be3d",
         ),
     ],
 )
@@ -771,3 +771,69 @@ def test_skill_documents_all_adapter_apis():
     assert "refreshed_at" in skill
     assert "scope_coverage" in skill
     assert "write_report(model, output_path)" in skill
+
+def test_budget_status_does_not_sum_mixed_currencies():
+    result = {
+        "budgets": [
+            {"name": "usd", "scope": "/subscriptions/a", "currency": "USD", "amount": 100,
+             "current_spend": 10, "pct_used": 10, "forecast_spend": 20, "pct_forecast": 20,
+             "forecast_source": "azure", "status": "on_track", "breached_notifications": []},
+            {"name": "eur", "scope": "/subscriptions/b", "currency": "EUR", "amount": 500,
+             "current_spend": 50, "pct_used": 10, "forecast_spend": 100, "pct_forecast": 20,
+             "forecast_source": "azure", "status": "on_track", "breached_notifications": []},
+        ],
+        "summary": {"currency": None, "total_amount": None, "total_current": None,
+                    "total_forecast": None, "on_track": 2},
+        "gates": [],
+    }
+    model = models.build_budget_status_model(result, refreshed_at="2026-08-07T01:30:00Z")
+    metrics = {m["label"]: m for m in model["metrics"]}
+    assert metrics["Portfolio budget"]["value"] == "—"
+    assert metrics["Portfolio budget"]["detail"] == "Mixed currencies"
+    assert any("more than one currency" in w for w in model["warnings"])
+
+
+def test_cost_optimization_adapter_adds_waste_and_commitment_sections_only_when_present():
+    base = models.build_cost_optimization_model(_optimization(), **_context())
+    result = copy.deepcopy(_optimization())
+    result["waste"] = {
+        "currency": "EUR",
+        "potential_monthly_savings": 32.85,
+        "top": [{"resourceId": EVIL, "kind": "orphan", "reason": "NAT gateway attached to no subnet",
+                 "monthlyCost": 32.85, "estMonthlySavings": 32.85,
+                 "recommendedAction": "Delete"}],
+    }
+    result["commitments"] = {
+        "currency": "USD",
+        "potential_monthly_savings": 400.0,
+        "best_family": "reservation",
+        "coverage_pct": 35.0,
+        "unused_commitment_cost": 120.0,
+        "purchases": [
+            {"family": "reservation", "term": "P3Y", "sku": "D4s_v5",
+             "est_monthly_savings": 400.0},
+            {"family": "savings_plan", "term": "P3Y", "sku": "Compute_Savings_Plan",
+             "est_monthly_savings": 350.0},
+        ],
+        "underutilized": [{"kind": "reservation", "name": "ri1", "utilization": 40.0,
+                           "action": "Exchange"}],
+        "expiring": [{"kind": "savings_plan", "name": "sp1", "days_to_expiry": 12}],
+        "hybrid_benefit": [{"resourceId": "/vm/win", "license": "Windows Server",
+                            "monthly_cost": None}],
+    }
+    model = models.build_cost_optimization_model(result, **_context())
+
+    assert model["metrics"][: len(base["metrics"])] == base["metrics"]
+    labels = [m["label"] for m in model["metrics"][len(base["metrics"]):]]
+    assert labels == ["Waste cleanup savings", "Rate optimization savings", "Commitment coverage"]
+    assert model["metrics"][len(base["metrics"])]["value"] == "32.85 EUR"
+    titles = [s["title"] for s in model["sections"]]
+    assert titles.index("Waste cleanup") < titles.index("Rate optimization (commitments)")
+    assert titles[-1] == base["sections"][-1]["title"]
+    rate = next(s for s in model["sections"] if s["title"].startswith("Rate optimization"))
+    assert [r[0] for r in rate["rows"]] == [
+        "buy (headline)", "buy (alternative)", "underutilized", "expiring", "hybrid benefit"]
+    assert rate["rows"][2][3] == "40.0%"
+    html = renderer.render_report(model)
+    assert EVIL not in html
+    assert "Rate optimization (commitments)" in html

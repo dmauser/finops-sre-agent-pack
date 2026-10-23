@@ -398,8 +398,8 @@ def test_package_readiness_includes_ten_skills_without_runtime_write_changes():
 
     assert '"finops-managed-scope",' in script
     assert '"finops-report-renderer",' in script
-    assert "All ten FinOps skills ready" in script
-    assert "Package: 10 skills" in script
+    assert "All twelve FinOps skills ready" in script
+    assert "Package: 12 skills" in script
     assert "RunAzCliWriteCommands" not in script
     assert "older/incompatible runtime" not in script
 
