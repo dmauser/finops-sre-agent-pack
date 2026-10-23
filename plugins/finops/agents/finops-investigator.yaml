@@ -33,6 +33,7 @@ spec:
     - "finops-budget-editor"
     - "finops-cost-optimization-report"
     - "finops-for-ai"
+    - "finops-sre-agent"
     - "finops-cost-vs-reliability"
     - "finops-report-renderer"
     - "live_report_authoring"

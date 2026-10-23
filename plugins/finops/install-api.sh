@@ -531,6 +531,7 @@ expected = {
     "finops-budget-editor",
     "finops-cost-optimization-report",
     "finops-for-ai",
+    "finops-sre-agent",
     "finops-cost-vs-reliability",
     "finops-managed-scope",
     "finops-report-renderer",
@@ -550,12 +551,12 @@ for item in installations:
         raise SystemExit(0 if expected <= imported else 1)
 raise SystemExit(1)
 '; then
-    ok "All thirteen FinOps skills ready"
+    ok "All fourteen FinOps skills ready"
     break
   fi
   printf '  … skills not ready (%d/60)\n' "$i"
   sleep 2
-  [ "$i" -eq 60 ] && die "Timed out waiting for all thirteen FinOps skills."
+  [ "$i" -eq 60 ] && die "Timed out waiting for all fourteen FinOps skills."
 done
 
 # ---- 4. Upsert the FinOps investigator agent -------------------------------
@@ -671,6 +672,7 @@ required_skills = {
     "finops-budget-editor",
     "finops-cost-optimization-report",
     "finops-for-ai",
+    "finops-sre-agent",
     "finops-cost-vs-reliability",
     "finops-report-renderer",
 }
@@ -678,7 +680,7 @@ configured_skills = properties.get("allowedSkills")
 if not isinstance(configured_skills, list) or not required_skills <= set(configured_skills):
     raise SystemExit(
         "Managed-scope safety error: properties.allowedSkills must include all "
-        "thirteen FinOps skills."
+        "fourteen FinOps skills."
     )
 for placeholder in placeholders:
     instructions = instructions.replace(placeholder, os.environ["AGENT_RESOURCE_ID"])
@@ -834,13 +836,13 @@ python3 "$TASK_RENDERER" verify-install \
 ok "all $EXPECTED_TASK_COUNT selected scheduled task(s) verified on $TASK_AGENT_NAME; retired duplicate absent"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Package: 13 skills, 1 agent, %s task(s) (TASK_IDS=%s), %s Live Report(s)\n' "$EXPECTED_TASK_COUNT" "$TASK_IDS" "$(grep -c . "$INSTALL_WORK_DIR/reports.txt" || true)"
+printf '  • Package: 14 skills, 1 agent, %s task(s) (TASK_IDS=%s), %s Live Report(s)\n' "$EXPECTED_TASK_COUNT" "$TASK_IDS" "$(grep -c . "$INSTALL_WORK_DIR/reports.txt" || true)"
 if [ "$PLUGIN_SOURCE" = "direct" ]; then
   plugin_origin="direct install https://github.com/$REPO_SLUG/$PLUGIN_PATH (auto-update)"
 else
   plugin_origin="marketplace $MARKETPLACE_NAME -> $REPO_SLUG"
 fi
-printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-kpi-scorecard, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability, finops-managed-scope, finops-report-renderer (from %s)\n' "$plugin_origin"
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-kpi-scorecard, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-sre-agent, finops-cost-vs-reliability, finops-managed-scope, finops-report-renderer (from %s)\n' "$plugin_origin"
 printf '  • Agent  : "%s" (standalone, autonomous, read-only; task target: "%s")\n' "$FINOPS_AGENT_NAME" "$TASK_AGENT_NAME"
 printf '  • Budget planning: advisory proposals may include a human-run script; the agent and installer execute no budget writes and add no budget-write RBAC\n'
 printf '  • Tasks  :\n'

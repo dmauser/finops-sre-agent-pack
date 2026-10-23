@@ -4,6 +4,14 @@
 
 ### Added
 
+- **`finops-sre-agent`** (14th skill): FinOps for Azure SRE Agent. Attributes Azure Agent Unit (AAU)
+  spend per agent, splits always-on flow (4 AAU/agent-hour until deletion) from active flow using
+  each agent's read-only `dailyUsageDetails`, breaks active flow down by source (chat, scheduled
+  tasks, incidents, incident analysis), ranks the costliest threads, projects month-end use against
+  `monthlyAgentUnitLimit`, and flags deleted/stopped-but-billed, idle, consolidation, limit-risk,
+  trial-waiver, and premium-model cases. New `build_sre_agent_spend_model` renderer adapter.
+- **SRE Agent Spend task** `sre-agent-spend-report` (9th task, Mondays 18:30 UTC): weekly
+  `FinOps: SRE Agent Spend` Live Report.
 - **Faster UsageDetails paging**: one `az rest` call per page with no Python step between pages;
   new `find_usage_tool_output_chains` / `load_usage_tool_output_pages` rebuild the chain from the
   runtime's saved tool outputs in one step. Timeouts fall back to `%24top=500`/`250` (not `100`), and

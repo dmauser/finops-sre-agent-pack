@@ -93,6 +93,20 @@
       "tags": ["finops", "finops-live-report"]
     },
     {
+      "id": "sre-agent-spend-report",
+      "yaml": "sre-agent-spend-report-weekly.yaml",
+      "nameEnv": "SRE_AGENT_REPORT_TASK_NAME",
+      "defaultName": "FinOps: SRE Agent Spend (Live Report, Weekly)",
+      "description": "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of Azure SRE Agent spend: Azure Agent Unit cost per agent, always-on vs active flow, active flow by source, top threads, monthly-limit headroom, and read-only hints.",
+      "cronEnv": "SRE_AGENT_REPORT_CRON",
+      "defaultCron": "30 18 * * 1",
+      "modelEnv": "SRE_AGENT_REPORT_MODEL_TIER",
+      "reportNameEnv": "SRE_AGENT_REPORT_NAME",
+      "defaultReportName": "FinOps: SRE Agent Spend",
+      "prompt": "prompts/sre-agent-spend-report.txt",
+      "tags": ["finops", "finops-live-report", "finops-sre-agent"]
+    },
+    {
       "id": "cost-vs-reliability-report",
       "yaml": "cost-vs-reliability-report-weekly.yaml",
       "nameEnv": "RELIABILITY_REPORT_TASK_NAME",

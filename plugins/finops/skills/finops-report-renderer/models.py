@@ -19,6 +19,9 @@ _VERIFY_HINTS = {
     "fine_tune_hosting_verify",
     "prompt_caching_verify",
     "batch_candidate",
+    "always_on_waived_verify",
+    "deleted_agent_billed",
+    "model_choice_verify",
 }
 
 
@@ -1597,6 +1600,229 @@ def build_ai_spend_model(
     )
 
 
+def _optional_text(value, field):
+    return "—" if value is None else _text(value, field)
+
+
+def build_sre_agent_spend_model(
+    result,
+    *,
+    refreshed_at,
+    scope_summary=None,
+    partial=False,
+    warnings=None,
+    scope_coverage=None,
+):
+    """Adapt analyze_sre_agent_costs output to the generic report model."""
+
+    result = _object(result, "result")
+    currency = _text(result.get("currency"), "result.currency", default="USD") or "USD"
+    total = _decimal(result.get("total_usd"), "result.total_usd")
+    always_on = _decimal(result.get("always_on_usd"), "result.always_on_usd")
+    active = _decimal(result.get("active_usd"), "result.active_usd")
+    always_on_pct = _decimal(result.get("always_on_pct"), "result.always_on_pct", optional=True)
+    agent_count = _integer(result.get("agent_count"), "result.agent_count")
+    inventory_count = _integer(result.get("inventory_count"), "result.inventory_count")
+    per_agent = _decimal(
+        result.get("always_on_monthly_usd_per_agent"),
+        "result.always_on_monthly_usd_per_agent",
+        optional=True,
+    )
+    window_start = _text(result.get("window_start"), "result.window_start")
+    window_end = _text(result.get("window_end"), "result.window_end")
+    window = f"{window_start} to {window_end}" if window_start and window_end else "No billed days"
+
+    agents = []
+    for index, row in enumerate(_objects(result.get("by_agent"), "result.by_agent")):
+        prefix = f"result.by_agent[{index}]"
+        name = _text(row.get("agentName"), f"{prefix}.agentName")
+        rid = _text(row.get("resourceId"), f"{prefix}.resourceId")
+        status = _text(row.get("status"), f"{prefix}.status")
+        split = _text(row.get("split"), f"{prefix}.split")
+        cost = _decimal(row.get("monthly_usd"), f"{prefix}.monthly_usd")
+        on = _decimal(row.get("always_on_usd"), f"{prefix}.always_on_usd", optional=True)
+        act = _decimal(row.get("active_usd"), f"{prefix}.active_usd", optional=True)
+        mtd = _decimal(row.get("mtd_active_aau"), f"{prefix}.mtd_active_aau", optional=True)
+        limit = _decimal(row.get("limit_aau"), f"{prefix}.limit_aau", optional=True)
+        projected = _decimal(
+            row.get("projected_limit_pct"), f"{prefix}.projected_limit_pct", optional=True
+        )
+        model = _text(row.get("model"), f"{prefix}.model")
+        waived = _boolean(row.get("always_on_waived"), f"{prefix}.always_on_waived")
+        agents.append(
+            (name, rid, status, model, cost, on, act, split, mtd, limit, projected, waived)
+        )
+    agents.sort(key=lambda row: (-row[4], row[0].casefold(), row[0], row[1].casefold(), row[1]))
+
+    sources = []
+    for index, row in enumerate(_objects(result.get("by_source"), "result.by_source")):
+        prefix = f"result.by_source[{index}]"
+        label = _text(row.get("label"), f"{prefix}.label")
+        aau = _decimal(row.get("aau"), f"{prefix}.aau")
+        cost = _decimal(row.get("usd"), f"{prefix}.usd")
+        pct = _decimal(row.get("pct"), f"{prefix}.pct", optional=True)
+        count = _integer(row.get("thread_count"), f"{prefix}.thread_count")
+        sources.append((label, aau, cost, pct, count))
+    sources.sort(key=lambda row: (-row[1], row[0].casefold(), row[0]))
+
+    threads = []
+    for index, row in enumerate(_objects(result.get("top_threads"), "result.top_threads")):
+        prefix = f"result.top_threads[{index}]"
+        agent = _text(row.get("agentName"), f"{prefix}.agentName")
+        thread = _text(row.get("threadId"), f"{prefix}.threadId")
+        source = _text(row.get("source"), f"{prefix}.source")
+        aau = _decimal(row.get("aau"), f"{prefix}.aau")
+        cost = _decimal(row.get("usd"), f"{prefix}.usd", optional=True)
+        days = _integer(row.get("days"), f"{prefix}.days")
+        last = _optional_text(row.get("last_active"), f"{prefix}.last_active")
+        threads.append((agent, thread, source, aau, cost, days, last))
+    threads.sort(key=lambda row: (-row[3], row[0].casefold(), row[1]))
+
+    daily = []
+    for index, row in enumerate(_objects(result.get("daily"), "result.daily")):
+        prefix = f"result.daily[{index}]"
+        day = _text(row.get("date"), f"{prefix}.date")
+        cost = _decimal(row.get("usd"), f"{prefix}.usd")
+        daily.append((day, cost))
+    daily.sort()
+
+    hints = []
+    for index, row in enumerate(_objects(result.get("hints"), "result.hints")):
+        prefix = f"result.hints[{index}]"
+        hint_type = _text(row.get("type"), f"{prefix}.type")
+        target = _text(row.get("target"), f"{prefix}.target")
+        detail = _text(row.get("detail"), f"{prefix}.detail")
+        cost = _decimal(row.get("monthly_usd"), f"{prefix}.monthly_usd", optional=True)
+        action = "verify first" if hint_type in _VERIFY_HINTS else "review"
+        hints.append((hint_type, target, detail, cost, action))
+    hints.sort(
+        key=lambda row: (
+            row[3] is None,
+            -(row[3] or Decimal(0)),
+            row[0].casefold(),
+            row[0],
+            row[1].casefold(),
+            row[1],
+            row[2].casefold(),
+            row[2],
+        )
+    )
+
+    context = _context(
+        result,
+        refreshed_at=refreshed_at,
+        scope_summary=scope_summary,
+        partial=partial,
+        warnings=warnings,
+        scope_coverage=scope_coverage,
+    )
+
+    def money(value):
+        return _money(value, currency)
+
+    def limit_text(mtd, limit, projected):
+        if mtd is None and limit is None:
+            return "—"
+        used = "—" if mtd is None else f"{mtd.quantize(Decimal('1'), rounding=ROUND_HALF_UP):,}"
+        cap = "—" if limit is None else f"{limit.quantize(Decimal('1'), rounding=ROUND_HALF_UP):,}"
+        return f"{used} / {cap} AAU (projected {_percent(projected)})"
+
+    return _model(
+        "FinOps: SRE Agent Spend",
+        "Weekly Azure SRE Agent (Azure Agent Unit) cost snapshot: always-on vs active flow, "
+        "active flow by source, and monthly-limit headroom.",
+        context,
+        [
+            {"label": "SRE Agent spend", "value": money(total), "detail": window},
+            {
+                "label": "Always-on flow",
+                "value": money(always_on),
+                "detail": f"{_percent(always_on_pct)} of spend; ends only when an agent is deleted",
+            },
+            {"label": "Active flow", "value": money(active), "detail": "Chats, incidents, tasks, triggers"},
+            {
+                "label": "Agents billed",
+                "value": str(agent_count),
+                "detail": f"{inventory_count} in inventory",
+            },
+            {
+                "label": "Always-on per agent",
+                "value": money(per_agent),
+                "detail": "Monthly fixed cost (4 AAU/hour)",
+            },
+        ],
+        {
+            "type": "line",
+            "label": f"Daily SRE Agent spend ({currency})",
+            "labels": [row[0] for row in daily],
+            "values": [_chart_number(row[1]) for row in daily],
+        },
+        [
+            {
+                "title": "By agent",
+                "description": (
+                    "Billed cost split into always-on and active flow. 'estimated' splits assume "
+                    "96 AAU/day always-on because no per-thread usage was available."
+                ),
+                "columns": [
+                    "Agent", "Status", "Model", "Cost", "Always-on", "Active", "Split",
+                    "MTD active vs limit", "Resource ID",
+                ],
+                "rows": [
+                    [
+                        name,
+                        status,
+                        model or "—",
+                        money(cost),
+                        money(on) + (" (waived)" if waived else ""),
+                        money(act),
+                        split,
+                        limit_text(mtd, limit, projected),
+                        rid,
+                    ]
+                    for name, rid, status, model, cost, on, act, split, mtd, limit, projected, waived
+                    in agents
+                ],
+                "emptyMessage": "No SRE Agent spend was found in the supplied managed scopes.",
+            },
+            {
+                "title": "Active flow by source",
+                "description": "Measured active AAU from each agent's per-thread usage.",
+                "columns": ["Source", "AAU", "Cost", "Share", "Threads"],
+                "rows": [
+                    [label, _number(aau), money(cost), _percent(pct), str(count)]
+                    for label, aau, cost, pct, count in sources
+                ],
+                "emptyMessage": "No per-thread active usage was available.",
+            },
+            {
+                "title": "Top threads",
+                "description": "Costliest threads; match thread ids in Settings > Agent consumption.",
+                "columns": ["Agent", "Thread", "Source", "AAU", "Cost", "Days", "Last active"],
+                "rows": [
+                    [agent, thread, source, _number(aau), money(cost), str(days), last]
+                    for agent, thread, source, aau, cost, days, last in threads
+                ],
+                "emptyMessage": "No thread-level usage was available.",
+            },
+            {
+                "title": "Where to look first",
+                "description": "Read-only hints; marked items require verification.",
+                "columns": ["Type", "Target", "Detail", "Monthly cost", "Action"],
+                "rows": [
+                    [hint_type, target, detail, money(cost), action]
+                    for hint_type, target, detail, cost, action in hints
+                ],
+                "emptyMessage": (
+                    "No SRE Agent spend was found in the supplied managed scopes."
+                    if total == 0
+                    else "No SRE Agent optimization hints were produced."
+                ),
+            },
+        ],
+    )
+
+
 def build_cost_vs_reliability_model(
     result,
     *,
@@ -2385,4 +2611,5 @@ __all__ = [
     "build_cost_vs_reliability_model",
     "build_monthly_review_model",
     "build_rightsizing_savings_model",
+    "build_sre_agent_spend_model",
 ]

@@ -18,6 +18,7 @@ SKILL_NAMES = {
     "finops-budget-editor",
     "finops-cost-optimization-report",
     "finops-for-ai",
+    "finops-sre-agent",
     "finops-cost-vs-reliability",
 }
 
@@ -64,6 +65,7 @@ def test_usage_and_telemetry_skills_enforce_per_scope_retrieval():
         "finops-rightsizing-advisor",
         "finops-cost-allocation",
         "finops-for-ai",
+        "finops-sre-agent",
         "finops-cost-vs-reliability",
     }:
         lowered = (FINOPS / "skills" / name / "SKILL.md").read_text().lower()
@@ -120,6 +122,7 @@ def test_usage_details_docs_share_canonical_transport_projection_contract():
         "finops-cost-allocation",
         "finops-budget-editor",
         "finops-for-ai",
+        "finops-sre-agent",
         "finops-cost-vs-reliability",
     }
     for name in projection_skills:
@@ -159,6 +162,7 @@ def test_usage_details_skills_delegate_page_assembly_to_code():
         "finops-cost-anomaly-detection",
         "finops-cost-vs-reliability",
         "finops-for-ai",
+        "finops-sre-agent",
         "finops-rightsizing-advisor",
     }
     for name in consumers:
@@ -169,7 +173,7 @@ def test_usage_details_skills_delegate_page_assembly_to_code():
 
 def test_scheduled_templates_have_strict_dynamic_scope_preamble():
     templates = sorted((FINOPS / "scheduled-tasks").glob("*.yaml"))
-    assert len(templates) == 8
+    assert len(templates) == 9
 
     for path in templates:
         text = path.read_text()

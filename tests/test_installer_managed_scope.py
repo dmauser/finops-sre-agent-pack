@@ -17,6 +17,7 @@ REPORT_TASKS = (
     "budget-status-report-daily.yaml",
     "cost-optimization-report-weekly.yaml",
     "ai-spend-report-weekly.yaml",
+    "sre-agent-spend-report-weekly.yaml",
     "cost-vs-reliability-report-weekly.yaml",
     "monthly-finops-review.yaml",
 )
@@ -27,6 +28,7 @@ PROMPT_TASK_IDS = {
     "BUDGET_REPORT_PROMPT": "budget-status-report",
     "COST_OPT_PROMPT": "cost-optimization-report",
     "AI_REPORT_PROMPT": "ai-spend-report",
+    "SRE_AGENT_REPORT_PROMPT": "sre-agent-spend-report",
     "RELIABILITY_REPORT_PROMPT": "cost-vs-reliability-report",
     "MONTHLY_REVIEW_PROMPT": "monthly-finops-review",
 }
@@ -363,6 +365,7 @@ def test_task_prompts_delegate_detailed_scope_and_analysis_contracts():
         "BUDGET_REPORT_PROMPT": ("finops-budget-governance", "budget.py"),
         "COST_OPT_PROMPT": ("finops-cost-optimization-report", "summarize.py"),
         "AI_REPORT_PROMPT": ("finops-for-ai", "attribute.py"),
+        "SRE_AGENT_REPORT_PROMPT": ("finops-sre-agent", "sreagent.py"),
         "RELIABILITY_REPORT_PROMPT": ("finops-cost-vs-reliability", "reliability.py"),
         "MONTHLY_REVIEW_PROMPT": ("finops-kpi-scorecard", "scorecard.py"),
     }
@@ -401,8 +404,8 @@ def test_package_readiness_includes_ten_skills_without_runtime_write_changes():
 
     assert '"finops-managed-scope",' in script
     assert '"finops-report-renderer",' in script
-    assert "All thirteen FinOps skills ready" in script
-    assert "Package: 13 skills" in script
+    assert "All fourteen FinOps skills ready" in script
+    assert "Package: 14 skills" in script
     assert "RunAzCliWriteCommands" not in script
     assert "older/incompatible runtime" not in script
 
@@ -414,6 +417,7 @@ def test_installer_live_report_prompts_use_deterministic_renderer():
         "BUDGET_REPORT_PROMPT": "build_budget_status_model",
         "COST_OPT_PROMPT": "build_cost_optimization_model",
         "AI_REPORT_PROMPT": "build_ai_spend_model",
+        "SRE_AGENT_REPORT_PROMPT": "build_sre_agent_spend_model",
         "RELIABILITY_REPORT_PROMPT": "build_cost_vs_reliability_model",
         "MONTHLY_REVIEW_PROMPT": "build_monthly_review_model",
     }
@@ -446,6 +450,7 @@ def test_live_report_templates_use_deterministic_renderer():
         "budget-status-report-daily.yaml": "build_budget_status_model",
         "cost-optimization-report-weekly.yaml": "build_cost_optimization_model",
         "ai-spend-report-weekly.yaml": "build_ai_spend_model",
+        "sre-agent-spend-report-weekly.yaml": "build_sre_agent_spend_model",
         "cost-vs-reliability-report-weekly.yaml": "build_cost_vs_reliability_model",
         "monthly-finops-review.yaml": "build_monthly_review_model",
     }
@@ -507,7 +512,7 @@ def test_rightsizing_review_is_retired_and_merged_without_schedule_collisions():
     tasks = module.load_manifest()
     retired = module.load_retired_tasks()
 
-    assert len(tasks) == 8
+    assert len(tasks) == 9
     assert {task["id"] for task in retired} == {"rightsizing-review"}
     assert not (TASK_DIR / "rightsizing-weekly.yaml").exists()
     assert len({task["defaultCron"] for task in tasks}) == len(tasks)
@@ -597,7 +602,7 @@ def test_install_plan_reuses_one_list_and_verifies_retirement(tmp_path, monkeypa
 
     module.write_install_plan(existing, plan)
 
-    assert len((plan / "task-plan.tsv").read_text().splitlines()) == 8
+    assert len((plan / "task-plan.tsv").read_text().splitlines()) == 9
     assert (plan / "retired-plan.tsv").read_text().split("\x1f") == [
         "retired-1",
         "FinOps: Rightsizing Review (Weekly)\n",

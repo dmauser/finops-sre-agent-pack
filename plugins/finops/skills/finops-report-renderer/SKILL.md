@@ -34,6 +34,7 @@ from models import (
     build_cost_vs_reliability_model,
     build_monthly_review_model,
     build_rightsizing_savings_model,
+    build_sre_agent_spend_model,
 )
 from render import write_report
 
@@ -57,7 +58,7 @@ model = build_budget_status_model(
 path = write_report(model, "finops-budget-status.html")
 ```
 
-All seven functions have the same keyword-only context arguments:
+All eight functions have the same keyword-only context arguments:
 
 ```text
 (*, refreshed_at, scope_summary=None, partial=False,
@@ -83,6 +84,7 @@ All seven functions have the same keyword-only context arguments:
 | `build_budget_status_model(result, ...)` | The object returned by `evaluate_budgets`. |
 | `build_cost_optimization_model(result, ...)` | The object returned by `summarize_optimization`. |
 | `build_ai_spend_model(result, ...)` | The object returned by `attribute_ai_costs`. |
+| `build_sre_agent_spend_model(result, ...)` | The object returned by `analyze_sre_agent_costs`. |
 | `build_cost_vs_reliability_model(result, ...)` | The object returned by `analyze_cost_vs_reliability`. |
 | `build_monthly_review_model(review, ...)` | `{"month", "scorecard", "forecast", "month_over_month", "routing", "unit_economics"}` holding `kpi_scorecard`, `forecast_spend`, `month_over_month`, `route_to_owners`, and `unit_economics` outputs. Only `scorecard` is required; missing inputs become warnings. |
 

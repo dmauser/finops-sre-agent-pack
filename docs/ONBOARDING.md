@@ -1,6 +1,6 @@
 # Onboarding the FinOps SRE Agent
 
-Two supported paths produce the same result: an Azure SRE Agent with the thirteen FinOps skills
+Two supported paths produce the same result: an Azure SRE Agent with the fourteen FinOps skills
 (plugin), the read-only `finops-investigator` subagent, a scheduled task that keeps a Live Report
 fresh, and read-only cost RBAC.
 
@@ -26,7 +26,7 @@ against it: the script detects the existing agent and adds only what is missing.
 | Agent identity RBAC (subscription) | Reader, Monitoring Contributor, Log Analytics Reader, **Cost Management Reader** |
 | Agent identity RBAC (agent resource) | Reader, so every run can read the managed scope |
 | Your RBAC | **SRE Agent Administrator** on the agent (data-plane access) |
-| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 13 skills |
+| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 14 skills |
 | Subagent `finops-investigator` | Instructions, exactly five read-only tools, the FinOps skills plus `live_report_authoring` |
 | Scheduled task | `FinOps: Cost Optimization (Live Report, Weekly)`, Mondays 09:00 UTC, **Autonomous**, response agent `finops-investigator` |
 | Live Report | `FinOps: Cost Optimization` in Operations Hub. Created on the task's first run and refreshed on every run after that |
@@ -93,7 +93,7 @@ kept, and phase 2 only upserts.
 
 Task ids: `cost-anomaly`, `cost-overview-report`, `rightsizing-savings-report`,
 `budget-status-report`, `cost-optimization-report`, `ai-spend-report`,
-`cost-vs-reliability-report`, `monthly-finops-review`.
+`sre-agent-spend-report`, `cost-vs-reliability-report`, `monthly-finops-review`.
 
 ```bash
 # Everything, non-interactive, in another region
@@ -151,7 +151,7 @@ In sre.azure.com, go to **Builder → Plugins → Install from URL**:
 | Authentication | Host default for the public repo, or a PAT for a private fork |
 | Auto-update | **On**, so skills follow `main` |
 
-Wait for the success message, which reports 13 skills.
+Wait for the success message, which reports 14 skills.
 
 > A plugin carries **only skills**. It does not create the subagent or the scheduled task, so
 > continue with steps 4 and 5.
