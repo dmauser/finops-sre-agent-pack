@@ -1,6 +1,6 @@
 # Onboarding the FinOps SRE Agent
 
-Two supported paths produce the same result: an Azure SRE Agent with the twelve FinOps skills
+Two supported paths produce the same result: an Azure SRE Agent with the thirteen FinOps skills
 (plugin), the read-only `finops-investigator` subagent, a scheduled task that keeps a Live Report
 fresh, and read-only cost RBAC.
 
@@ -26,7 +26,7 @@ against it: the script detects the existing agent and adds only what is missing.
 | Agent identity RBAC (subscription) | Reader, Monitoring Contributor, Log Analytics Reader, **Cost Management Reader** |
 | Agent identity RBAC (agent resource) | Reader, so every run can read the managed scope |
 | Your RBAC | **SRE Agent Administrator** on the agent (data-plane access) |
-| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 12 skills |
+| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 13 skills |
 | Subagent `finops-investigator` | Instructions, exactly five read-only tools, the FinOps skills plus `live_report_authoring` |
 | Scheduled task | `FinOps: Cost Optimization (Live Report, Weekly)`, Mondays 09:00 UTC, **Autonomous**, response agent `finops-investigator` |
 | Live Report | `FinOps: Cost Optimization` in Operations Hub. Created on the task's first run and refreshed on every run after that |
@@ -81,7 +81,7 @@ kept, and phase 2 only upserts.
 | `-l` / `LOCATION` | `centralus` | Region; must be a region that supports SRE Agent (e.g. `eastus2`, `swedencentral`, `uksouth`, `australiaeast`) |
 | `-g` / `RESOURCE_GROUP` | `SRE-FinOps-Demo` | Resource group, created if missing |
 | `-s` / `SUBSCRIPTION_ID` | current `az` subscription | Target subscription |
-| `--tasks` / `TASK_IDS` | `cost-optimization-report` | Comma-separated task ids, or `all` for all 7 tasks (6 Live Reports) |
+| `--tasks` / `TASK_IDS` | `cost-optimization-report` | Comma-separated task ids, or `all` for all 8 tasks (6 Live Reports + anomaly alerts + monthly review) |
 | `COST_OPT_CRON` | `0 9 * * 1` | Cost Optimization schedule (UTC) |
 | `ALERT_EMAIL`, `GITHUB_REPO` | unset | Email delivery and change correlation for the email-review tasks |
 | `GRANT_COMMITMENT_READERS=1` | off | Also grant tenant-level Reservations Reader and Savings plan Reader (needs elevated access) |
@@ -93,7 +93,7 @@ kept, and phase 2 only upserts.
 
 Task ids: `cost-anomaly`, `cost-overview-report`, `rightsizing-savings-report`,
 `budget-status-report`, `cost-optimization-report`, `ai-spend-report`,
-`cost-vs-reliability-report`.
+`cost-vs-reliability-report`, `monthly-finops-review`.
 
 ```bash
 # Everything, non-interactive, in another region
@@ -151,7 +151,7 @@ In sre.azure.com, go to **Builder → Plugins → Install from URL**:
 | Authentication | Host default for the public repo, or a PAT for a private fork |
 | Auto-update | **On**, so skills follow `main` |
 
-Wait for the success message, which reports 12 skills.
+Wait for the success message, which reports 13 skills.
 
 > A plugin carries **only skills**. It does not create the subagent or the scheduled task, so
 > continue with steps 4 and 5.
@@ -209,6 +209,22 @@ To fill in the **Form** tab field by field instead, see
    check that **Refreshed** shows the current time.
 3. In chat, type `/agent`, select `finops-investigator`, and ask
    *"Use finops-waste-finder on my subscription"*.
+
+---
+
+## After onboarding: run the practice
+
+Both paths install the reports. To run FinOps as a monthly operating rhythm, also:
+
+- Install the monthly review task: `deploy.sh --tasks cost-optimization-report,monthly-finops-review`,
+  or create `FinOps: Monthly Review (KPI Scorecard)` by hand from
+  [`monthly-finops-review.yaml`](../plugins/finops/scheduled-tasks/monthly-finops-review.yaml).
+  Set `ALERT_EMAIL` to email it.
+- Ask for the scorecard on demand: *"Use finops-kpi-scorecard: forecast this month, score our FinOps
+  KPIs and give each team its action list"*.
+- Route budget and anomaly alerts to the agent with an incident response plan, and connect your IaC
+  repository as a code source for remediation pull requests. See
+  [Operating model](../plugins/finops/README.md#operating-model).
 
 ---
 

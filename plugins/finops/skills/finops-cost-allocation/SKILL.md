@@ -132,6 +132,73 @@ result = allocate_costs(
 
 Run it once per dimension the user cares about (e.g. `team` and `env`).
 
+#### Optional: tag inheritance (`inherited_tags`)
+
+Mirrors Azure Cost Management **tag inheritance**: when a resource lacks the dimension tag, use its
+resource group's tag, then its subscription's tag; a tag on the resource itself always wins. Pull the
+scope tags read-only (`az group list --query "[].{id:id, tags:tags}"` and
+`az account show --query "{id:id, tags:tags}"` — or Resource Graph `ResourceContainers`) and pass
+`{scopeId: {tagKey: tagVal}}` (ids matched case-insensitively):
+
+```python
+result = allocate_costs(costs, tags, dimension="team", inherited_tags={
+    "/subscriptions/<SUB>/resourceGroups/<RG>": {"team": "payments"},
+    "/subscriptions/<SUB>": {"team": "platform"},
+})
+```
+
+Output gains `inherited_usd`, per-group `inherited_usd`, and
+`inheritance: {enabled, allocated_via_inheritance_usd, resource_count}`. Inheritance only fills the
+dimension grouping: `tag_inventory`, coverage, and `untagged_resources` still reflect each resource's
+**own** tags (so the tagging backlog stays honest); untagged entries filled by inheritance carry
+`inherited_owner` / `inherited_from` (`resourceGroup` | `subscription`). With `inherited_tags=None`
+(default) results are unchanged. Report inherited spend as "allocated via inheritance" so owners know
+it was not tagged at the resource.
+
+#### Optional: shared-cost split (`shared`)
+
+For platform cost everyone uses (hub networking, shared AKS, Log Analytics), identify shared
+resources by id and/or tag and redistribute their cost across the allocated owner groups:
+
+```python
+result = allocate_costs(costs, tags, dimension="team", shared={
+    "resource_ids": ["/subscriptions/<SUB>/resourceGroups/hub/providers/Microsoft.Network/azureFirewalls/fw"],
+    "tag": {"key": "shared", "value": "true"},       # optional; omit "value" to match any value
+    "method": "proportional",                        # | "even" | "fixed"
+    "weights": {"payments": 0.6, "search": 0.4},     # only for "fixed"
+})
+```
+
+- Shared resources are removed from direct allocation (they appear in neither `groups` nor
+  `unallocated`). `proportional` (default) splits by each group's direct cost, `even` splits equally,
+  `fixed` uses the given weights (normalized over owners that exist; others get nothing).
+- Each group gains `direct_usd`, `shared_usd`, `fully_loaded_usd`. **`monthly_usd` stays the
+  direct amount** for backward compatibility — use `fully_loaded_usd` for chargeback.
+- `shared_costs: {total_usd, method, resources, distribution: [{owner, shared_usd}], undistributed_usd}`.
+  The unallocated bucket is never a recipient. If there are no recipient groups (or no `fixed`
+  weight matches), the cost stays in `undistributed_usd` (also top-level).
+- `allocated_usd` is the fully-loaded allocated amount, so
+  `sum(fully_loaded_usd) + unallocated_usd + undistributed_usd == total_usd` (to rounding).
+
+#### Optional: month-over-month variance (`month_over_month`)
+
+Pull two monthly windows (same Step 1 procedure, each aggregated to `{resourceId: usd}`) and run:
+
+```python
+from allocate import month_over_month
+mom = month_over_month(current_costs, previous_costs, dimension_tags=tags, dimension="team",
+                       min_delta_usd=10.0, top_n=25)
+```
+
+Returns `current_usd`, `previous_usd`, `delta_usd`, `delta_pct`, `by_owner` variance (same
+case-insensitive tag lookup; missing owner -> `(unallocated)`), and `movers` split into `new`
+(only in current), `removed` (only in previous), `increased`, `decreased` — each with
+`previous_usd`, `current_usd`, `delta_usd`, `delta_pct`, sorted by absolute delta and filtered by
+`min_delta_usd`. `bridge` buckets (`new_usd`, `removed_usd`, `increased_usd`, `decreased_usd`,
+`below_threshold_usd`) cover every resource and sum to `delta_usd` — use it for variance commentary.
+Splitting a mover into **price vs usage** effects is out of scope (it needs quantity and unit price
+per meter); state that when asked.
+
 ### Step 4 — Report
 
 Produce, for the chosen dimension: a **showback table** (owner, monthly $, % of total, resource
@@ -139,6 +206,39 @@ count) with the **total** and the **unallocated** row called out explicitly; a *
 (every key in use, with cost + resource coverage); a **recommended-coverage** section (which of
 `team / env / service / costCenter / app / owner` are present vs missing, with an adopt-the-missing
 recommendation); an **untagged-spend** section (total $ + top resources to tag — resources with no
-tags at all); and **tag-hygiene** warnings. Recommend tagging actions only — never modify tags. If
+tags at all); and **tag-hygiene** warnings. When inheritance is used, call out the
+"allocated via inheritance" amount; when a shared split is used, show direct, shared, and
+fully-loaded columns plus any undistributed amount. Recommend tagging actions only — never modify tags. If
 cost was partial (Step 1 truncation), say so at the top. If everything is allocated and there is no
 untagged spend, say so in one line.
+
+## Data source: UsageDetails today, FOCUS exports at scale
+
+This pack uses the **Consumption UsageDetails** API (read-only GET) today. For large estates —
+Enterprise Agreement / Microsoft Customer Agreement billing scopes, many subscriptions, or row
+counts where paging UsageDetails is slow or hits 413s — the recommended source is a **Cost Management
+export** in the **FOCUS** format (FOCUS 1.0 cost and usage dataset) delivered on a schedule to a
+storage account. Aggregate the export rows to the same `{resourceId: usd}` / `{resourceId: tags}`
+inputs and the module works unchanged.
+
+| FOCUS 1.0 column | Field this skill expects | Notes |
+|------------------|--------------------------|-------|
+| `EffectiveCost` | amortized cost (UsageDetails `metric=AmortizedCost` `cost`) | Preferred for showback; spreads reservation / savings-plan purchases |
+| `BilledCost` | actual cost (`metric=ActualCost`) | Matches the invoice |
+| `ResourceId` | `resourceId` (key of `costs` / `tags`) | Matched case-insensitively |
+| `Tags` | `tags` | JSON object; parse to a dict |
+| `ServiceName` | `meterCategory`-style service grouping | Approximate equivalent, not identical values |
+| `ChargePeriodStart` | `date` | Day granularity for daily exports |
+| `ChargeCategory` = `Credit` / `Adjustment` | credits / refunds (negative rows) | Keep out of allocation totals or report separately, as `summarize_credits` does for anomalies |
+| `BillingCurrency` | `billingCurrencyCode` | FOCUS costs are in billing currency |
+
+Guidance (not something the current read-only tool set does automatically):
+
+- Creating the export is a one-time admin action in Cost Management (Exports → "Cost and usage (FOCUS)" dataset)
+  by someone with export rights; the agent never creates it.
+- Reading the export requires **Storage Blob Data Reader** on the container for the agent's managed
+  identity, and the runtime must be able to reach the storage endpoint (allowed egress / private
+  endpoint, or a read-only SAS supplied by the operator). The current `RunAzCliReadCommands` tool set
+  may need that access configured first.
+- Keep managed-scope filtering: filter export rows by `ResourceId` / subscription against the
+  effective scope exactly as for UsageDetails.

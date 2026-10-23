@@ -4,6 +4,21 @@
 
 ### Added
 
+- **`finops-kpi-scorecard`** (13th skill): month-end and next-month forecast (linear trend with
+  weekday seasonality, 80% band, budget status), unit economics (cost per request/order/user and
+  trend), a FinOps KPI scorecard with tag and budget governance checks and a crawl/walk/run
+  indication, and `route_to_owners` per-owner action lists.
+- **Monthly review task** `monthly-finops-review` (8th task, 15:00 UTC on the 1st): scorecard,
+  governance checks, forecast, month-over-month variance and owner action lists, emailed when
+  `ALERT_EMAIL` is set.
+- **Anomaly detection**: cost drops (`kind: drop`), `direction` and `sustained` flags, credits
+  excluded from detection and summarized by `summarize_credits`, tag strings parsed.
+- **Cost allocation**: tag inheritance (`inherited_tags`), shared-cost split (`shared=`, fully
+  loaded cost per owner), `month_over_month` variance with a bridge, and FOCUS/Cost Details export
+  mapping guidance.
+- Operating-model docs: alert-triggered investigations, owner routing, governance checks and IaC
+  pull-request remediation.
+
 - **Automated onboarding**: `plugins/finops/deploy/deploy.sh` with Bicep (`main.bicep`,
   `agent.bicep`) creates the SRE Agent, identity, monitoring and read-only RBAC (including Cost
   Management Reader). It then installs the plugin from the GitHub URL with auto-update, creates

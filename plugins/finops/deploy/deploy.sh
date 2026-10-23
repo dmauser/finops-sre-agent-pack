@@ -6,7 +6,7 @@
 #            Application Insights, the Microsoft.App/agents resource, SRE Agent Administrator
 #            for you, and read-only subscription RBAC for the agent identity
 #            (Reader, Monitoring Contributor, Log Analytics Reader, Cost Management Reader).
-#   Phase 2 (agent data plane, ../install-api.sh): the `finops` plugin (12 skills, installed
+#   Phase 2 (agent data plane, ../install-api.sh): the `finops` plugin (13 skills, installed
 #            from the GitHub URL with auto-update), the finops-investigator subagent, and the
 #            scheduled task(s) that keep the Live Report(s) refreshed.
 #
@@ -17,7 +17,7 @@
 #   ./deploy.sh                                   # interactive
 #   ./deploy.sh -y                                # accept defaults, no prompts
 #   ./deploy.sh -n my-finops -l eastus2 -g rg-finops -y
-#   ./deploy.sh --tasks all                       # all 7 scheduled tasks / 6 Live Reports
+#   ./deploy.sh --tasks all                       # all 8 scheduled tasks / 6 Live Reports
 #   ./deploy.sh --dry-run                         # validate only, change nothing
 #
 # Environment overrides: SRE_AGENT_NAME, LOCATION, RESOURCE_GROUP, SUBSCRIPTION_ID, TASK_IDS,

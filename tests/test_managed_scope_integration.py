@@ -12,6 +12,7 @@ SKILL_NAMES = {
     "finops-rightsizing-advisor",
     "finops-waste-finder",
     "finops-commitment-advisor",
+    "finops-kpi-scorecard",
     "finops-cost-allocation",
     "finops-budget-governance",
     "finops-budget-editor",
@@ -168,7 +169,7 @@ def test_usage_details_skills_delegate_page_assembly_to_code():
 
 def test_scheduled_templates_have_strict_dynamic_scope_preamble():
     templates = sorted((FINOPS / "scheduled-tasks").glob("*.yaml"))
-    assert len(templates) == 7
+    assert len(templates) == 8
 
     for path in templates:
         text = path.read_text()

@@ -15,6 +15,7 @@ FINOPS_SKILLS = {
     "finops-rightsizing-advisor",
     "finops-waste-finder",
     "finops-commitment-advisor",
+    "finops-kpi-scorecard",
     "finops-cost-allocation",
     "finops-budget-governance",
     "finops-budget-editor",
@@ -216,7 +217,7 @@ def test_installer_rejects_manifest_missing_required_finops_skill():
     result = _run_manifest_builder(manifest)
 
     assert result.returncode != 0
-    assert "all twelve FinOps skills" in result.stderr
+    assert "all thirteen FinOps skills" in result.stderr
 
 
 def test_installer_rejects_custom_manifest_with_azure_write_tool():

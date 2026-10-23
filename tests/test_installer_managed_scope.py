@@ -27,6 +27,7 @@ PROMPT_TASK_IDS = {
     "COST_OPT_PROMPT": "cost-optimization-report",
     "AI_REPORT_PROMPT": "ai-spend-report",
     "RELIABILITY_REPORT_PROMPT": "cost-vs-reliability-report",
+    "MONTHLY_REVIEW_PROMPT": "monthly-finops-review",
 }
 UAMI_ID = (
     "/subscriptions/control/resourceGroups/agents/"
@@ -362,6 +363,7 @@ def test_task_prompts_delegate_detailed_scope_and_analysis_contracts():
         "COST_OPT_PROMPT": ("finops-cost-optimization-report", "summarize.py"),
         "AI_REPORT_PROMPT": ("finops-for-ai", "attribute.py"),
         "RELIABILITY_REPORT_PROMPT": ("finops-cost-vs-reliability", "reliability.py"),
+        "MONTHLY_REVIEW_PROMPT": ("finops-kpi-scorecard", "scorecard.py"),
     }
 
     for prompt_name, phrases in expected.items():
@@ -398,8 +400,8 @@ def test_package_readiness_includes_ten_skills_without_runtime_write_changes():
 
     assert '"finops-managed-scope",' in script
     assert '"finops-report-renderer",' in script
-    assert "All twelve FinOps skills ready" in script
-    assert "Package: 12 skills" in script
+    assert "All thirteen FinOps skills ready" in script
+    assert "Package: 13 skills" in script
     assert "RunAzCliWriteCommands" not in script
     assert "older/incompatible runtime" not in script
 
@@ -502,7 +504,7 @@ def test_rightsizing_review_is_retired_and_merged_without_schedule_collisions():
     tasks = module.load_manifest()
     retired = module.load_retired_tasks()
 
-    assert len(tasks) == 7
+    assert len(tasks) == 8
     assert {task["id"] for task in retired} == {"rightsizing-review"}
     assert not (TASK_DIR / "rightsizing-weekly.yaml").exists()
     assert len({task["defaultCron"] for task in tasks}) == len(tasks)
@@ -592,7 +594,7 @@ def test_install_plan_reuses_one_list_and_verifies_retirement(tmp_path, monkeypa
 
     module.write_install_plan(existing, plan)
 
-    assert len((plan / "task-plan.tsv").read_text().splitlines()) == 7
+    assert len((plan / "task-plan.tsv").read_text().splitlines()) == 8
     assert (plan / "retired-plan.tsv").read_text().split("\x1f") == [
         "retired-1",
         "FinOps: Rightsizing Review (Weekly)\n",

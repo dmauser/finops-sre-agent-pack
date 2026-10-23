@@ -1,0 +1,9 @@
+Run the monthly FinOps review now for the month that just closed, for every effective scope; do not ask questions or defer to chat.
+
+1. Run the read-only `finops-cost-optimization-report` SKILL.md contract once (its six underlying skills, one shared trailing-30-day AmortizedCost UsageDetails chain). Continue with explicit empty/partial sections when one source fails.
+2. Run `finops-cost-allocation` and its `allocate.py` `month_over_month` over the closed month vs the month before it (one AmortizedCost UsageDetails pull per month), by the owner/team tag, so variance is explained by owner and by resource.
+3. Run the `finops-kpi-scorecard` SKILL.md contract with bundled `scorecard.py`: `forecast_spend` on 60 days of daily AmortizedCost (with the scope budget when one exists), `unit_economics` only when a real unit metric is available, `kpi_scorecard` over the step 1-2 results with the effective managed scopes, and `route_to_owners` over waste, rightsizing, and anomaly findings.
+4. Return: the scorecard table (value, target, status), score and crawl/walk/run maturity; governance checks with uncovered budget scopes; the forecast with its band and budget status; the top month-over-month movers; unit economics when present; one action list per owner, then unrouted items as "needs an owner tag"; and the ordered actions. Label partial inputs.
+5. {{MONTHLY_REVIEW_DELIVERY}}
+
+Recommend only; never modify resources. Remediation is proposed as owner actions or IaC pull requests that humans review.

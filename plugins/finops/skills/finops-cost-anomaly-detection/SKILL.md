@@ -99,8 +99,9 @@ read_skill_file(skill_name="finops-cost-anomaly-detection", file_path="detect.py
 ```
 
 ```python
-from detect import detect_anomalies
+from detect import detect_anomalies, summarize_credits
 anomalies = detect_anomalies(line_items)   # returns list ranked by impact_usd desc
+credits = summarize_credits(line_items)    # negative rows (refunds/credits), reported separately
 ```
 
 `detect_anomalies` handles all detection rules — do **not** re-implement them in the prompt:
@@ -109,6 +110,25 @@ anomalies = detect_anomalies(line_items)   # returns list ranked by impact_usd d
   when today exceeds `mean + k*std` **or** is ≥ `wow_ratio`× the same day last week, and only when
   the absolute change clears `min_delta_usd` (defaults `k=3`, `wow_ratio=1.5`, `min_delta_usd=$5`).
 - Dimensions with no prior history are labelled `new_spend`, not `spike`.
+- **Drops** (`detect_drops=True`, default): a dimension with history whose current day falls below
+  `mean - k*std` (trigger `baseline_drop`) or to ≤ 1/`wow_ratio` of the same day last week (trigger
+  `wow_drop`), with the absolute fall ≥ `min_delta_usd`, is reported as `kind: "drop"`. This
+  includes a dimension with steady spend that is **zero** on the latest complete day (resource
+  deleted, outage, broken pipeline). Pass `detect_drops=False` for spike-only behaviour.
+- Every anomaly carries `direction` (`"up"` for spike/new_spend, `"down"` for drop) and a
+  **positive** `impact_usd` (for drops: the fall below baseline / last week), so impact ranking mixes
+  both directions correctly. `dod_delta_usd` / `wow_delta_usd` keep their sign (negative for drops).
+- `sustained: true` means the 3 most recent complete days (today, −1, −2) all moved by ≥
+  `min_delta_usd` versus the baseline mean in the anomaly's direction — a step change rather than a
+  one-day blip. Informational only; it does not change detection.
+- **Credits / refunds:** negative-cost rows (refunds, credits, reservation refunds) are excluded from
+  detection so they cannot mask a spike or fabricate a drop. Always call `summarize_credits(...)`
+  alongside and report its `total_credit_usd`, `today_credit_usd`, `by_day`, `by_dimension`,
+  `by_charge_type`, and `top_rows` as a separate "credits & refunds" line (amounts are positive
+  magnitudes; `top_rows[].cost` keeps the raw negative value).
+- **Tags as strings:** `tag:<key>` dimensions accept a tags dict, a JSON object string
+  (`'{"env": "prod"}'`), or the bare UsageDetails form (`'"env": "prod","team": "x"'`); key
+  matching is case-insensitive and malformed tags are treated as no tags.
 - Billing lag: pass `assume_last_partial=True` (default) so the partial newest day is excluded and
   the last **complete** day is analysed. Never flag the partial trailing day.
 - Results are ranked by **absolute dollar impact**, not percentage.
@@ -132,10 +152,25 @@ Join on **resource/RG identity + timestamp proximity**. Present matches as **can
 evidence links** — correlation, not proof. If nothing correlates, say so ("no deployment/change
 found near this spike") rather than inventing a cause.
 
+Interpreting the new signals:
+
+- **Drop (`direction: "down"`)** can be a **savings win** (rightsizing, shutdown schedule,
+  decommission) or an **outage / broken pipeline** (resource deleted, crashed, scaled to zero, data
+  not flowing). Cross-check **Resource Health** (read-only `az rest` GET of
+  `<resourceId>/providers/Microsoft.ResourceHealth/availabilityStatuses/current`), whether the
+  resource still exists, and the activity log for delete/stop/scale-in operations before calling it
+  a saving. A drop to `current_usd: 0` with no matching change is an availability question first.
+- **Sustained spike (`sustained: true`)** usually means a **scale-out, SKU change, or new workload**
+  rather than a one-off — check deployments and activity-log scale/SKU writes around the first
+  elevated day (today − 2). A non-sustained spike is more likely a burst, batch job, or retry storm.
+- **Credits** from `summarize_credits` are not anomalies; mention them so a net-cost view that
+  includes refunds does not look like a drop.
+
 ### Step 4 — Report
 
 Emit a ranked list; each row: `{value, current_usd, dod_delta_usd, dod_delta_pct, wow_delta_usd,
-date, kind, candidate cause(s) with links}`, plus a one-line executive summary. In scheduled mode,
+date, kind, direction, sustained, candidate cause(s) with links}`, plus a one-line executive
+summary and, when `summarize_credits` found any, a separate credits/refunds line. In scheduled mode,
 **report only when `detect_anomalies` returns a non-empty list**; otherwise emit a short "no
 anomalies" line.
 
@@ -162,4 +197,5 @@ anomalies" line.
 `detect.py` is pure and offline-testable. Run `pytest tests/` at the repo root — see
 `tests/test_detect.py` for the Layer-1 suite (known spike, tiny-meter floor, new-spend labelling,
 flat-history no-false-alarm, week-over-week creep, dollar-impact ranking, partial-last-day
-handling).
+handling, drops incl. drop-to-zero, credits/refunds isolation and `summarize_credits`, tag-string
+parsing, and the `sustained` flag).

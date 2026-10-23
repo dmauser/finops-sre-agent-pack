@@ -22,6 +22,7 @@ EXPECTED_IDS = {
     "cost-optimization-report",
     "ai-spend-report",
     "cost-vs-reliability-report",
+    "monthly-finops-review",
 }
 EXPECTED_RETIRED_IDS = {"rightsizing-review"}
 _TEMPLATE_TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
@@ -39,8 +40,8 @@ def _load_manifest_data():
         raise ValueError("Unsupported or malformed task manifest")
     ids = {task.get("id") for task in tasks}
     retired_ids = {task.get("id") for task in retired}
-    if len(tasks) != 7 or ids != EXPECTED_IDS:
-        raise ValueError("Task manifest must define the canonical seven task IDs")
+    if len(tasks) != len(EXPECTED_IDS) or ids != EXPECTED_IDS:
+        raise ValueError("Task manifest must define the canonical eight task IDs")
     if len(retired) != 1 or retired_ids != EXPECTED_RETIRED_IDS:
         raise ValueError("Task manifest must define the retired rightsizing review task")
     if ids & retired_ids:
@@ -113,6 +114,11 @@ def _special_values(reference):
                 "`Weekly rightsizing review — <date>` and Normal importance; otherwise "
                 "return it only in the scheduled-task result."
             ),
+            "MONTHLY_REVIEW_DELIVERY": (
+                "If `__ALERT_EMAIL__` is configured, email the review with subject "
+                "`Monthly FinOps review — <month>` and Normal importance; otherwise return it "
+                "only in the scheduled-task result."
+            ),
         }
 
     github_repo = os.environ.get("GITHUB_REPO", "")
@@ -137,11 +143,18 @@ def _special_values(reference):
         else "do not send email; ALERT_EMAIL was not set at installation time, so return it "
         "only in the scheduled-task result."
     )
+    monthly_delivery = (
+        f"Email `{alert_email}` with subject `Monthly FinOps review — <month>` and Normal importance."
+        if alert_email
+        else "Do not send email; ALERT_EMAIL was not set at installation time, so return it "
+        "only in the scheduled-task result."
+    )
     return {
         "AGENT_RESOURCE_ID": os.environ["AGENT_RESOURCE_ID"],
         "ANOMALY_CORRELATION": correlation,
         "ANOMALY_DELIVERY": anomaly_delivery,
         "RIGHTSIZE_DELIVERY": rightsizing_delivery,
+        "MONTHLY_REVIEW_DELIVERY": monthly_delivery,
     }
 
 

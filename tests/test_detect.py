@@ -173,3 +173,154 @@ def test_resource_id_dimension_prefers_arm_instance_name():
     arm = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
     assert detect._dimension_value({"instanceName": arm, "resourceId": None}, "resourceId") == arm
     assert detect._dimension_value({"instanceName": "vm1", "resourceId": arm}, "resourceId") == arm
+
+
+# --- drops -------------------------------------------------------------------------------------
+
+
+def test_drop_below_baseline_is_flagged_as_down():
+    items = _series("Shrinker", 50.0, 28) + [_point("Shrinker", 10.0)]
+    result = detect.detect_anomalies(items, today=TODAY, dimensions=("meterCategory",))
+    hits = _by_value(result, "Shrinker")
+    assert len(hits) == 1
+    a = hits[0]
+    assert a["kind"] == "drop"
+    assert a["direction"] == "down"
+    assert "baseline_drop" in a["triggers"]
+    assert "wow_drop" in a["triggers"]
+    assert a["dod_delta_usd"] == -40.0
+    assert a["impact_usd"] == 40.0  # positive magnitude so impact ranking still works
+
+
+def test_drop_to_zero_today_is_reported():
+    # Steady spend, then nothing on the latest complete day (deleted / outage / broken pipeline).
+    items = _series("Gone", 30.0, 28, resource_id="/r/gone")
+    items.append(_point("Other", 1.0, resource_id="/r/other"))  # some row exists for today
+    result = detect.detect_anomalies(items, today=TODAY, dimensions=("meterCategory", "resourceId"))
+    hits = _by_value(result, "Gone") + _by_value(result, "/r/gone")
+    assert {a["dimension"] for a in hits} == {"meterCategory", "resourceId"}
+    for a in hits:
+        assert a["kind"] == "drop"
+        assert a["current_usd"] == 0.0
+        assert a["impact_usd"] == 30.0
+
+
+def test_detect_drops_false_keeps_spike_only_behaviour():
+    items = _series("Shrinker", 50.0, 28) + [_point("Shrinker", 10.0)]
+    items += _series("Gone", 30.0, 28, resource_id="/r/gone")
+    result = detect.detect_anomalies(
+        items, today=TODAY, dimensions=("meterCategory",), detect_drops=False
+    )
+    assert result == []
+
+
+def test_small_drop_below_floor_not_flagged():
+    items = _series("Tiny", 4.0, 28) + [_point("Tiny", 0.5)]
+    assert detect.detect_anomalies(items, today=TODAY, dimensions=("meterCategory",)) == []
+
+
+def test_spikes_have_up_direction():
+    items = _series("Container Apps", 10.0, 28) + [_point("Container Apps", 100.0)]
+    a = detect.detect_anomalies(items, today=TODAY, dimensions=("meterCategory",))[0]
+    assert a["direction"] == "up"
+    new = detect.detect_anomalies(
+        [_point("Fresh", 40.0)], today=TODAY, dimensions=("meterCategory",)
+    )[0]
+    assert new["direction"] == "up"
+
+
+# --- credits / negative rows ---------------------------------------------------------------------
+
+
+def test_negative_rows_do_not_mask_spike_or_create_drop():
+    items = _series("Compute", 20.0, 28) + [_point("Compute", 200.0)]
+    refund = _point("Compute", -180.0)
+    refund["chargeType"] = "Refund"
+    result = detect.detect_anomalies(items + [refund], today=TODAY, dimensions=("meterCategory",))
+    hits = _by_value(result, "Compute")
+    assert len(hits) == 1
+    assert hits[0]["kind"] == "spike"
+    assert hits[0]["current_usd"] == 200.0
+
+    # A credit on a flat day must not produce a fake drop.
+    flat = _series("Flat", 20.0, 28) + [_point("Flat", 20.0), _point("Flat", -20.0)]
+    assert detect.detect_anomalies(flat, today=TODAY, dimensions=("meterCategory",)) == []
+
+
+def test_summarize_credits_reports_negative_rows():
+    items = _series("Compute", 20.0, 3)
+    c1 = _point("Compute", -50.0, offset=0, resource_id="/r/a", rg="rg1")
+    c1["chargeType"] = "Refund"
+    c2 = _point("Reservations", -10.0, offset=1, resource_id="/r/b", rg="rg2")
+    c2["chargeType"] = "Credit"
+    out = detect.summarize_credits(items + [c1, c2], today=TODAY)
+    assert out["today"] == TODAY.isoformat()
+    assert out["total_credit_usd"] == 60.0
+    assert out["row_count"] == 2
+    assert out["today_credit_usd"] == 50.0
+    assert out["by_day"] == [
+        {"date": _day(1), "credit_usd": 10.0, "row_count": 1},
+        {"date": _day(0), "credit_usd": 50.0, "row_count": 1},
+    ]
+    assert out["by_dimension"]["resourceGroup"][0] == {
+        "value": "rg1", "credit_usd": 50.0, "row_count": 1
+    }
+    assert [c["chargeType"] for c in out["by_charge_type"]] == ["Refund", "Credit"]
+    assert out["top_rows"][0]["cost"] == -50.0
+    assert out["top_rows"][0]["resourceId"] == "/r/a"
+
+
+def test_summarize_credits_empty():
+    out = detect.summarize_credits([])
+    assert out["total_credit_usd"] == 0.0
+    assert out["row_count"] == 0
+    assert out["today"] is None
+
+
+# --- tags as strings -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"Env": "prod"},
+        '{"Env": "prod", "team": "x"}',
+        '"Env": "prod","team": "x"',
+        '  "env": "prod"  ',
+    ],
+)
+def test_tag_dimension_handles_dict_and_string_formats(raw):
+    assert detect._dimension_value({"tags": raw}, "tag:env") == "prod"
+    assert detect._dimension_value({"tags": raw}, "tag:ENV") == "prod"
+
+
+@pytest.mark.parametrize("raw", ['"env": prod', "not json", "[1,2]", "", None, 42])
+def test_malformed_tags_yield_no_tags(raw):
+    assert detect.parse_tags(raw) == {}
+    assert detect._dimension_value({"tags": raw}, "tag:env") is None
+
+
+def test_tag_string_dimension_end_to_end():
+    items = _series("Svc", 10.0, 28) + [_point("Svc", 100.0)]
+    for i in items:
+        i["tags"] = '"team": "payments"'
+    result = detect.detect_anomalies(items, today=TODAY, dimensions=("tag:team",))
+    assert [a["value"] for a in result] == ["payments"]
+
+
+# --- sustained -----------------------------------------------------------------------------------
+
+
+def test_sustained_step_change_vs_one_day_blip():
+    step = _series("Step", 10.0, 26, start_offset=3) + [
+        _point("Step", 100.0, offset=2),
+        _point("Step", 100.0, offset=1),
+        _point("Step", 100.0, offset=0),
+    ]
+    a = _by_value(detect.detect_anomalies(step, today=TODAY, dimensions=("meterCategory",)), "Step")
+    assert len(a) == 1 and a[0]["kind"] == "spike"
+    assert a[0]["sustained"] is True
+
+    blip = _series("Blip", 10.0, 28) + [_point("Blip", 100.0)]
+    b = _by_value(detect.detect_anomalies(blip, today=TODAY, dimensions=("meterCategory",)), "Blip")
+    assert b[0]["sustained"] is False

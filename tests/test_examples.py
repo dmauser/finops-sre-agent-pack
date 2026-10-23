@@ -18,6 +18,7 @@ SKILL_NAMES = (
     "finops-rightsizing-advisor",
     "finops-waste-finder",
     "finops-commitment-advisor",
+    "finops-kpi-scorecard",
 )
 
 

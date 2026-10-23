@@ -161,3 +161,164 @@ def test_recommended_keys_overridable():
     assert set(cov) == {"project", "owner"}
     assert cov["project"]["present"] is True
     assert out["missing_recommended"] == ["owner"]
+
+
+# --- tag inheritance -----------------------------------------------------------------------------
+
+SUB = "/subscriptions/s"
+RG = "/subscriptions/s/resourceGroups/rg"
+X = "/subscriptions/s/resourceGroups/other/providers/Microsoft.Web/sites/x"
+
+
+def test_inheritance_none_is_unchanged():
+    costs = {A: 100.0, C: 50.0}
+    tags = {A: {"team": "pay"}}
+    base = allocate_costs(costs, tags)
+    assert base == allocate_costs(costs, tags, inherited_tags=None)
+    assert base["inheritance"] == {
+        "enabled": False, "allocated_via_inheritance_usd": 0.0, "resource_count": 0
+    }
+    assert base["inherited_usd"] == 0.0
+    assert base["unallocated_usd"] == 50.0
+
+
+def test_inheritance_rg_then_subscription_and_resource_wins():
+    costs = {A: 100.0, B: 40.0, C: 60.0, X: 25.0}
+    tags = {A: {"team": "own"}, B: {"env": "prod"}}   # C and X have no tags at all
+    inherited = {
+        RG.upper() + "/": {"Team": "rg-team"},          # case/trailing-slash insensitive
+        SUB: {"team": "sub-team"},
+    }
+    out = allocate_costs(costs, tags, inherited_tags=inherited)
+    g = {x["owner"]: x for x in out["groups"]}
+    assert g["own"]["monthly_usd"] == 100.0 and g["own"]["inherited_usd"] == 0.0  # resource wins
+    assert g["rg-team"]["monthly_usd"] == 100.0  # B + C from the RG
+    assert g["rg-team"]["inherited_usd"] == 100.0
+    assert g["sub-team"]["monthly_usd"] == 25.0  # X's RG has no tags -> subscription
+    assert out["unallocated_usd"] == 0.0
+    assert out["inherited_usd"] == 125.0
+    assert out["inheritance"] == {
+        "enabled": True, "allocated_via_inheritance_usd": 125.0, "resource_count": 3
+    }
+    # untagged list is still "no own tags", annotated with what inheritance filled
+    un = {r["resourceId"]: r for r in out["untagged_resources"]}
+    assert set(un) == {C, X}
+    assert un[C]["inherited_owner"] == "rg-team" and un[C]["inherited_from"] == "resourceGroup"
+    assert un[X]["inherited_owner"] == "sub-team" and un[X]["inherited_from"] == "subscription"
+    # inventory still reflects own tags only
+    assert {t["key"] for t in out["tag_inventory"]} == {"team", "env"}
+
+
+# --- shared-cost split ---------------------------------------------------------------------------
+
+def _shared_fixture():
+    costs = {A: 300.0, B: 100.0, C: 80.0, D: 20.0}
+    tags = {A: {"team": "pay"}, B: {"team": "search"}, C: {"shared": "TRUE"}}  # D unallocated
+    return costs, tags
+
+
+def _reconciles(out):
+    total = sum(g["fully_loaded_usd"] for g in out["groups"])
+    total += out["unallocated_usd"] + out["undistributed_usd"]
+    return abs(total - out["total_usd"]) < 0.05
+
+
+def test_shared_proportional_by_tag():
+    costs, tags = _shared_fixture()
+    out = allocate_costs(costs, tags, shared={"tag": {"key": "Shared", "value": "true"}})
+    g = {x["owner"]: x for x in out["groups"]}
+    assert g["pay"]["monthly_usd"] == g["pay"]["direct_usd"] == 300.0
+    assert g["pay"]["shared_usd"] == 60.0 and g["pay"]["fully_loaded_usd"] == 360.0
+    assert g["search"]["shared_usd"] == 20.0
+    sc = out["shared_costs"]
+    assert sc["total_usd"] == 80.0 and sc["method"] == "proportional"
+    assert sc["resources"] == [{"resourceId": C, "monthly_usd": 80.0}]
+    assert sc["distribution"] == [
+        {"owner": "pay", "shared_usd": 60.0}, {"owner": "search", "shared_usd": 20.0}
+    ]
+    assert out["unallocated_usd"] == 20.0  # unallocated is never a recipient
+    assert out["allocated_usd"] == 480.0
+    assert _reconciles(out)
+
+
+def test_shared_even_by_resource_id():
+    costs, tags = _shared_fixture()
+    out = allocate_costs(costs, tags, shared={"resource_ids": [C.upper()], "method": "even"})
+    g = {x["owner"]: x for x in out["groups"]}
+    assert g["pay"]["shared_usd"] == g["search"]["shared_usd"] == 40.0
+    assert _reconciles(out)
+
+
+def test_shared_fixed_weights():
+    costs, tags = _shared_fixture()
+    out = allocate_costs(
+        costs, tags,
+        shared={"resource_ids": [C], "method": "fixed", "weights": {"Pay": 1, "search": 3, "ghost": 5}},
+    )
+    g = {x["owner"]: x for x in out["groups"]}
+    assert g["pay"]["shared_usd"] == 20.0 and g["search"]["shared_usd"] == 60.0
+    assert out["undistributed_usd"] == 0.0
+    assert _reconciles(out)
+
+
+def test_shared_without_recipients_is_undistributed():
+    costs = {C: 80.0, D: 20.0}
+    out = allocate_costs(costs, {}, shared={"resource_ids": [C]})
+    assert out["groups"] == []
+    assert out["undistributed_usd"] == 80.0
+    assert out["shared_costs"]["undistributed_usd"] == 80.0
+    assert out["unallocated_usd"] == 20.0
+    assert out["allocated_usd"] == 0.0
+    assert _reconciles(out)
+
+
+def test_shared_fixed_with_no_matching_weights_is_undistributed():
+    costs, tags = _shared_fixture()
+    out = allocate_costs(costs, tags, shared={"resource_ids": [C], "method": "fixed", "weights": {"x": 1}})
+    assert out["undistributed_usd"] == 80.0
+    assert _reconciles(out)
+
+
+def test_shared_invalid_method_raises():
+    import pytest
+    with pytest.raises(ValueError):
+        allocate_costs({A: 1.0}, {}, shared={"resource_ids": [A], "method": "bogus"})
+
+
+def test_groups_without_shared_have_fully_loaded_equal_direct():
+    out = allocate_costs({A: 10.0}, {A: {"team": "t"}})
+    g = out["groups"][0]
+    assert g["direct_usd"] == g["fully_loaded_usd"] == g["monthly_usd"] == 10.0
+    assert g["shared_usd"] == 0.0
+    assert out["shared_costs"]["method"] is None and out["undistributed_usd"] == 0.0
+
+
+# --- month over month ----------------------------------------------------------------------------
+
+def test_month_over_month_movers_and_owners():
+    prev = {A: 100.0, B: 50.0, C: 40.0, D: 30.0}
+    cur = {A.upper(): 160.0, B: 20.0, C: 45.0, X: 70.0}   # D removed, X new, C below threshold
+    tags = {A: {"team": "pay"}, B: {"Team": "search"}, X: {"team": "pay"}}
+    out = allocate.month_over_month(cur, prev, dimension_tags=tags)
+    assert out["previous_usd"] == 220.0 and out["current_usd"] == 295.0
+    assert out["delta_usd"] == 75.0 and out["delta_pct"] == 34.1
+    m = out["movers"]
+    assert [r["resourceId"] for r in m["new"]] == [X] and m["new"][0]["delta_pct"] is None
+    assert [r["resourceId"] for r in m["removed"]] == [D] and m["removed"][0]["delta_usd"] == -30.0
+    assert m["increased"][0]["delta_usd"] == 60.0 and m["increased"][0]["owner"] == "pay"
+    assert m["decreased"][0]["resourceId"] == B and m["decreased"][0]["delta_pct"] == -60.0
+    b = out["bridge"]
+    assert b == {"new_usd": 70.0, "removed_usd": -30.0, "increased_usd": 60.0,
+                 "decreased_usd": -30.0, "below_threshold_usd": 5.0}
+    assert round(sum(b.values()), 2) == out["delta_usd"]
+    owners = {o["owner"]: o for o in out["by_owner"]}
+    assert owners["pay"]["delta_usd"] == 130.0
+    assert owners["search"]["delta_usd"] == -30.0
+    assert owners["(unallocated)"]["delta_usd"] == -25.0
+    assert out["by_owner"][0]["owner"] == "pay"  # sorted by absolute delta
+
+
+def test_month_over_month_empty_previous():
+    out = allocate.month_over_month({A: 50.0}, {})
+    assert out["delta_pct"] is None
+    assert out["movers"]["new"][0]["delta_usd"] == 50.0
