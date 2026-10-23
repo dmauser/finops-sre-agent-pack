@@ -250,6 +250,15 @@ in one line.
 
 Read-only only. Do not use any write/POST Azure operations.
 
+### Step 7 — Save the Live Report
+
+After reporting, refresh the shared Live Report `FinOps: Rightsizing Savings` so the result is visible in Operations Hub. A scheduled task that already has ListReports/SaveReport steps owns this; follow it and do not save twice.
+
+1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Rightsizing Savings (<scope>)`. Skip when the user asks not to save.
+2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_rightsizing_savings_model(rightsize_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, "finops-rightsizing-savings.html")`.
+4. SaveReport the static file with `allowedTools: []`, name `FinOps: Rightsizing Savings`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
+
 ## Notes
 
 - Storage hot→cold tiering and reservation/savings-plan suggestions come through Advisor (Step 1) and

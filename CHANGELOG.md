@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Monthly Review Live Report**: `monthly-finops-review` now also saves the `FinOps: Monthly Review`
+  Live Report (new `build_monthly_review_model` adapter) while keeping email delivery. The six
+  report skills now save their Live Report when run from chat for the full managed scope.
 - `docs/ONBOARDING.md`: *Updating an existing deployment* (automated rerun and portal steps).
 
 - **`finops-kpi-scorecard`** (13th skill): month-end and next-month forecast (linear trend with

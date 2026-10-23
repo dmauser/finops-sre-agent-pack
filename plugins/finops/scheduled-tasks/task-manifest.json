@@ -111,12 +111,14 @@
       "yaml": "monthly-finops-review.yaml",
       "nameEnv": "MONTHLY_REVIEW_TASK_NAME",
       "defaultName": "FinOps: Monthly Review (KPI Scorecard)",
-      "description": "Part of the FinOps pack — the monthly FinOps review: KPI scorecard with tag and budget governance checks, month-end and next-month forecast, month-over-month variance, unit economics, and one action list per owner.",
+      "description": "Part of the FinOps pack — the monthly FinOps review, saved as a Live Report (Operations Hub): KPI scorecard with tag and budget governance checks, month-end and next-month forecast, month-over-month variance, unit economics, and one action list per owner.",
       "cronEnv": "MONTHLY_REVIEW_CRON",
       "defaultCron": "0 15 1 * *",
       "modelEnv": "MONTHLY_REVIEW_MODEL_TIER",
+      "reportNameEnv": "MONTHLY_REVIEW_NAME",
+      "defaultReportName": "FinOps: Monthly Review",
       "prompt": "prompts/monthly-finops-review.txt",
-      "tags": ["finops", "finops-kpi-scorecard"]
+      "tags": ["finops", "finops-live-report", "finops-kpi-scorecard"]
     }
   ]
 }

@@ -192,3 +192,12 @@ forecasts and unvalidated rightsizing rows as estimates/"verify first", note tha
 recommendations assume look-back usage continues and Hybrid Benefit needs license entitlement, and
 note an unsynced `currentSpend` where relevant. If an analysis returned nothing, show its section as
 a clean empty-state. If every section is clean, say so in one line.
+
+### Step 4 — Save the Live Report
+
+After reporting, refresh the shared Live Report `FinOps: Cost Optimization` so the result is visible in Operations Hub. A scheduled task that already has ListReports/SaveReport steps owns this; follow it and do not save twice.
+
+1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Cost Optimization (<scope>)`. Skip when the user asks not to save.
+2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_cost_optimization_model(summarize_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, "finops-cost-optimization.html")`.
+4. SaveReport the static file with `allowedTools: []`, name `FinOps: Cost Optimization`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.

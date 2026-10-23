@@ -119,13 +119,23 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
 
 Report the excluded resources, missing inputs and warnings. Recommend only — read-only only.
 
+### Step 4 — Save the Live Report
+
+After reporting, refresh the shared Live Report `FinOps: Monthly Review` so the result is visible in Operations Hub. A scheduled task that already has ListReports/SaveReport steps owns this; follow it and do not save twice.
+
+1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Monthly Review (<scope>)`. Skip when the user asks not to save.
+2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_monthly_review_model({"month": ..., "scorecard": kpi_scorecard_result, "forecast": ..., "month_over_month": ..., "routing": ..., "unit_economics": ...}, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, "finops-monthly-review.html")`.
+4. SaveReport the static file with `allowedTools: []`, name `FinOps: Monthly Review`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
+
 ## Operating the practice with SRE Agent
 
 These patterns turn the scorecard into a running FinOps operating model. They use SRE Agent
 features configured by the customer; this skill and `finops-investigator` stay read-only.
 
 - **Monthly FinOps review**: the `monthly-finops-review` scheduled task runs this skill on the 1st of
-  each month and posts the scorecard, forecast, month-over-month variance and owner action lists.
+  each month, saves the `FinOps: Monthly Review` Live Report, and posts the scorecard, forecast,
+  month-over-month variance and owner action lists.
 - **Alert-triggered investigations**: send Cost Management anomaly alerts, budget alerts (actual and
   forecast thresholds) and Azure Monitor alerts to an action group that the SRE Agent receives as
   incidents. Create an incident response plan that matches them (for example title contains

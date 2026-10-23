@@ -18,6 +18,7 @@ REPORT_TASKS = (
     "cost-optimization-report-weekly.yaml",
     "ai-spend-report-weekly.yaml",
     "cost-vs-reliability-report-weekly.yaml",
+    "monthly-finops-review.yaml",
 )
 PROMPT_TASK_IDS = {
     "ANOMALY_PROMPT": "cost-anomaly",
@@ -414,6 +415,7 @@ def test_installer_live_report_prompts_use_deterministic_renderer():
         "COST_OPT_PROMPT": "build_cost_optimization_model",
         "AI_REPORT_PROMPT": "build_ai_spend_model",
         "RELIABILITY_REPORT_PROMPT": "build_cost_vs_reliability_model",
+        "MONTHLY_REVIEW_PROMPT": "build_monthly_review_model",
     }
     for prompt_name, adapter in adapters.items():
         prompt = _prompt(prompt_name)
@@ -445,6 +447,7 @@ def test_live_report_templates_use_deterministic_renderer():
         "cost-optimization-report-weekly.yaml": "build_cost_optimization_model",
         "ai-spend-report-weekly.yaml": "build_ai_spend_model",
         "cost-vs-reliability-report-weekly.yaml": "build_cost_vs_reliability_model",
+        "monthly-finops-review.yaml": "build_monthly_review_model",
     }
 
     for name in REPORT_TASKS:

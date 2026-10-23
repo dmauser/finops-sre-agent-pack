@@ -490,6 +490,85 @@ def _reliability():
     }
 
 
+def _monthly():
+    return {
+        "month": "2026-09",
+        "scorecard": {
+            "score_pct": 40.0,
+            "maturity": "crawl",
+            "kpis": [
+                {"id": "allocated_pct", "name": "Spend allocated", "capability": "Allocation",
+                 "value": 80.0, "unit": "%", "target": 90, "higher_is_better": True,
+                 "status": "warn", "action": EVIL, "detail": None},
+                {"id": "budget_coverage_pct", "name": "Managed scopes with a budget",
+                 "capability": "Budgeting (governance)", "value": 50.0, "unit": "%",
+                 "target": 100, "higher_is_better": True, "status": "fail",
+                 "action": "Create budgets.",
+                 "detail": {"uncovered_scopes": ["/subscriptions/b", "/subscriptions/a"]}},
+                {"id": "untagged_pct", "name": "Untagged spend",
+                 "capability": "Allocation (tag governance)", "value": 2.0, "unit": "%",
+                 "target": 5, "higher_is_better": False, "status": "pass", "action": None,
+                 "detail": None},
+                {"id": "budgets_over", "name": "Budgets over", "capability": "Budgeting",
+                 "value": 0, "unit": "count", "target": 0, "higher_is_better": False,
+                 "status": "pass", "action": None, "detail": None},
+                {"id": "unit_cost_change_pct", "name": "Unit cost change",
+                 "capability": "Unit economics", "value": None, "unit": "%", "target": 0,
+                 "higher_is_better": False, "status": "unknown", "action": None,
+                 "detail": None},
+            ],
+            "actions": [
+                {"kpi": "allocated_pct", "status": "warn", "action": EVIL},
+                {"kpi": "budget_coverage_pct", "status": "fail", "action": "Create budgets."},
+            ],
+        },
+        "forecast": {
+            "available": True, "month": "2026-09", "next_month": "2026-10",
+            "month_to_date": 2900.0, "days_remaining": 1,
+            "month_end_forecast": 3000.0, "month_end_low": 2950.0, "month_end_high": 3050.0,
+            "next_month_forecast": 3100.0, "next_month_low": 2800.0, "next_month_high": 3400.0,
+            "run_rate_30d": 3000.0, "method": "linear_trend", "confidence": "high",
+            "budget_amount": 2800.0, "forecast_vs_budget_pct": 107.1,
+            "budget_status": "forecast_over", "warnings": [],
+        },
+        "month_over_month": {
+            "current_usd": 3000.0, "previous_usd": 2500.0, "delta_usd": 500.0, "delta_pct": 20.0,
+            "by_owner": [
+                {"owner": "web", "previous_usd": 1000, "current_usd": 1300, "delta_usd": 300,
+                 "delta_pct": 30.0},
+                {"owner": EVIL, "previous_usd": 1500, "current_usd": 1700, "delta_usd": 200,
+                 "delta_pct": 13.3},
+            ],
+            "movers": {
+                "new": [{"resourceId": "/s/r/new", "owner": "web", "previous_usd": 0,
+                         "current_usd": 200, "delta_usd": 200, "delta_pct": None}],
+                "increased": [{"resourceId": "/s/r/up", "owner": EVIL, "previous_usd": 100,
+                               "current_usd": 300, "delta_usd": 200, "delta_pct": 200.0}],
+                "decreased": [],
+                "removed": [{"resourceId": "/s/r/gone", "owner": "web", "previous_usd": 50,
+                             "current_usd": 0, "delta_usd": -50, "delta_pct": -100.0}],
+            },
+        },
+        "routing": {
+            "owners": [
+                {"owner": "web", "total_usd": 60.0, "items": [
+                    {"resourceId": "/s/r/a", "source": "waste", "amount_usd": 40.0,
+                     "action": "Delete disk"},
+                    {"resourceId": "/s/r/b", "source": "rightsizing", "amount_usd": 20.0,
+                     "action": EVIL},
+                ]},
+            ],
+            "unrouted": [{"resourceId": "/s/r/z", "source": "waste", "amount_usd": None,
+                          "action": None}],
+            "unrouted_usd": 0.0,
+            "routed_pct": 100.0,
+        },
+        "unit_economics": {"unit": "request", "per": 1000, "cost_per_unit": 3.0,
+                           "previous_cost_per_unit": 3.1, "change_pct": -3.2,
+                           "trend": "improving", "interpretation": None, "warnings": []},
+    }
+
+
 def _digest(value):
     payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(payload.encode()).hexdigest()
@@ -651,6 +730,7 @@ def test_cost_vs_reliability_adapter_preserves_quality_and_signal_fields():
                 "data_quality": {},
             },
         ),
+        (models.build_monthly_review_model, {"scorecard": {}}),
     ],
 )
 def test_all_adapters_render_empty_states(builder, empty):
@@ -701,6 +781,12 @@ def test_all_adapters_render_empty_states(builder, empty):
             "71af9517bf5436e8b8f7d23045995cac37f18cb2d6a9bd83cbc13d03c24a8111",
             "71176fb06191a382547b35f47863f2963c425dbf7b214cb25b440f594a96be3d",
         ),
+        (
+            models.build_monthly_review_model,
+            _monthly,
+            "85657923896814482a757fc3a3f78f7b66a858fb59a6bb9594ef5c958b5b1d65",
+            "a3e7ed4bca09c13f31646229edf564b7d925ece9975551a62a68c95d37bfcffb",
+        ),
     ],
 )
 def test_adapter_models_and_html_have_stable_hashes(
@@ -724,6 +810,7 @@ def test_adapter_models_and_html_have_stable_hashes(
         (models.build_cost_optimization_model, _optimization),
         (models.build_ai_spend_model, _ai_spend),
         (models.build_cost_vs_reliability_model, _reliability),
+        (models.build_monthly_review_model, _monthly),
     ],
 )
 def test_malicious_strings_are_unescaped_in_models_and_escaped_at_render(builder, fixture):
@@ -859,3 +946,28 @@ def test_ai_spend_adapter_renders_optional_splits_and_new_verify_hints():
     hint_rows = [row for section in model["sections"] for row in section["rows"]
                  if row and row[0] == "prompt_caching_verify"]
     assert hint_rows[0][-1] == "verify first"
+
+
+def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
+    model = models.build_monthly_review_model(_monthly(), **_context())
+
+    assert model["title"] == "FinOps: Monthly Review"
+    assert [m["label"] for m in model["metrics"]] == [
+        "FinOps score", "KPIs passing", "Month-end forecast",
+        "Month-over-month change", "Owner-routed findings",
+    ]
+    assert model["metrics"][1]["value"] == "2 of 4"
+    assert model["metrics"][2]["tone"] == "critical"
+    sections = {s["title"]: s for s in model["sections"]}
+    kpi_rows = sections["KPI scorecard"]["rows"]
+    assert [r[4] for r in kpi_rows] == ["fail", "warn", "unknown", "pass", "pass"]
+    assert kpi_rows[0][3] == "≥ 100.0%"
+    governance = sections["Governance checks"]["rows"]
+    assert governance[0][4] == "uncovered_scopes: /subscriptions/a, /subscriptions/b"
+    assert sections["Owner actions"]["rows"][-1][0] == "needs an owner tag"
+    assert sections["Top resource movers"]["rows"][-1][0] == "removed"
+    assert model["chart"]["labels"] == ["web", EVIL]
+
+    bare = models.build_monthly_review_model({"scorecard": {}}, refreshed_at=REFRESHED_AT)
+    assert "Forecast was not supplied." in bare["warnings"]
+    assert "Month-over-month variance was not supplied." in bare["warnings"]

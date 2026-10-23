@@ -344,7 +344,7 @@ What the API installer sets up:
 | **Skill** `finops-for-ai` | the whole skill dir `skills/finops-for-ai/` (SKILL.md + `attribute.py`) |
 | **Skill** `finops-cost-vs-reliability` | the whole skill dir `skills/finops-cost-vs-reliability/` (SKILL.md + `reliability.py`) |
 | **Skill** `finops-managed-scope` | the whole skill dir `skills/finops-managed-scope/` (SKILL.md + dependency-free `scope.py`); live boundary resolution, fail-closed policy, filtering, and coverage reporting |
-| **Skill** `finops-report-renderer` | the whole skill dir `skills/finops-report-renderer/` (SKILL.md + `render.py`); deterministic structured-model-to-static-HTML rendering for all six Live Reports |
+| **Skill** `finops-report-renderer` | the whole skill dir `skills/finops-report-renderer/` (SKILL.md + `render.py`); deterministic structured-model-to-static-HTML rendering for all seven Live Reports |
 | **Scheduled task** `FinOps: Cost Anomaly Detection (Daily)` | daily scan from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — alerts only on a spike |
 | **Live Report** `FinOps: Cost Overview` (daily) | driven by [`scheduled-tasks/cost-overview-report-daily.yaml`](scheduled-tasks/cost-overview-report-daily.yaml) — a snapshot cost dashboard (total, daily trend, top services, top resource groups) in Operations Hub, re-versioned daily |
 | **Live Report** `FinOps: Rightsizing Savings` (weekly) | driven by [`scheduled-tasks/rightsizing-savings-report-weekly.yaml`](scheduled-tasks/rightsizing-savings-report-weekly.yaml) — one shared rightsizing pull updates the snapshot dashboard and delivers the ranked review by email when configured |
@@ -352,7 +352,7 @@ What the API installer sets up:
 | **Live Report** `FinOps: Cost Optimization` (weekly) | driven by [`scheduled-tasks/cost-optimization-report-weekly.yaml`](scheduled-tasks/cost-optimization-report-weekly.yaml) — the executive rollup dashboard (headline, a single dollar-ranked priorities list, and per-section detail across anomalies, rightsizing, waste, commitments, allocation, and budgets from `finops-cost-optimization-report`) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: AI Spend` (weekly) | driven by [`scheduled-tasks/ai-spend-report-weekly.yaml`](scheduled-tasks/ai-spend-report-weekly.yaml) — an Azure AI cost dashboard (total AI spend, per-model + per-resource breakdowns, token-vs-compute split, top drivers, and read-only hints from `finops-for-ai`; covers Azure OpenAI + AI Foundry + ML) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: Cost vs Reliability` (weekly) | driven by [`scheduled-tasks/cost-vs-reliability-report-weekly.yaml`](scheduled-tasks/cost-vs-reliability-report-weekly.yaml) — a cost-vs-reliability dashboard (spend + pain table, service rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from `finops-cost-vs-reliability`) in Operations Hub, re-versioned weekly |
-| **Scheduled task** `FinOps: Monthly Review (KPI Scorecard)` | monthly review from [`scheduled-tasks/monthly-finops-review.yaml`](scheduled-tasks/monthly-finops-review.yaml) — scorecard, governance checks, forecast, month-over-month variance and owner action lists, emailed when `ALERT_EMAIL` is set |
+| **Live Report** `FinOps: Monthly Review` (monthly) | driven by the `FinOps: Monthly Review (KPI Scorecard)` task in [`scheduled-tasks/monthly-finops-review.yaml`](scheduled-tasks/monthly-finops-review.yaml) — KPI scorecard, governance checks, forecast, month-over-month variance by owner, top resource movers, unit economics, and owner action lists from `finops-kpi-scorecard`, re-versioned monthly and also emailed when `ALERT_EMAIL` is set |
 | **RBAC** | Reader on the exact agent ARM resource; optionally Cost Management Reader on each required UsageDetails transport scope when `MI_OBJECT_ID` is set |
 
 The agent is upserted separately from the plugin installation because the runtime plugin importer
@@ -374,7 +374,7 @@ form. Manage it with `srectl scheduledtask list|pause|resume|get`.
 
 ## Live Reports (Operations Hub)
 
-The pack also installs six **Live Reports** — self-contained HTML dashboards that appear in
+The pack also installs seven **Live Reports** — self-contained HTML dashboards that appear in
 **Operations Hub → Live Reports**:
 
 - **`FinOps: Cost Overview`** (daily) — total spend, daily-spend trend, top services, and top
@@ -396,6 +396,14 @@ The pack also installs six **Live Reports** — self-contained HTML dashboards t
   alerts (primary), Resource Health, and Advisor HighAvailability, with a spend + pain table, service
   rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from the
   `finops-cost-vs-reliability` skill.
+- **`FinOps: Monthly Review`** (monthly, 1st at 15:00 UTC) — FinOps score and crawl/walk/run
+  indication, KPI scorecard with tag and budget governance checks, month-end forecast vs budget,
+  month-over-month variance by owner, top resource movers, unit economics, and per-owner action
+  lists from the `finops-kpi-scorecard` skill.
+
+When one of these report skills runs from chat for the full managed scope, it also saves (a new
+version of) the same Live Report. Chat runs with a narrower scope or user overrides offer a
+distinct report name instead, so they never overwrite the managed dashboard.
 
 These are **snapshot** reports: each task runs deterministic analysis helpers, builds only the
 documented `finops-report-renderer` model, calls `write_report`, and passes the generated static HTML

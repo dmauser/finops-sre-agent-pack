@@ -81,7 +81,7 @@ kept, and phase 2 only upserts.
 | `-l` / `LOCATION` | `centralus` | Region; must be a region that supports SRE Agent (e.g. `eastus2`, `swedencentral`, `uksouth`, `australiaeast`) |
 | `-g` / `RESOURCE_GROUP` | `SRE-FinOps-Demo` | Resource group, created if missing |
 | `-s` / `SUBSCRIPTION_ID` | current `az` subscription | Target subscription |
-| `--tasks` / `TASK_IDS` | `cost-optimization-report` | Comma-separated task ids, or `all` for all 8 tasks (6 Live Reports + anomaly alerts + monthly review) |
+| `--tasks` / `TASK_IDS` | `cost-optimization-report` | Comma-separated task ids, or `all` for all 8 tasks (7 Live Reports, including the monthly review, plus anomaly alerts) |
 | `COST_OPT_CRON` | `0 9 * * 1` | Cost Optimization schedule (UTC) |
 | `ALERT_EMAIL`, `GITHUB_REPO` | unset | Email delivery and change correlation for the email-review tasks |
 | `GRANT_COMMITMENT_READERS=1` | off | Also grant tenant-level Reservations Reader and Savings plan Reader (needs elevated access) |

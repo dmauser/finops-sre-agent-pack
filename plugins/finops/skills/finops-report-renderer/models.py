@@ -1983,11 +1983,406 @@ def build_cost_vs_reliability_model(
     )
 
 
+_KPI_STATUS_ORDER = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
+_MATURITY_TONE = {"run": "good", "walk": "warning", "crawl": "critical"}
+_FORECAST_TONE = {"forecast_over": "critical", "at_risk": "warning", "on_track": "good"}
+_MOVER_BUCKETS = ("new", "increased", "decreased", "removed")
+
+
+def _kpi_value(value, unit, field):
+    number = _decimal(value, field, optional=True)
+    if number is None:
+        return "—"
+    if unit == "%":
+        return _percent(number)
+    if unit.casefold() in ("usd", "$"):
+        return _money(number)
+    return _number(number)
+
+
+def _detail_text(detail, field):
+    if detail is None:
+        return ""
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, bool):
+        return "yes" if detail else "no"
+    if isinstance(detail, list):
+        return ", ".join(_stable_strings(_strings(detail, field)))
+    if isinstance(detail, dict):
+        keys = sorted(detail, key=lambda key: (str(key).casefold(), str(key)))
+        return "; ".join(
+            f"{key}: {_detail_text(detail[key], f'{field}.{key}')}" for key in keys
+        )
+    return _number(_decimal(detail, field))
+
+
+def _optional_object(value, field):
+    return None if value is None else _object(value, field)
+
+
+def build_monthly_review_model(
+    review,
+    *,
+    refreshed_at,
+    scope_summary=None,
+    partial=False,
+    warnings=None,
+    scope_coverage=None,
+):
+    """Adapt the monthly FinOps review to the generic report model.
+
+    `review` bundles the deterministic finops-kpi-scorecard and finops-cost-allocation outputs:
+    {"month": "YYYY-MM", "scorecard": kpi_scorecard(...), "forecast": forecast_spend(...),
+     "month_over_month": month_over_month(...), "routing": route_to_owners(...),
+     "unit_economics": unit_economics(...) or a list of them}. Only `scorecard` is required.
+    """
+
+    review = _object(review, "review")
+    month = _text(review.get("month"), "review.month")
+    scorecard = _object(review.get("scorecard") or {}, "review.scorecard")
+    forecast = _optional_object(review.get("forecast"), "review.forecast")
+    mom = _optional_object(review.get("month_over_month"), "review.month_over_month")
+    routing = _optional_object(review.get("routing"), "review.routing")
+    unit_input = review.get("unit_economics")
+    if isinstance(unit_input, dict):
+        unit_input = [unit_input]
+    generated = []
+
+    kpis = []
+    for index, row in enumerate(_objects(scorecard.get("kpis"), "review.scorecard.kpis")):
+        prefix = f"review.scorecard.kpis[{index}]"
+        unit = _text(row.get("unit"), f"{prefix}.unit")
+        status = _text(row.get("status"), f"{prefix}.status", default="unknown") or "unknown"
+        higher = _boolean(row.get("higher_is_better"), f"{prefix}.higher_is_better", default=True)
+        target = _kpi_value(row.get("target"), unit, f"{prefix}.target")
+        if target != "—":
+            target = ("≥ " if higher else "≤ ") + target
+        kpis.append(
+            (
+                _KPI_STATUS_ORDER.get(status, 99),
+                _text(row.get("capability"), f"{prefix}.capability"),
+                _text(row.get("name"), f"{prefix}.name"),
+                _kpi_value(row.get("value"), unit, f"{prefix}.value"),
+                target,
+                status,
+                _text(row.get("action"), f"{prefix}.action"),
+                _detail_text(row.get("detail"), f"{prefix}.detail"),
+                _text(row.get("id"), f"{prefix}.id"),
+            )
+        )
+    kpis.sort(
+        key=lambda r: (
+            r[0], r[1].casefold(), r[1], r[2].casefold(), r[2], r[8], r[3], r[4], r[6], r[7]
+        )
+    )
+    counts = {status: sum(1 for row in kpis if row[5] == status) for status in _KPI_STATUS_ORDER}
+    known = len(kpis) - counts["unknown"]
+    score = _decimal(scorecard.get("score_pct"), "review.scorecard.score_pct", optional=True)
+    maturity = _text(scorecard.get("maturity"), "review.scorecard.maturity", default="unknown")
+
+    actions = []
+    for index, row in enumerate(_objects(scorecard.get("actions"), "review.scorecard.actions")):
+        prefix = f"review.scorecard.actions[{index}]"
+        status = _text(row.get("status"), f"{prefix}.status")
+        actions.append(
+            (
+                _KPI_STATUS_ORDER.get(status, 99),
+                status,
+                _text(row.get("kpi"), f"{prefix}.kpi"),
+                _text(row.get("action"), f"{prefix}.action"),
+            )
+        )
+    actions.sort(key=lambda r: (r[0], r[2].casefold(), r[2], r[3].casefold(), r[3], r[1]))
+
+    forecast_rows = []
+    forecast_metric = {"label": "Month-end forecast", "value": "—", "detail": "Not supplied"}
+    if forecast is None:
+        generated.append("Forecast was not supplied.")
+    elif not _boolean(forecast.get("available"), "review.forecast.available"):
+        reason = _text(forecast.get("reason"), "review.forecast.reason", default="unknown reason")
+        generated.append(f"Forecast unavailable: {reason}.")
+        forecast_metric["detail"] = "Unavailable"
+    else:
+        def money(name):
+            return _money(_decimal(forecast.get(name), f"review.forecast.{name}", optional=True))
+
+        method = _text(forecast.get("method"), "review.forecast.method")
+        confidence = _text(forecast.get("confidence"), "review.forecast.confidence")
+        days = _integer(forecast.get("days_remaining"), "review.forecast.days_remaining")
+        forecast_rows = [
+            [
+                _text(forecast.get("month"), "review.forecast.month"),
+                money("month_end_forecast"),
+                money("month_end_low"),
+                money("month_end_high"),
+                f"{money('month_to_date')} actual to date; {days} days remaining",
+            ],
+            [
+                _text(forecast.get("next_month"), "review.forecast.next_month"),
+                money("next_month_forecast"),
+                money("next_month_low"),
+                money("next_month_high"),
+                f"30-day run rate {money('run_rate_30d')}; {method}, {confidence} confidence",
+            ],
+        ]
+        generated.extend(_strings(forecast.get("warnings"), "review.forecast.warnings"))
+        budget_status = _text(forecast.get("budget_status"), "review.forecast.budget_status")
+        budget_pct = _decimal(
+            forecast.get("forecast_vs_budget_pct"),
+            "review.forecast.forecast_vs_budget_pct",
+            optional=True,
+        )
+        forecast_metric = {
+            "label": "Month-end forecast",
+            "value": money("month_end_forecast"),
+            "detail": (
+                f"{_percent(budget_pct)} of {money('budget_amount')} budget ({budget_status})"
+                if budget_status
+                else "No budget supplied"
+            ),
+            "tone": _FORECAST_TONE.get(budget_status, "neutral"),
+        }
+
+    owner_rows = []
+    mover_rows = []
+    mom_metric = {"label": "Month-over-month change", "value": "—", "detail": "Not supplied"}
+    if mom is None:
+        generated.append("Month-over-month variance was not supplied.")
+    else:
+        delta = _decimal(mom.get("delta_usd"), "review.month_over_month.delta_usd", optional=True)
+        delta_pct = _decimal(
+            mom.get("delta_pct"), "review.month_over_month.delta_pct", optional=True
+        )
+        previous = _decimal(
+            mom.get("previous_usd"), "review.month_over_month.previous_usd", optional=True
+        )
+        mom_metric = {
+            "label": "Month-over-month change",
+            "value": _money(delta),
+            "detail": f"{_percent(delta_pct)} vs {_money(previous)} previous month",
+        }
+        for index, row in enumerate(
+            _objects(mom.get("by_owner"), "review.month_over_month.by_owner")
+        ):
+            prefix = f"review.month_over_month.by_owner[{index}]"
+            owner_rows.append(
+                (
+                    _text(row.get("owner"), f"{prefix}.owner"),
+                    _decimal(row.get("previous_usd"), f"{prefix}.previous_usd"),
+                    _decimal(row.get("current_usd"), f"{prefix}.current_usd"),
+                    _decimal(row.get("delta_usd"), f"{prefix}.delta_usd"),
+                    _decimal(row.get("delta_pct"), f"{prefix}.delta_pct", optional=True),
+                )
+            )
+        owner_rows.sort(
+            key=lambda r: (-abs(r[3]), r[0].casefold(), r[0], r[1], r[2], _decimal_key(r[4]))
+        )
+        movers = _object(mom.get("movers") or {}, "review.month_over_month.movers")
+        for bucket in _MOVER_BUCKETS:
+            for index, row in enumerate(
+                _objects(movers.get(bucket), f"review.month_over_month.movers.{bucket}")
+            ):
+                prefix = f"review.month_over_month.movers.{bucket}[{index}]"
+                mover_rows.append(
+                    (
+                        bucket,
+                        _text(row.get("resourceId"), f"{prefix}.resourceId"),
+                        _text(row.get("owner"), f"{prefix}.owner"),
+                        _decimal(row.get("previous_usd"), f"{prefix}.previous_usd"),
+                        _decimal(row.get("current_usd"), f"{prefix}.current_usd"),
+                        _decimal(row.get("delta_usd"), f"{prefix}.delta_usd"),
+                    )
+                )
+        mover_rows.sort(
+            key=lambda r: (
+                -abs(r[5]), r[0], r[1].casefold(), r[1], r[2].casefold(), r[2], r[3], r[4]
+            )
+        )
+        mover_rows = mover_rows[:20]
+
+    unit_rows = []
+    for index, row in enumerate(_objects(unit_input, "review.unit_economics")):
+        prefix = f"review.unit_economics[{index}]"
+        per = _decimal(row.get("per"), f"{prefix}.per", optional=True)
+        unit = _text(row.get("unit"), f"{prefix}.unit", default="unit")
+        label = f"per {_number(per)} {unit}" if per is not None and per != 1 else f"per {unit}"
+        unit_rows.append(
+            [
+                label,
+                _number(_decimal(row.get("cost_per_unit"), f"{prefix}.cost_per_unit", optional=True)),
+                _number(
+                    _decimal(
+                        row.get("previous_cost_per_unit"),
+                        f"{prefix}.previous_cost_per_unit",
+                        optional=True,
+                    )
+                ),
+                _percent(_decimal(row.get("change_pct"), f"{prefix}.change_pct", optional=True)),
+                _text(row.get("trend"), f"{prefix}.trend", default="unknown"),
+                _text(row.get("interpretation"), f"{prefix}.interpretation"),
+            ]
+        )
+        generated.extend(_strings(row.get("warnings"), f"{prefix}.warnings"))
+    unit_rows.sort(key=lambda r: tuple((cell.casefold(), cell) for cell in r))
+
+    def routed_item(row, prefix):
+        amount = _decimal(row.get("amount_usd"), f"{prefix}.amount_usd", optional=True)
+        return (
+            amount,
+            _text(row.get("source"), f"{prefix}.source"),
+            _text(row.get("resourceId"), f"{prefix}.resourceId"),
+            _text(row.get("action"), f"{prefix}.action"),
+        )
+
+    action_rows = []
+    routing_metric = {"label": "Owner-routed findings", "value": "—", "detail": "Not supplied"}
+    if routing is not None:
+        for g_index, group in enumerate(_objects(routing.get("owners"), "review.routing.owners")):
+            g_prefix = f"review.routing.owners[{g_index}]"
+            owner = _text(group.get("owner"), f"{g_prefix}.owner")
+            total = _decimal(group.get("total_usd"), f"{g_prefix}.total_usd")
+            for i_index, item in enumerate(_objects(group.get("items"), f"{g_prefix}.items")):
+                action_rows.append(
+                    (0, -total, owner, *routed_item(item, f"{g_prefix}.items[{i_index}]"))
+                )
+        for index, item in enumerate(_objects(routing.get("unrouted"), "review.routing.unrouted")):
+            action_rows.append(
+                (1, Decimal(0), "needs an owner tag", *routed_item(item, f"review.routing.unrouted[{index}]"))
+            )
+        unrouted_usd = _decimal(routing.get("unrouted_usd"), "review.routing.unrouted_usd")
+        routed_pct = _decimal(routing.get("routed_pct"), "review.routing.routed_pct", optional=True)
+        routing_metric = {
+            "label": "Owner-routed findings",
+            "value": _percent(routed_pct),
+            "detail": f"{_money(unrouted_usd)} needs an owner tag",
+            "tone": "warning" if unrouted_usd > 0 else "good",
+        }
+    action_rows.sort(
+        key=lambda r: (
+            r[0], r[1], r[2].casefold(), r[2], r[3] is None, -(r[3] or Decimal(0)),
+            r[5].casefold(), r[5], r[4], r[6].casefold(), r[6],
+        )
+    )
+
+    context = _context(
+        review,
+        refreshed_at=refreshed_at,
+        scope_summary=scope_summary,
+        partial=partial,
+        warnings=warnings,
+        scope_coverage=scope_coverage,
+        extra_warnings=generated,
+    )
+    chart_rows = owner_rows[:12]
+    kpi_tone = (
+        "critical" if counts["fail"] else "warning" if counts["warn"] else "good" if known else "neutral"
+    )
+    governance = [row for row in kpis if "governance" in row[1].casefold()]
+    return _model(
+        "FinOps: Monthly Review",
+        f"Monthly FinOps review for {month or 'the closed month'}: KPI scorecard, governance, "
+        "forecast, month-over-month variance, and owner actions. Recommend only.",
+        context,
+        [
+            {
+                "label": "FinOps score",
+                "value": _percent(score),
+                "detail": f"Maturity: {maturity}",
+                "tone": _MATURITY_TONE.get(maturity, "neutral"),
+            },
+            {
+                "label": "KPIs passing",
+                "value": f"{counts['pass']} of {known}",
+                "detail": f"{counts['warn']} warn, {counts['fail']} fail, {counts['unknown']} unknown",
+                "tone": kpi_tone,
+            },
+            forecast_metric,
+            mom_metric,
+            routing_metric,
+        ],
+        {
+            "type": "bar",
+            "label": "Month-over-month change by owner (USD)",
+            "labels": [row[0] for row in chart_rows],
+            "values": [_chart_number(row[3]) for row in chart_rows],
+        },
+        [
+            {
+                "title": "KPI scorecard",
+                "description": "Failing KPIs first; unknown means the source was not supplied.",
+                "columns": ["Capability", "KPI", "Value", "Target", "Status", "Action"],
+                "rows": [[r[1], r[2], r[3], r[4], r[5], r[6]] for r in kpis],
+                "emptyMessage": "No KPIs were scored.",
+            },
+            {
+                "title": "Governance checks",
+                "description": "Tag and budget governance, including uncovered budget scopes.",
+                "columns": ["Check", "Status", "Value", "Target", "Detail"],
+                "rows": [[r[2], r[5], r[3], r[4], r[7]] for r in governance],
+                "emptyMessage": "No governance checks were scored.",
+            },
+            {
+                "title": "Forecast",
+                "description": "Linear-trend forecast with an 80% band; AmortizedCost.",
+                "columns": ["Month", "Forecast", "Low", "High", "Detail"],
+                "rows": forecast_rows,
+                "emptyMessage": "No forecast was produced.",
+            },
+            {
+                "title": "Month-over-month by owner",
+                "description": "Closed month vs the month before it, by owner tag.",
+                "columns": ["Owner", "Previous", "Current", "Change", "Change %"],
+                "rows": [
+                    [r[0], _money(r[1]), _money(r[2]), _money(r[3]), _percent(r[4])]
+                    for r in owner_rows
+                ],
+                "emptyMessage": "No month-over-month variance was produced.",
+            },
+            {
+                "title": "Top resource movers",
+                "description": "Largest absolute resource changes (top 20).",
+                "columns": ["Change type", "Resource", "Owner", "Previous", "Current", "Change"],
+                "rows": [
+                    [r[0], _short_resource(r[1]), r[2], _money(r[3]), _money(r[4]), _money(r[5])]
+                    for r in mover_rows
+                ],
+                "emptyMessage": "No resource moved above the threshold.",
+            },
+            {
+                "title": "Unit economics",
+                "description": "Cost per business unit; rising unit cost is the signal to investigate.",
+                "columns": ["Unit", "Cost per unit", "Previous", "Change", "Trend", "Interpretation"],
+                "rows": unit_rows,
+                "emptyMessage": "No unit metric was supplied.",
+            },
+            {
+                "title": "Owner actions",
+                "description": "One action list per owner; unrouted items need an owner tag.",
+                "columns": ["Owner", "Source", "Resource", "Action", "Est. monthly impact"],
+                "rows": [
+                    [r[2], r[4], _short_resource(r[5]), r[6], _money(r[3])]
+                    for r in action_rows
+                ],
+                "emptyMessage": "No findings were routed.",
+            },
+            {
+                "title": "Ordered actions",
+                "description": "KPI actions, failing first.",
+                "columns": ["Status", "KPI", "Action"],
+                "rows": [[r[1], r[2], r[3]] for r in actions],
+                "emptyMessage": "No KPI actions are open.",
+            },
+        ],
+    )
+
+
 __all__ = [
     "build_ai_spend_model",
     "build_budget_status_model",
     "build_cost_optimization_model",
     "build_cost_overview_model",
     "build_cost_vs_reliability_model",
+    "build_monthly_review_model",
     "build_rightsizing_savings_model",
 ]
