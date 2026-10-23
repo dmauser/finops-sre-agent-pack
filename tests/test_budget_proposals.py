@@ -25,6 +25,18 @@ build = budget_proposals.build_budget_proposal
 compare = budget_proposals.compare_budget_readback
 derive = budget_proposals.derive_budget_amount
 
+
+class _FixedDate(budget_proposals.date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 8, 2)
+
+
+@pytest.fixture(autouse=True)
+def _pin_today(monkeypatch):
+    """Fixtures use fixed 2026 periods; pin "today" so validation is date-independent."""
+    monkeypatch.setattr(budget_proposals, "date", _FixedDate)
+
 CONTACTS = ["finops@example.org"]
 PERIOD = {
     "startDate": "2026-08-01T00:00:00Z",
