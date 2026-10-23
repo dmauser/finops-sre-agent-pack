@@ -224,6 +224,45 @@ def test_scorecard_forecast_accuracy_bands(prior, status):
     assert kpi["detail"] == {"prior_forecast_usd": prior, "actual_usd": 10000.0}
 
 
+def test_parse_forecast_record_finds_the_month_in_html():
+    text = ("<td>finops-forecast-record:v1 month=2026-09 forecast=10.00 as_of=2026-08-31</td>"
+            "<td>finops-forecast-record:v1 month=2026-10 forecast=3100.50 as_of=2026-09-30</td>")
+    assert sc.parse_forecast_record(text, "2026-10") == {
+        "month": "2026-10", "forecast": 3100.5, "as_of": "2026-09-30"}
+    assert sc.parse_forecast_record(text, "2026-11") is None
+    assert sc.parse_forecast_record(None, "2026-10") is None
+
+
+def test_prior_forecast_inputs_prefers_record_then_reconstructs():
+    daily = _series(61, start=date(2026, 8, 1), base=100.0)  # Aug + Sep, $100/day
+    record = "finops-forecast-record:v1 month=2026-09 forecast=2700 as_of=2026-08-31"
+    recorded = sc.prior_forecast_inputs(daily, "2026-09", record_text=record)
+    assert recorded["source"] == "recorded"
+    assert recorded["prior_forecast"] == 2700.0
+    assert recorded["actual_spend"] == 3000.0
+    assert recorded["warnings"] == []
+
+    rebuilt = sc.prior_forecast_inputs(daily, "2026-09")
+    assert rebuilt["source"] == "reconstructed"
+    assert rebuilt["prior_forecast"] == pytest.approx(3000.0, abs=0.01)
+    assert "reconstructed" in rebuilt["warnings"][0]
+
+    card = sc.kpi_scorecard(prior_forecast=recorded["prior_forecast"],
+                            actual_spend=recorded["actual_spend"],
+                            prior_forecast_source=recorded["source"])
+    kpi = next(k for k in card["kpis"] if k["id"] == "forecast_accuracy_pct")
+    assert kpi["value"] == 10.0 and kpi["detail"]["source"] == "recorded"
+
+
+def test_prior_forecast_inputs_handles_missing_and_short_data():
+    assert sc.prior_forecast_inputs({}, "2026-09")["actual_spend"] is None
+    only_month = _series(20, start=date(2026, 9, 1))
+    out = sc.prior_forecast_inputs(only_month, "2026-09")
+    assert out["prior_forecast"] is None and out["actual_spend"] == 2000.0
+    assert any("ends 2026-09-20" in w for w in out["warnings"])
+    assert any("under 7 days" in w for w in out["warnings"])
+
+
 def test_scorecard_benchmarks_and_next_iteration_focus():
     inputs = _healthy_inputs()
     inputs["anomalies"] = [{"impact_usd": 40, "direction": "up"}, {"impact_usd": 9, "direction": "down"}]

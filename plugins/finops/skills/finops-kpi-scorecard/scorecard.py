@@ -20,8 +20,10 @@ missing source makes the related KPI "unknown" instead of failing the scorecard.
 from __future__ import annotations
 
 import calendar
+import html
 import json
 import math
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -241,6 +243,79 @@ def forecast_spend(
 
 
 # --------------------------------------------------------------------------------------------
+# Forecast accuracy inputs
+# --------------------------------------------------------------------------------------------
+
+FORECAST_RECORD_PREFIX = "finops-forecast-record:v1"
+_RECORD_RE = re.compile(
+    re.escape(FORECAST_RECORD_PREFIX)
+    + r"\s+month=(\d{4}-\d{2})\s+forecast=(-?\d+(?:\.\d+)?)(?:\s+as_of=(\d{4}-\d{2}-\d{2}))?"
+)
+
+
+def parse_forecast_record(text, month):
+    """Find the forecast recorded for `month` (YYYY-MM) in a previous Monthly Review.
+
+    The Monthly Review Live Report carries one line
+    `finops-forecast-record:v1 month=YYYY-MM forecast=<USD> as_of=YYYY-MM-DD` for the month after
+    the one it reviewed. Pass the previous report's content (HTML or text, as GetReport returns it).
+    Returns {"month", "forecast", "as_of"} or None. The last matching record wins.
+    """
+    if not isinstance(text, str) or not text:
+        return None
+    found = None
+    for match in _RECORD_RE.finditer(html.unescape(text)):
+        if match.group(1) == month:
+            found = {"month": month, "forecast": float(match.group(2)), "as_of": match.group(3)}
+    return found
+
+
+def prior_forecast_inputs(daily, month, *, record_text=None):
+    """Return prior_forecast and actual_spend for scoring forecast accuracy of a closed month.
+
+    daily        {date|str: cost} covering the closed month and the month before it
+    month        the closed month, YYYY-MM
+    record_text  the previous Monthly Review content; its forecast record for `month` is the
+                 forecast that was published at the time (source "recorded")
+
+    Without a record, the forecast is reconstructed by running forecast_spend on the days before
+    the month (source "reconstructed"). That measures the forecasting method, not a published
+    forecast, and is labeled so.
+    """
+    series = {_parse_date(k): float(v) for k, v in (daily or {}).items() if _num(v) is not None}
+    start = _parse_date(f"{month}-01")
+    end = start.replace(day=calendar.monthrange(start.year, start.month)[1])
+    in_month = {d: v for d, v in series.items() if start <= d <= end}
+    warnings = []
+    out = {"month": month, "prior_forecast": None, "actual_spend": None, "source": None,
+           "warnings": warnings}
+    if not in_month:
+        warnings.append(f"no cost data for {month}; forecast accuracy not scored")
+        return out
+    out["actual_spend"] = round(sum(in_month.values()), 2)
+    if max(in_month) < end:
+        warnings.append(f"cost data for {month} ends {max(in_month).isoformat()}; actual may be low")
+
+    record = parse_forecast_record(record_text, month)
+    if record:
+        out.update(prior_forecast=round(record["forecast"], 2), source="recorded")
+        return out
+
+    before = {d: v for d, v in series.items() if d < start}
+    if len(before) < 7:
+        warnings.append(f"no forecast record and under 7 days before {month}; accuracy not scored")
+        return out
+    rebuilt = forecast_spend(before, as_of=start - timedelta(days=1), assume_last_partial=False)
+    if rebuilt.get("available") and rebuilt.get("next_month") == month:
+        out.update(prior_forecast=rebuilt["next_month_forecast"], source="reconstructed")
+        warnings.append(
+            f"no forecast record for {month}; reconstructed from {len(before)} days before it "
+            "(tests the method, not the forecast published at the time)"
+        )
+    return out
+
+
+# --------------------------------------------------------------------------------------------
 # Unit economics
 # --------------------------------------------------------------------------------------------
 
@@ -445,6 +520,7 @@ def kpi_scorecard(
     prior_forecast=None,
     actual_spend=None,
     advisor_cost_score=None,
+    prior_forecast_source=None,
 ):
     """Score the FinOps practice against KPI targets, including tag and budget governance checks.
 
@@ -462,6 +538,8 @@ def kpi_scorecard(
     prior_forecast the month-end forecast made for a closed period (e.g. last month's
                    month_end_forecast); with actual_spend it scores forecast accuracy
     actual_spend   the actual cost of that same closed period
+    prior_forecast_source  "recorded" or "reconstructed" (see prior_forecast_inputs); shown in
+                   the KPI detail
     advisor_cost_score  Azure Advisor Cost score (0-100) for the scope; reported as a benchmark,
                    not scored, because Microsoft publishes no target for it
 
@@ -555,11 +633,16 @@ def kpi_scorecard(
     prior, actual = _num(prior_forecast), _num(actual_spend)
     if prior is not None and actual:
         accuracy = round(100.0 * abs(prior - actual) / abs(actual), 1)
+    accuracy_detail = None
+    if accuracy is not None:
+        accuracy_detail = {"prior_forecast_usd": prior, "actual_usd": actual}
+        if prior_forecast_source:
+            accuracy_detail["source"] = str(prior_forecast_source)
     add("forecast_accuracy_pct", "Forecast variance vs actual (closed period)", "Forecasting",
         accuracy, "%",
         "Forecast variance is high: exclude one-time purchases from the usage trend, match the "
         "look-back period to the forecast horizon, and record planned changes in the forecast.",
-        {"prior_forecast_usd": prior, "actual_usd": actual} if accuracy is not None else None)
+        accuracy_detail)
 
     # Rate optimization
     head = (commitments or {}).get("headline") or {}

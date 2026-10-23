@@ -983,3 +983,24 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
     sections = {s["title"]: s for s in practice["sections"]}
     assert sections["Next FinOps iteration"]["rows"] == [["1", "Allocation"], ["2", "Forecasting"]]
     assert sections["Benchmarks"]["rows"][0] == ["Impact", "$40.00"]
+    assert "Forecast record" not in sections
+
+
+def test_monthly_review_forecast_record_round_trips_through_scorecard_parser():
+    review = _monthly()
+    review["forecast"]["as_of"] = "2026-09-30"
+    model = models.build_monthly_review_model(review, **_context())
+    record = {s["title"]: s for s in model["sections"]}["Forecast record"]["rows"]
+    assert record == [["finops-forecast-record:v1 month=2026-10 forecast=3100.00 as_of=2026-09-30"]]
+
+    spec = importlib.util.spec_from_file_location(
+        "scorecard_rt", PATH.parents[1] / "finops-kpi-scorecard" / "scorecard.py")
+    scorecard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scorecard)
+    assert scorecard.FORECAST_RECORD_PREFIX == models.FORECAST_RECORD_PREFIX
+    parsed = scorecard.parse_forecast_record(renderer.render_report(model), "2026-10")
+    assert parsed == {"month": "2026-10", "forecast": 3100.0, "as_of": "2026-09-30"}
+
+    review["forecast"]["as_of"] = "not-a-date"
+    bad = models.build_monthly_review_model(review, **_context())
+    assert "Forecast record" not in [s["title"] for s in bad["sections"]]

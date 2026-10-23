@@ -32,6 +32,10 @@
     correlation), budget governance/editor, commitment advisor, rightsizing, waste finder, and
     managed scope (Exports and FinOps hubs at scale).
   - README "Microsoft FinOps alignment" domain map and complementary Microsoft tools.
+  - **Forecast accuracy, automatically**: each Monthly Review writes a
+    `finops-forecast-record:v1` line with next month's forecast into its Live Report; the next
+    review reads it back with `prior_forecast_inputs` (source `recorded`), or rebuilds the forecast
+    from the days before the closed month (source `reconstructed`) when no record is readable.
 - **`finops-sre-agent`** (14th skill): FinOps for Azure SRE Agent. Attributes Azure Agent Unit (AAU)
   spend per agent, splits always-on flow (4 AAU/agent-hour until deletion) from active flow using
   each agent's read-only `dailyUsageDetails`, breaks active flow down by source (chat, scheduled

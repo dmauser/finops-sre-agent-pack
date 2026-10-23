@@ -62,7 +62,7 @@ Run, or reuse from the same conversation turn, the results of:
 | `rightsizing` | `finops-rightsizing-advisor` → `recommend_rightsizing(...)` | addressable waste |
 | `anomalies` | `finops-cost-anomaly-detection` → `detect_anomalies(...)` | anomaly impact |
 | `rows` | prepared AmortizedCost UsageDetails, trailing **60 days** | forecast |
-| `prior_forecast`, `actual_spend` | last month's saved `month_end_forecast` and that month's actual cost | forecast accuracy |
+| `prior_forecast`, `actual_spend` | `prior_forecast_inputs(daily, closed_month, record_text=...)` (see below) | forecast accuracy |
 | `advisor_cost_score` | `GET .../providers/Microsoft.Advisor/advisorScore/Cost` (see the practice guide) | benchmark |
 
 Every input is optional; a missing input makes its KPI `unknown` rather than failing. Say which
@@ -98,16 +98,21 @@ read_skill_file(skill_name="finops-kpi-scorecard", file_path="scorecard.py")
 ```
 
 ```python
-from scorecard import daily_costs, forecast_spend, unit_economics, kpi_scorecard, route_to_owners
+from scorecard import (daily_costs, forecast_spend, unit_economics, kpi_scorecard,
+                       route_to_owners, prior_forecast_inputs)
 
-forecast = forecast_spend(daily_costs(prepared["included_rows"]),
+daily = daily_costs(prepared["included_rows"])
+forecast = forecast_spend(daily,
                           budget_amount=<monthly budget for the scope, if one exists>)
+accuracy = prior_forecast_inputs(daily, closed_month, record_text=previous_review_content)
 unit = unit_economics(cost_30d, requests_30d, unit_name="request", per=1000,
                       previous_cost=cost_prev_30d, previous_units=requests_prev_30d)
 card = kpi_scorecard(allocation=allocation, budgets=budgets, commitments=commitments,
                      waste=waste, rightsizing=rightsizing, anomalies=anomalies,
                      forecast=forecast, unit_costs=unit, managed_scopes=effective_scopes,
-                     prior_forecast=last_month_forecast, actual_spend=last_month_actual,
+                     prior_forecast=accuracy["prior_forecast"],
+                     actual_spend=accuracy["actual_spend"],
+                     prior_forecast_source=accuracy["source"],
                      advisor_cost_score=advisor_cost_score)
 owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, source="optimization")
 ```
@@ -124,8 +129,15 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
   practice; Microsoft's documentation does not publish numeric targets for them.
 - `forecast_accuracy_pct` is `|prior_forecast - actual| / actual`. It passes below 12% and warns up
   to 20%, following Microsoft's forecasting guidance (under 12% is optimized, 12–20% acceptable).
-  The previous Monthly Review's month-end forecast is the prior forecast; if it is not available,
-  the KPI is `unknown`.
+  Get the inputs with `prior_forecast_inputs(daily, "<closed YYYY-MM>", record_text=...)`:
+  - **Recorded** (preferred): pass the previous `FinOps: Monthly Review` content from GetReport.
+    Each review's renderer writes one line,
+    `finops-forecast-record:v1 month=<next month> forecast=<USD> as_of=<date>`, with its forecast
+    for the following month; `parse_forecast_record` reads it back.
+  - **Reconstructed** (fallback): with no record, the forecast is rebuilt by running
+    `forecast_spend` on the days before the closed month. Say that it tests the method, not the
+    forecast published at the time.
+  - Pass `prior_forecast_source=inputs["source"]`; the KPI is `unknown` when neither is available.
 - `next_iteration_focus` lists up to 3 capabilities with failing, then warning, KPIs. Present them
   as candidates for the next FinOps iteration (see the practice guide).
 - `route_to_owners` checks the `owner`, `team`, `costCenter`, `service`, `app` tags (case-insensitive,

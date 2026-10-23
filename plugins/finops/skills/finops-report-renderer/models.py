@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
@@ -2305,6 +2306,8 @@ def build_cost_vs_reliability_model(
 _KPI_STATUS_ORDER = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
 _MATURITY_TONE = {"run": "good", "walk": "warning", "crawl": "critical"}
 _FORECAST_TONE = {"forecast_over": "critical", "at_risk": "warning", "on_track": "good"}
+# Must match finops-kpi-scorecard scorecard.FORECAST_RECORD_PREFIX (parse_forecast_record).
+FORECAST_RECORD_PREFIX = "finops-forecast-record:v1"
 _MOVER_BUCKETS = ("new", "increased", "decreased", "removed")
 
 
@@ -2416,6 +2419,7 @@ def build_monthly_review_model(
     actions.sort(key=lambda r: (r[0], r[2].casefold(), r[2], r[3].casefold(), r[3], r[1]))
 
     forecast_rows = []
+    forecast_record = None
     forecast_metric = {"label": "Month-end forecast", "value": "—", "detail": "Not supplied"}
     if forecast is None:
         generated.append("Forecast was not supplied.")
@@ -2447,6 +2451,20 @@ def build_monthly_review_model(
             ],
         ]
         generated.extend(_strings(forecast.get("warnings"), "review.forecast.warnings"))
+        record_month = _text(forecast.get("next_month"), "review.forecast.next_month")
+        record_value = _decimal(
+            forecast.get("next_month_forecast"), "review.forecast.next_month_forecast", optional=True
+        )
+        record_as_of = _text(forecast.get("as_of"), "review.forecast.as_of")
+        if (
+            record_value is not None
+            and re.fullmatch(r"\d{4}-\d{2}", record_month or "")
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", record_as_of or "")
+        ):
+            forecast_record = (
+                f"{FORECAST_RECORD_PREFIX} month={record_month} "
+                f"forecast={float(record_value):.2f} as_of={record_as_of}"
+            )
         budget_status = _text(forecast.get("budget_status"), "review.forecast.budget_status")
         budget_pct = _decimal(
             forecast.get("forecast_vs_budget_pct"),
@@ -2631,6 +2649,17 @@ def build_monthly_review_model(
     sre_sections = []
     if review.get("sre_agents") is not None:
         _, sre_sections = _sre_agent_rollup_sections(review["sre_agents"], "review.sre_agents")
+    if forecast_record:
+        practice_sections.append(
+            {
+                "title": "Forecast record",
+                "description": "Next month's review reads this line back to score forecast "
+                "accuracy against the actual cost.",
+                "columns": ["Record"],
+                "rows": [[forecast_record]],
+                "emptyMessage": "No forecast was recorded.",
+            }
+        )
     return _model(
         "FinOps: Monthly Review",
         f"Monthly FinOps review for {month or 'the closed month'}: KPI scorecard, governance, "
