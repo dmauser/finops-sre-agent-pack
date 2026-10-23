@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none';
+script-src 'self' 'nonce-sample' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh;
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+img-src 'self' data: blob: https:;
+connect-src 'self';">
+<title>FinOps: Waste Cleanup</title>
+<style nonce="sample">
+:root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#172033; background:#f5f7fb; }
+* { box-sizing:border-box; }
+body { margin:0; padding:24px; }
+main { max-width:1200px; margin:0 auto; }
+header,section,.metric,.warnings { background:#fff; border:1px solid #dce3ef; border-radius:12px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
+header,section { padding:20px; margin-bottom:16px; }
+h1,h2,p { margin-top:0; }
+.subtitle,.section-description,.refreshed { color:#596780; }
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+.metric { padding:16px; border-top:4px solid #94a3b8; }
+.metric.good { border-top-color:#16a34a; } .metric.warning { border-top-color:#d97706; } .metric.critical { border-top-color:#dc2626; }
+.metric-label,.metric-detail { color:#596780; font-size:.88rem; } .metric-value { font-size:1.65rem; font-weight:700; margin:6px 0; }
+.warnings { padding:16px; margin-bottom:16px; border-color:#f59e0b; background:#fffbeb; }
+.warnings ul { margin-bottom:0; }
+.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; }
+th,td { padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; } th { color:#44516a; font-size:.84rem; text-transform:uppercase; }
+.chart-wrap { height:320px; } .empty { color:#718096; font-style:italic; }
+code,td.long { overflow-wrap:anywhere; } td.num { white-space:nowrap; }
+@media (max-width:640px) {
+  body { padding:12px; } header,section { padding:14px; } h1 { font-size:1.5rem; }
+  .metrics { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .metric-value { font-size:1.35rem; } th,td { padding:8px 6px; font-size:.86rem; }
+  table { min-width:720px; } td.long { min-width:180px; }
+  .chart-wrap { height:240px; }
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+</head>
+<body>
+<main>
+<header><h1>FinOps: Waste Cleanup</h1><p class="subtitle">Weekly scan for orphaned, idle, and stale resources; confirm with the owner before deleting. Sample data (fictional).</p><p class="refreshed">Last refreshed: 2026-10-23 15:00 UTC</p></header>
+
+<div class="metrics"><article class="metric good"><div class="metric-label">Potential monthly savings</div><div class="metric-value">$84.00</div><div class="metric-detail">Orphaned, idle, and stale resources</div></article><article class="metric neutral"><div class="metric-label">Actionable findings</div><div class="metric-value">5</div><div class="metric-detail">All have cost data</div></article><article class="metric neutral"><div class="metric-label">Review items</div><div class="metric-value">0</div><div class="metric-detail">Configuration or hygiene, no direct saving</div></article></div>
+<section><h2>Largest cleanup savings</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>
+<section><h2>Managed scope</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul></section>
+<section><h2>Waste findings</h2><p class="section-description">Ranked by estimated monthly savings; review items carry no claimed saving.</p><div class="table-wrap"><table><thead><tr><th>Resource</th><th>Resource group</th><th>Type</th><th>Kind</th><th>Reason</th><th>Monthly cost</th><th>Savings</th><th>Action</th><th>Evidence</th></tr></thead><tbody><tr><td>nat-unused</td><td>rg-shared-network</td><td>microsoft.network/natgateways</td><td>orphan</td><td>NAT gateway attached to no subnet</td><td class="num">$32.85</td><td class="num">$32.85</td><td>Delete the NAT gateway or attach it to the subnet that needs outbound access.</td><td>properties.subnets is empty; NAT gateway bills hourly regardless.</td></tr><tr><td>snap-orders-2025-12</td><td>rg-data-prod</td><td>microsoft.compute/snapshots</td><td>stale</td><td>Snapshot older than 90 days</td><td class="num">$25.60</td><td class="num">$25.60</td><td>Delete if not required by a backup/retention policy; otherwise move to Standard_LRS incremental snapshots or Azure Backup.</td><td>Created 2025-12-02 (325 days ago). 512 GB.</td></tr><tr><td>lb-storefront-v1</td><td>rg-web-prod</td><td>microsoft.network/loadbalancers</td><td>idle</td><td>Standard load balancer with no backend pools</td><td class="num">$18.25</td><td class="num">$18.25</td><td>Delete the load balancer if no longer needed (rules and data processing still bill).</td><td>0 backend pool(s), 0 members.</td></tr><tr><td>pip-old-vpn</td><td>rg-dev</td><td class="long">microsoft.network/publicipaddresses</td><td>orphan</td><td>Unassociated public IP address</td><td class="num">$3.65</td><td class="num">$3.65</td><td>Delete the public IP (release it).</td><td>No ipConfiguration or NAT gateway association.</td></tr><tr><td>pip-legacy-lb</td><td>rg-web-prod</td><td class="long">microsoft.network/publicipaddresses</td><td>orphan</td><td>Unassociated public IP address</td><td class="num">$3.65</td><td class="num">$3.65</td><td>Delete the public IP (release it).</td><td>No ipConfiguration or NAT gateway association.</td></tr></tbody></table></div></section><section><h2>Findings by kind</h2><p class="section-description">orphan = unattached; idle = attached but unused; stale = old snapshots.</p><div class="table-wrap"><table><thead><tr><th>Kind</th><th>Findings</th></tr></thead><tbody><tr><td>idle</td><td class="num">1</td></tr><tr><td>orphan</td><td class="num">3</td></tr><tr><td>stale</td><td class="num">1</td></tr></tbody></table></div></section><section><h2>Scope coverage</h2><p class="section-description">Included, excluded, and unattributed results by managed scope.</p><div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Included</th><th>Excluded</th><th>Unattributed</th><th>Cost</th><th>Detail</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td>complete</td><td class="num">1840</td><td class="num">0</td><td class="num">12</td><td class="num">$42,093.65</td><td>Contoso Production (sample data)</td></tr></tbody></table></div></section>
+</main>
+
+<script nonce="sample">
+const chartData = {"type":"bar","label":"Estimated monthly savings (USD)","labels":["nat-unused","snap-orders-2025-12","lb-storefront-v1","pip-old-vpn","pip-legacy-lb"],"values":[32.85,25.6,18.25,3.65,3.65]};
+const chartCanvas = document.getElementById('finops-chart');
+if (chartCanvas && window.Chart) {
+  new Chart(chartCanvas, {
+    type: chartData.type,
+    data: {
+      labels: chartData.labels,
+      datasets: [{
+        label: chartData.label,
+        data: chartData.values,
+        borderColor: '#2563eb',
+        backgroundColor: 'rgba(37, 99, 235, 0.18)',
+        borderWidth: 2,
+        tension: 0.25
+      }]
+    },
+    options: {responsive: true, maintainAspectRatio: false, animation: false}
+  });
+}
+</script>
+</body>
+</html>

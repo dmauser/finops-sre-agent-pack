@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none';
+script-src 'self' 'nonce-sample' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh;
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+img-src 'self' data: blob: https:;
+connect-src 'self';">
+<title>FinOps: Cost vs Reliability</title>
+<style nonce="sample">
+:root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#172033; background:#f5f7fb; }
+* { box-sizing:border-box; }
+body { margin:0; padding:24px; }
+main { max-width:1200px; margin:0 auto; }
+header,section,.metric,.warnings { background:#fff; border:1px solid #dce3ef; border-radius:12px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
+header,section { padding:20px; margin-bottom:16px; }
+h1,h2,p { margin-top:0; }
+.subtitle,.section-description,.refreshed { color:#596780; }
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+.metric { padding:16px; border-top:4px solid #94a3b8; }
+.metric.good { border-top-color:#16a34a; } .metric.warning { border-top-color:#d97706; } .metric.critical { border-top-color:#dc2626; }
+.metric-label,.metric-detail { color:#596780; font-size:.88rem; } .metric-value { font-size:1.65rem; font-weight:700; margin:6px 0; }
+.warnings { padding:16px; margin-bottom:16px; border-color:#f59e0b; background:#fffbeb; }
+.warnings ul { margin-bottom:0; }
+.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; }
+th,td { padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; } th { color:#44516a; font-size:.84rem; text-transform:uppercase; }
+.chart-wrap { height:320px; } .empty { color:#718096; font-style:italic; }
+code,td.long { overflow-wrap:anywhere; } td.num { white-space:nowrap; }
+@media (max-width:640px) {
+  body { padding:12px; } header,section { padding:14px; } h1 { font-size:1.5rem; }
+  .metrics { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .metric-value { font-size:1.35rem; } th,td { padding:8px 6px; font-size:.86rem; }
+  table { min-width:720px; } td.long { min-width:180px; }
+  .chart-wrap { height:240px; }
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+</head>
+<body>
+<main>
+<header><h1>FinOps: Cost vs Reliability</h1><p class="subtitle">Weekly view of Azure spend against transparent weighted reliability signals. Sample data (fictional).</p><p class="refreshed">Last refreshed: 2026-10-23 15:00 UTC</p></header>
+<aside class="warnings"><strong>Data quality</strong><ul><li>Cost data can lag by roughly one day.</li><li>Weighted alert counts are not a complete incident system or duration measure.</li></ul></aside>
+<div class="metrics"><article class="metric neutral"><div class="metric-label">Monthly spend</div><div class="metric-value">$42,093.65</div><div class="metric-detail">UsageDetails cost</div></article><article class="metric neutral"><div class="metric-label">Costed resources</div><div class="metric-value">14</div><div class="metric-detail">UsageDetails resources</div></article><article class="metric neutral"><div class="metric-label">Reliability signals</div><div class="metric-value">41</div><div class="metric-detail">Alerts, health, and Advisor HA</div></article><article class="metric warning"><div class="metric-label">Join coverage</div><div class="metric-value">35.7%</div><div class="metric-detail">5 of 14 costed resources</div></article></div>
+<section><h2>Reliability score</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>
+<section><h2>Managed scope</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul></section>
+<section><h2>Spend and pain</h2><p class="section-description">Resources ranked by reliability score, then monthly cost.</p><div class="table-wrap"><table><thead><tr><th>Resource</th><th>Resource group</th><th>Service</th><th>Monthly cost</th><th>Alerts</th><th>Sev0/1/2/3/4</th><th>Health events</th><th>Advisor HA</th><th>Reliability score</th><th>Pain per $1K</th><th>Risk</th><th>Primary signal</th></tr></thead><tbody><tr><td>aks-storefront</td><td>rg-web-prod</td><td>Azure Kubernetes Service</td><td class="num">$9,120.40</td><td class="num">14</td><td>0/3/11/0/0</td><td class="num">2</td><td class="num">1</td><td class="num">41</td><td class="num">4.5</td><td>high</td><td>alert</td></tr><tr><td>agw-storefront</td><td>rg-web-prod</td><td>Application Gateway</td><td class="num">$1,640.25</td><td class="num">9</td><td>0/2/7/0/0</td><td class="num">0</td><td class="num">1</td><td class="num">24</td><td class="num">14.63</td><td>high</td><td>alert</td></tr><tr><td>orders</td><td>rg-data-prod</td><td>SQL Database</td><td class="num">$7,480.15</td><td class="num">6</td><td>0/0/6/0/0</td><td class="num">1</td><td class="num">1</td><td class="num">17</td><td class="num">2.27</td><td>medium</td><td>alert</td></tr><tr><td>vm-batch-01</td><td>rg-data-prod</td><td>Virtual Machines</td><td class="num">$4,380.00</td><td class="num">1</td><td>0/0/0/1/0</td><td class="num">0</td><td class="num">0</td><td class="num">1</td><td class="num">0.23</td><td>low</td><td>alert</td></tr><tr><td>cosmos-catalog</td><td>rg-data-prod</td><td>Azure Cosmos DB</td><td class="num">$5,210.80</td><td class="num">0</td><td>0/0/0/0/0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td>—</td><td>low</td><td>none</td></tr></tbody></table></div></section><section><h2>Service rollup</h2><p class="section-description">Cost and reliability signals aggregated by service.</p><div class="table-wrap"><table><thead><tr><th>Service</th><th>Cost</th><th>Resources</th><th>Alerts</th><th>Health events</th><th>Advisor HA</th><th>Score</th><th>Risk</th></tr></thead><tbody><tr><td>Azure Kubernetes Service</td><td class="num">$9,120.40</td><td class="num">1</td><td class="num">14</td><td class="num">2</td><td class="num">1</td><td class="num">41</td><td>high</td></tr><tr><td>Application Gateway</td><td class="num">$1,640.25</td><td class="num">1</td><td class="num">9</td><td class="num">0</td><td class="num">1</td><td class="num">24</td><td>high</td></tr><tr><td>SQL Database</td><td class="num">$7,480.15</td><td class="num">1</td><td class="num">6</td><td class="num">1</td><td class="num">1</td><td class="num">17</td><td>medium</td></tr><tr><td>Virtual Machines</td><td class="num">$4,380.00</td><td class="num">1</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">1</td><td>low</td></tr><tr><td>Azure Cosmos DB</td><td class="num">$5,210.80</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td>low</td></tr></tbody></table></div></section><section><h2>Reliability investment candidates</h2><p class="section-description">High-pain, low-spend resources where resilience may matter more than cost cutting.</p><div class="table-wrap"><table><thead><tr><th>Type</th><th>Target</th><th>Detail</th><th>Monthly cost</th><th>Score</th></tr></thead><tbody><tr><td>high_incident_low_spend</td><td>agw-storefront</td><td>Frequent Sev1 backend-health alerts on low spend; add zone redundancy and autoscale headroom.</td><td class="num">$1,640.25</td><td class="num">24</td></tr></tbody></table></div></section><section><h2>Verify before cutting</h2><p class="section-description">High-spend resources with no pain in the available signals.</p><div class="table-wrap"><table><thead><tr><th>Type</th><th>Target</th><th>Detail</th><th>Monthly cost</th><th>Score</th></tr></thead><tbody><tr><td>high_spend_no_pain</td><td>cosmos-catalog</td><td>High spend with no reliability signals; verify RU/s headroom before reducing.</td><td class="num">$5,210.80</td><td class="num">0</td></tr></tbody></table></div></section><section><h2>Unmatched reliability signals</h2><p class="section-description">Signals that did not join to a UsageDetails resource ID.</p><div class="table-wrap"><table><thead><tr><th>Resource</th><th>Resource ID</th><th>Signal</th><th>Severity</th><th>Score</th><th>Date</th><th>Detail</th></tr></thead><tbody><tr><td>func-webhooks</td><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-web-prod/providers/Microsoft.Web/sites/func-webhooks</td><td>alert</td><td>Sev2</td><td class="num">3</td><td>2026-10-19</td><td>No cost rows this period</td></tr></tbody></table></div></section><section><h2>Data quality</h2><p class="section-description">Coverage, source availability, and known limitations.</p><div class="table-wrap"><table><thead><tr><th>Type</th><th>Item</th><th>Value</th></tr></thead><tbody><tr><td>coverage</td><td>Cost resources</td><td class="num">14</td></tr><tr><td>coverage</td><td>Reliability resources</td><td class="num">6</td></tr><tr><td>coverage</td><td>Joined resources</td><td class="num">5</td></tr><tr><td>coverage</td><td>Unmatched reliability signals</td><td class="num">1</td></tr><tr><td>coverage</td><td>Subscription-level events</td><td class="num">0</td></tr><tr><td>source</td><td>advisor_highavailability</td><td>used</td></tr><tr><td>source</td><td>alerts</td><td>used</td></tr><tr><td>source</td><td>resource_health</td><td>used</td></tr><tr><td>source</td><td>usage_details</td><td>used</td></tr><tr><td>limitation</td><td class="num">1</td><td>Alert counts are severity-weighted, not incident durations.</td></tr></tbody></table></div></section><section><h2>Scope coverage</h2><p class="section-description">Included, excluded, and unattributed results by managed scope.</p><div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Included</th><th>Excluded</th><th>Unattributed</th><th>Cost</th><th>Detail</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td>complete</td><td class="num">1840</td><td class="num">0</td><td class="num">12</td><td class="num">$42,093.65</td><td>Contoso Production (sample data)</td></tr></tbody></table></div></section>
+</main>
+
+<script nonce="sample">
+const chartData = {"type":"bar","label":"Reliability score","labels":["aks-storefront ($9,120.40)","agw-storefront ($1,640.25)","orders ($7,480.15)","vm-batch-01 ($4,380.00)","cosmos-catalog ($5,210.80)"],"values":[41.0,24.0,17.0,1.0,0.0]};
+const chartCanvas = document.getElementById('finops-chart');
+if (chartCanvas && window.Chart) {
+  new Chart(chartCanvas, {
+    type: chartData.type,
+    data: {
+      labels: chartData.labels,
+      datasets: [{
+        label: chartData.label,
+        data: chartData.values,
+        borderColor: '#2563eb',
+        backgroundColor: 'rgba(37, 99, 235, 0.18)',
+        borderWidth: 2,
+        tension: 0.25
+      }]
+    },
+    options: {responsive: true, maintainAspectRatio: false, animation: false}
+  });
+}
+</script>
+</body>
+</html>

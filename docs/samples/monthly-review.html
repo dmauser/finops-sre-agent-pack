@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none';
+script-src 'self' 'nonce-sample' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh;
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+img-src 'self' data: blob: https:;
+connect-src 'self';">
+<title>FinOps: Monthly Review</title>
+<style nonce="sample">
+:root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#172033; background:#f5f7fb; }
+* { box-sizing:border-box; }
+body { margin:0; padding:24px; }
+main { max-width:1200px; margin:0 auto; }
+header,section,.metric,.warnings { background:#fff; border:1px solid #dce3ef; border-radius:12px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
+header,section { padding:20px; margin-bottom:16px; }
+h1,h2,p { margin-top:0; }
+.subtitle,.section-description,.refreshed { color:#596780; }
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+.metric { padding:16px; border-top:4px solid #94a3b8; }
+.metric.good { border-top-color:#16a34a; } .metric.warning { border-top-color:#d97706; } .metric.critical { border-top-color:#dc2626; }
+.metric-label,.metric-detail { color:#596780; font-size:.88rem; } .metric-value { font-size:1.65rem; font-weight:700; margin:6px 0; }
+.warnings { padding:16px; margin-bottom:16px; border-color:#f59e0b; background:#fffbeb; }
+.warnings ul { margin-bottom:0; }
+.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; }
+th,td { padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; } th { color:#44516a; font-size:.84rem; text-transform:uppercase; }
+.chart-wrap { height:320px; } .empty { color:#718096; font-style:italic; }
+code,td.long { overflow-wrap:anywhere; } td.num { white-space:nowrap; }
+@media (max-width:640px) {
+  body { padding:12px; } header,section { padding:14px; } h1 { font-size:1.5rem; }
+  .metrics { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .metric-value { font-size:1.35rem; } th,td { padding:8px 6px; font-size:.86rem; }
+  table { min-width:720px; } td.long { min-width:180px; }
+  .chart-wrap { height:240px; }
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+</head>
+<body>
+<main>
+<header><h1>FinOps: Monthly Review</h1><p class="subtitle">Monthly FinOps review for 2026-10: KPI scorecard, governance, forecast, month-over-month variance, and owner actions. Recommend only. Sample data (fictional).</p><p class="refreshed">Last refreshed: 2026-10-23 15:00 UTC</p></header>
+
+<div class="metrics"><article class="metric warning"><div class="metric-label">FinOps score</div><div class="metric-value">61.1%</div><div class="metric-detail">Maturity: walk</div></article><article class="metric critical"><div class="metric-label">KPIs passing</div><div class="metric-value">4 of 9</div><div class="metric-detail">3 warn, 2 fail, 0 unknown</div></article><article class="metric warning"><div class="metric-label">Month-end forecast</div><div class="metric-value">$58,780.00</div><div class="metric-detail">98.0% of $60,000.00 budget (at_risk)</div></article><article class="metric neutral"><div class="metric-label">Month-over-month change</div><div class="metric-value">$3,470.00</div><div class="metric-detail">6.3% vs $55,310.00 previous month</div></article><article class="metric warning"><div class="metric-label">Owner-routed findings</div><div class="metric-value">84.0%</div><div class="metric-detail">$655.20 needs an owner tag</div></article></div>
+<section><h2>Month-over-month change by owner (USD)</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>
+<section><h2>Managed scope</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul></section>
+<section><h2>KPI scorecard</h2><p class="section-description">Failing KPIs first; unknown means the source was not supplied.</p><div class="table-wrap"><table><thead><tr><th>Capability</th><th>KPI</th><th>Value</th><th>Target</th><th>Status</th><th>Action</th></tr></thead><tbody><tr><td>Rate optimization</td><td>Commitment coverage</td><td class="num">9.1%</td><td class="num">≥ 60.0%</td><td>fail</td><td>Review the Compute savings plan recommendation.</td></tr><tr><td>Rate optimization</td><td>Commitment utilization</td><td class="num">61.5%</td><td class="num">≥ 95.0%</td><td>fail</td><td>Exchange or re-scope ri-web-d4sv5-1y.</td></tr><tr><td>Allocation</td><td>Spend allocated</td><td class="num">87.6%</td><td class="num">≥ 90.0%</td><td>warn</td><td>Tag law-contoso-prod and vm-jumpbox-win with an owning team.</td></tr><tr><td>Anomaly management</td><td>Anomaly impact</td><td class="num">3.4%</td><td class="num">≤ 2.0%</td><td>warn</td><td>Confirm the Azure OpenAI spike on 2026-10-22 was planned.</td></tr><tr><td>Budgeting (governance)</td><td>Managed scopes with a budget</td><td class="num">80.0%</td><td class="num">≥ 100.0%</td><td>warn</td><td>Add a budget for rg-data-prod.</td></tr><tr><td>Allocation (tag governance)</td><td>Untagged spend</td><td class="num">4.1%</td><td class="num">≤ 5.0%</td><td>pass</td><td></td></tr><tr><td>Forecasting</td><td>Forecast vs budget</td><td class="num">98.0%</td><td class="num">≤ 100.0%</td><td>pass</td><td></td></tr><tr><td>Unit economics</td><td>Unit cost change</td><td class="num">-4.2%</td><td class="num">≤ 0.0%</td><td>pass</td><td></td></tr><tr><td>Workload optimization</td><td>Waste as share of spend</td><td class="num">0.6%</td><td class="num">≤ 2.0%</td><td>pass</td><td></td></tr></tbody></table></div></section><section><h2>Governance checks</h2><p class="section-description">Tag and budget governance, including uncovered budget scopes.</p><div class="table-wrap"><table><thead><tr><th>Check</th><th>Status</th><th>Value</th><th>Target</th><th>Detail</th></tr></thead><tbody><tr><td>Managed scopes with a budget</td><td>warn</td><td class="num">80.0%</td><td class="num">≥ 100.0%</td><td></td></tr><tr><td>Untagged spend</td><td>pass</td><td class="num">4.1%</td><td class="num">≤ 5.0%</td><td></td></tr></tbody></table></div></section><section><h2>Forecast</h2><p class="section-description">Linear-trend forecast with an 80% band; AmortizedCost.</p><div class="table-wrap"><table><thead><tr><th>Month</th><th>Forecast</th><th>Low</th><th>High</th><th>Detail</th></tr></thead><tbody><tr><td>2026-10</td><td class="num">$58,780.00</td><td class="num">$57,200.00</td><td class="num">$60,100.00</td><td>$42,093.65 actual to date; 9 days remaining</td></tr><tr><td>2026-11</td><td class="num">$59,900.00</td><td class="num">$56,800.00</td><td class="num">$63,000.00</td><td>30-day run rate $58,400.00; linear_trend, high confidence</td></tr></tbody></table></div></section><section><h2>Month-over-month by owner</h2><p class="section-description">Closed month vs the month before it, by owner tag.</p><div class="table-wrap"><table><thead><tr><th>Owner</th><th>Previous</th><th>Current</th><th>Change</th><th>Change %</th></tr></thead><tbody><tr><td>ai-assistants</td><td class="num">$5,420.00</td><td class="num">$6,860.00</td><td class="num">$1,440.00</td><td class="num">26.6%</td></tr><tr><td>storefront</td><td class="num">$19,650.00</td><td class="num">$20,640.00</td><td class="num">$990.00</td><td class="num">5.0%</td></tr><tr><td>data-platform</td><td class="num">$24,100.00</td><td class="num">$24,880.00</td><td class="num">$780.00</td><td class="num">3.2%</td></tr><tr><td>finance-apps</td><td class="num">$1,390.00</td><td class="num">$1,340.00</td><td class="num">-$50.00</td><td class="num">-3.6%</td></tr></tbody></table></div></section><section><h2>Top resource movers</h2><p class="section-description">Largest absolute resource changes (top 20).</p><div class="table-wrap"><table><thead><tr><th>Change type</th><th>Resource</th><th>Owner</th><th>Previous</th><th>Current</th><th>Change</th></tr></thead><tbody><tr><td>new</td><td>foundry-assistants</td><td>ai-assistants</td><td class="num">$0.00</td><td class="num">$1,104.35</td><td class="num">$1,104.35</td></tr><tr><td>increased</td><td>aoai-contoso-eus</td><td>ai-assistants</td><td class="num">$3,220.00</td><td class="num">$3,925.60</td><td class="num">$705.60</td></tr><tr><td>decreased</td><td>vm-reporting-win</td><td>finance-apps</td><td class="num">$1,030.00</td><td class="num">$980.00</td><td class="num">-$50.00</td></tr></tbody></table></div></section><section><h2>Unit economics</h2><p class="section-description">Cost per business unit; rising unit cost is the signal to investigate.</p><div class="table-wrap"><table><thead><tr><th>Unit</th><th>Cost per unit</th><th>Previous</th><th>Change</th><th>Trend</th><th>Interpretation</th></tr></thead><tbody><tr><td>per 1000 order</td><td class="num">41.2</td><td class="num">43</td><td class="num">-4.2%</td><td>improving</td><td></td></tr></tbody></table></div></section><section><h2>Owner actions</h2><p class="section-description">One action list per owner; unrouted items need an owner tag.</p><div class="table-wrap"><table><thead><tr><th>Owner</th><th>Source</th><th>Resource</th><th>Action</th><th>Est. monthly impact</th></tr></thead><tbody><tr><td>data-platform</td><td>rightsizing</td><td>vm-batch-01</td><td>Resize to Standard_E8s_v5</td><td class="num">$2,190.00</td></tr><tr><td>data-platform</td><td>rightsizing</td><td>disk-batch-scratch-02</td><td>Snapshot, then delete the unattached disk</td><td class="num">$135.17</td></tr><tr><td>storefront</td><td>rightsizing</td><td>vm-web-02</td><td>Resize to Standard_D4s_v5</td><td class="num">$1,095.00</td></tr><tr><td>storefront</td><td>waste</td><td>lb-storefront-v1</td><td>Delete the empty load balancer</td><td class="num">$18.25</td></tr><tr><td>needs an owner tag</td><td>rightsizing</td><td>vm-dev-sandbox</td><td>Add an owner tag, then shut down</td><td class="num">$655.20</td></tr></tbody></table></div></section><section><h2>Ordered actions</h2><p class="section-description">KPI actions, failing first.</p><div class="table-wrap"><table><thead><tr><th>Status</th><th>KPI</th><th>Action</th></tr></thead><tbody><tr><td>fail</td><td>commitment_coverage_pct</td><td>Review the Compute savings plan recommendation.</td></tr><tr><td>fail</td><td>commitment_utilization_pct</td><td>Exchange or re-scope ri-web-d4sv5-1y.</td></tr><tr><td>warn</td><td>allocated_pct</td><td>Tag law-contoso-prod and vm-jumpbox-win with an owning team.</td></tr><tr><td>warn</td><td>anomaly_impact_pct</td><td>Confirm the Azure OpenAI spike on 2026-10-22 was planned.</td></tr><tr><td>warn</td><td>budget_coverage_pct</td><td>Add a budget for rg-data-prod.</td></tr></tbody></table></div></section><section><h2>Scope coverage</h2><p class="section-description">Included, excluded, and unattributed results by managed scope.</p><div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Included</th><th>Excluded</th><th>Unattributed</th><th>Cost</th><th>Detail</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td>complete</td><td class="num">1840</td><td class="num">0</td><td class="num">12</td><td class="num">$42,093.65</td><td>Contoso Production (sample data)</td></tr></tbody></table></div></section>
+</main>
+
+<script nonce="sample">
+const chartData = {"type":"bar","label":"Month-over-month change by owner (USD)","labels":["ai-assistants","storefront","data-platform","finance-apps"],"values":[1440.0,990.0,780.0,-50.0]};
+const chartCanvas = document.getElementById('finops-chart');
+if (chartCanvas && window.Chart) {
+  new Chart(chartCanvas, {
+    type: chartData.type,
+    data: {
+      labels: chartData.labels,
+      datasets: [{
+        label: chartData.label,
+        data: chartData.values,
+        borderColor: '#2563eb',
+        backgroundColor: 'rgba(37, 99, 235, 0.18)',
+        borderWidth: 2,
+        tension: 0.25
+      }]
+    },
+    options: {responsive: true, maintainAspectRatio: false, animation: false}
+  });
+}
+</script>
+</body>
+</html>

@@ -5,8 +5,11 @@
 ### Documentation
 
 - **README refresh**: table of contents, architecture diagram, skill capability table, FinOps
-  Framework coverage, Live Report catalog with schedules, a screenshot gallery of 11 live reports
-  (identifiers masked) in `docs/images/reports/`, example prompts, safety model, and permissions.
+  Framework coverage, Live Report catalog with schedules, a report gallery, example prompts, safety
+  model, and permissions.
+- **Sample reports**: `docs/samples/generate_samples.py` builds all 12 Live Reports from fictional
+  "Contoso" data through the real skill helpers and renderer. The README gallery now shows these
+  samples (`docs/samples/*.html`, `docs/images/reports/*.png`) instead of live customer data.
 
 ### Fixed
 

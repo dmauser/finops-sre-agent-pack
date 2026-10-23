@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none';
+script-src 'self' 'nonce-sample' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh;
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+img-src 'self' data: blob: https:;
+connect-src 'self';">
+<title>FinOps: Cost Allocation</title>
+<style nonce="sample">
+:root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#172033; background:#f5f7fb; }
+* { box-sizing:border-box; }
+body { margin:0; padding:24px; }
+main { max-width:1200px; margin:0 auto; }
+header,section,.metric,.warnings { background:#fff; border:1px solid #dce3ef; border-radius:12px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
+header,section { padding:20px; margin-bottom:16px; }
+h1,h2,p { margin-top:0; }
+.subtitle,.section-description,.refreshed { color:#596780; }
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+.metric { padding:16px; border-top:4px solid #94a3b8; }
+.metric.good { border-top-color:#16a34a; } .metric.warning { border-top-color:#d97706; } .metric.critical { border-top-color:#dc2626; }
+.metric-label,.metric-detail { color:#596780; font-size:.88rem; } .metric-value { font-size:1.65rem; font-weight:700; margin:6px 0; }
+.warnings { padding:16px; margin-bottom:16px; border-color:#f59e0b; background:#fffbeb; }
+.warnings ul { margin-bottom:0; }
+.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; }
+th,td { padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; } th { color:#44516a; font-size:.84rem; text-transform:uppercase; }
+.chart-wrap { height:320px; } .empty { color:#718096; font-style:italic; }
+code,td.long { overflow-wrap:anywhere; } td.num { white-space:nowrap; }
+@media (max-width:640px) {
+  body { padding:12px; } header,section { padding:14px; } h1 { font-size:1.5rem; }
+  .metrics { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .metric-value { font-size:1.35rem; } th,td { padding:8px 6px; font-size:.86rem; }
+  table { min-width:720px; } td.long { min-width:180px; }
+  .chart-wrap { height:240px; }
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+</head>
+<body>
+<main>
+<header><h1>FinOps: Cost Allocation</h1><p class="subtitle">Weekly showback of Azure cost by team tag with tag coverage and hygiene; recommend-only. Sample data (fictional).</p><p class="refreshed">Last refreshed: 2026-10-23 15:00 UTC</p></header>
+
+<div class="metrics"><article class="metric neutral"><div class="metric-label">Cost analyzed</div><div class="metric-value">$42,093.65</div><div class="metric-detail">Retrieved UsageDetails window</div></article><article class="metric good"><div class="metric-label">Allocated</div><div class="metric-value">$41,438.45</div><div class="metric-detail">5 distinct team tag values</div></article><article class="metric warning"><div class="metric-label">Unallocated</div><div class="metric-value">1.6%</div><div class="metric-detail">$655.20 without the team tag</div></article><article class="metric warning"><div class="metric-label">Untagged spend</div><div class="metric-value">$2,583.40</div><div class="metric-detail">Resources with no tags at all</div></article><article class="metric neutral"><div class="metric-label">Via tag inheritance</div><div class="metric-value">$1,928.20</div><div class="metric-detail">Resource group or subscription tag</div></article></div>
+<section><h2>Cost by team</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>
+<section><h2>Managed scope</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul></section>
+<section><h2>Showback by team</h2><p class="section-description">Direct cost per team value, shared cost redistributed, and the fully loaded total. Unallocated spend stays visible and is never spread onto owners.</p><div class="table-wrap"><table><thead><tr><th>Team</th><th>Direct</th><th>Shared</th><th>Fully loaded</th><th>% of total</th><th>Resources</th><th>Via inheritance</th></tr></thead><tbody><tr><td>data-platform</td><td class="num">$18,359.65</td><td class="num">$0.00</td><td class="num">$18,359.65</td><td class="num">43.6%</td><td class="num">4</td><td class="num">$0.00</td></tr><tr><td>storefront</td><td class="num">$15,140.65</td><td class="num">$0.00</td><td class="num">$15,140.65</td><td class="num">36.0%</td><td class="num">4</td><td class="num">$0.00</td></tr><tr><td>ai-assistants</td><td class="num">$5,029.95</td><td class="num">$0.00</td><td class="num">$5,029.95</td><td class="num">11.9%</td><td class="num">2</td><td class="num">$0.00</td></tr><tr><td>platform-shared</td><td class="num">$1,928.20</td><td class="num">$0.00</td><td class="num">$1,928.20</td><td class="num">4.6%</td><td class="num">2</td><td class="num">$1,928.20</td></tr><tr><td>finance-apps</td><td class="num">$980.00</td><td class="num">$0.00</td><td class="num">$980.00</td><td class="num">2.3%</td><td class="num">1</td><td class="num">$0.00</td></tr><tr><td>(unallocated)</td><td class="num">$655.20</td><td>—</td><td class="num">$655.20</td><td class="num">1.6%</td><td class="num">1</td><td>—</td></tr><tr><td>Total</td><td>—</td><td>—</td><td class="num">$42,093.65</td><td class="num">100.0%</td><td>—</td><td>—</td></tr></tbody></table></div></section><section><h2>Recommended ownership tags</h2><p class="section-description">Coverage of the recommended allocation keys; add missing keys through Azure Policy.</p><div class="table-wrap"><table><thead><tr><th>Tag key</th><th>Status</th><th>Resources</th><th>Cost covered</th><th>% of cost</th></tr></thead><tbody><tr><td>app</td><td>missing — adopt</td><td class="num">0</td><td class="num">$0.00</td><td class="num">0.0%</td></tr><tr><td>owner</td><td>missing — adopt</td><td class="num">0</td><td class="num">$0.00</td><td class="num">0.0%</td></tr><tr><td>service</td><td>missing — adopt</td><td class="num">0</td><td class="num">$0.00</td><td class="num">0.0%</td></tr><tr><td>costCenter</td><td>present</td><td class="num">2</td><td class="num">$16,600.55</td><td class="num">39.4%</td></tr><tr><td>env</td><td>present</td><td class="num">10</td><td class="num">$38,221.55</td><td class="num">90.8%</td></tr><tr><td>team</td><td>present</td><td class="num">11</td><td class="num">$39,510.25</td><td class="num">93.9%</td></tr></tbody></table></div></section><section><h2>Tag inventory</h2><p class="section-description">Every tag key in use, ranked by the cost it covers.</p><div class="table-wrap"><table><thead><tr><th>Tag key</th><th>Resources</th><th>Cost covered</th><th>% of cost</th></tr></thead><tbody><tr><td>team</td><td class="num">11</td><td class="num">$39,510.25</td><td class="num">93.9%</td></tr><tr><td>env</td><td class="num">10</td><td class="num">$38,221.55</td><td class="num">90.8%</td></tr><tr><td>costCenter</td><td class="num">2</td><td class="num">$16,600.55</td><td class="num">39.4%</td></tr></tbody></table></div></section><section><h2>Untagged resources</h2><p class="section-description">Resources with no tags at all, ranked by cost — the tagging backlog.</p><div class="table-wrap"><table><thead><tr><th>Resource</th><th>Monthly cost</th><th>Inherited owner</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shared-network/providers/Microsoft.OperationalInsights/workspaces/law-contoso-prod</td><td class="num">$1,515.90</td><td>platform-shared (from resourceGroup)</td></tr><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dev/providers/Microsoft.Compute/virtualMachines/vm-dev-sandbox</td><td class="num">$655.20</td><td>—</td></tr><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shared-network/providers/Microsoft.Compute/virtualMachines/vm-jumpbox-win</td><td class="num">$412.30</td><td>platform-shared (from resourceGroup)</td></tr></tbody></table></div></section><section><h2>Resources without the team tag</h2><p class="section-description">Top unallocated resources; tag them to move their cost into showback.</p><div class="table-wrap"><table><thead><tr><th>Resource</th><th>Monthly cost</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dev/providers/Microsoft.Compute/virtualMachines/vm-dev-sandbox</td><td class="num">$655.20</td></tr></tbody></table></div></section><section><h2>Tag hygiene</h2><p class="section-description">One owner spelled several ways splits their spend; consolidate the values.</p><div class="table-wrap"><table><thead><tr><th>Canonical value</th><th>Variants</th><th>Cost affected</th></tr></thead><tbody><tr><td>storefront</td><td>Storefront, storefront</td><td class="num">$15,140.65</td></tr></tbody></table></div></section><section><h2>Month-over-month by team</h2><p class="section-description">Variance per team value between the two analyzed windows.</p><div class="table-wrap"><table><thead><tr><th>Team</th><th>Previous</th><th>Current</th><th>Change</th><th>Change %</th></tr></thead><tbody><tr><td>ai-assistants</td><td class="num">$4,124.56</td><td class="num">$5,029.95</td><td class="num">+$905.39</td><td class="num">22.0%</td></tr><tr><td>data-platform</td><td class="num">$17,808.86</td><td class="num">$18,359.65</td><td class="num">+$550.79</td><td class="num">3.1%</td></tr><tr><td>storefront</td><td class="num">$14,686.43</td><td class="num">$15,140.65</td><td class="num">+$454.22</td><td class="num">3.1%</td></tr><tr><td>(unallocated)</td><td class="num">$2,505.90</td><td class="num">$2,583.40</td><td class="num">+$77.50</td><td class="num">3.1%</td></tr><tr><td>finance-apps</td><td class="num">$950.60</td><td class="num">$980.00</td><td class="num">+$29.40</td><td class="num">3.1%</td></tr></tbody></table></div></section><section><h2>Scope coverage</h2><p class="section-description">Included, excluded, and unattributed results by managed scope.</p><div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Included</th><th>Excluded</th><th>Unattributed</th><th>Cost</th><th>Detail</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td>complete</td><td class="num">1840</td><td class="num">0</td><td class="num">12</td><td class="num">$42,093.65</td><td>Contoso Production (sample data)</td></tr></tbody></table></div></section>
+</main>
+
+<script nonce="sample">
+const chartData = {"type":"bar","label":"Fully loaded cost (USD)","labels":["data-platform","storefront","ai-assistants","platform-shared","finance-apps","(unallocated)"],"values":[18359.65,15140.65,5029.95,1928.2,980.0,655.2]};
+const chartCanvas = document.getElementById('finops-chart');
+if (chartCanvas && window.Chart) {
+  new Chart(chartCanvas, {
+    type: chartData.type,
+    data: {
+      labels: chartData.labels,
+      datasets: [{
+        label: chartData.label,
+        data: chartData.values,
+        borderColor: '#2563eb',
+        backgroundColor: 'rgba(37, 99, 235, 0.18)',
+        borderWidth: 2,
+        tension: 0.25
+      }]
+    },
+    options: {responsive: true, maintainAspectRatio: false, animation: false}
+  });
+}
+</script>
+</body>
+</html>

@@ -157,8 +157,10 @@ Schedules, names, and model tiers can be overridden at install time; see
 
 ### Report gallery
 
-These screenshots are from a live demo deployment; subscription IDs and email addresses have been
-replaced. Click an image to view it full size.
+These reports use **fictional sample data** for a made-up "Contoso" estate; no customer data is shown.
+[`docs/samples/generate_samples.py`](docs/samples/generate_samples.py) passes the sample data through the
+same skill helpers and renderer that the scheduled tasks use, so each report looks exactly like a live one.
+Click an image to view it full size, or open the HTML in [`docs/samples/`](docs/samples/).
 
 <table>
   <tr>
@@ -183,7 +185,7 @@ replaced. Click an image to view it full size.
   </tr>
   <tr>
     <td><b>Cost vs Reliability</b><br/><a href="docs/images/reports/cost-vs-reliability.png"><img src="docs/images/reports/cost-vs-reliability.png" alt="Cost vs Reliability Live Report"/></a></td>
-    <td><b>AI Spend</b><br/><i>Not shown: the demo subscription has no AI resources. The report has the same layout, with spend by model, resource, and service family.</i></td>
+    <td><b>AI Spend</b><br/><a href="docs/images/reports/ai-spend.png"><img src="docs/images/reports/ai-spend.png" alt="AI Spend Live Report"/></a></td>
   </tr>
 </table>
 
@@ -302,7 +304,7 @@ plugins/finops/
 ├── scheduled-tasks/     # 12 task YAMLs, prompts, and task-manifest.json
 ├── deploy/              # deploy.sh + Bicep for the automated onboarding path
 └── install-api.sh       # package installer for an existing agent
-docs/                    # onboarding guide and report screenshots
+docs/                    # onboarding guide, sample reports, and report screenshots
 evals/                   # evaluation scenarios
 tests/                   # offline pytest suite
 ```

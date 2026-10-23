@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none';
+script-src 'self' 'nonce-sample' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh;
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+img-src 'self' data: blob: https:;
+connect-src 'self';">
+<title>FinOps: Budget Status</title>
+<style nonce="sample">
+:root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#172033; background:#f5f7fb; }
+* { box-sizing:border-box; }
+body { margin:0; padding:24px; }
+main { max-width:1200px; margin:0 auto; }
+header,section,.metric,.warnings { background:#fff; border:1px solid #dce3ef; border-radius:12px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
+header,section { padding:20px; margin-bottom:16px; }
+h1,h2,p { margin-top:0; }
+.subtitle,.section-description,.refreshed { color:#596780; }
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+.metric { padding:16px; border-top:4px solid #94a3b8; }
+.metric.good { border-top-color:#16a34a; } .metric.warning { border-top-color:#d97706; } .metric.critical { border-top-color:#dc2626; }
+.metric-label,.metric-detail { color:#596780; font-size:.88rem; } .metric-value { font-size:1.65rem; font-weight:700; margin:6px 0; }
+.warnings { padding:16px; margin-bottom:16px; border-color:#f59e0b; background:#fffbeb; }
+.warnings ul { margin-bottom:0; }
+.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; }
+th,td { padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; } th { color:#44516a; font-size:.84rem; text-transform:uppercase; }
+.chart-wrap { height:320px; } .empty { color:#718096; font-style:italic; }
+code,td.long { overflow-wrap:anywhere; } td.num { white-space:nowrap; }
+@media (max-width:640px) {
+  body { padding:12px; } header,section { padding:14px; } h1 { font-size:1.5rem; }
+  .metrics { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .metric-value { font-size:1.35rem; } th,td { padding:8px 6px; font-size:.86rem; }
+  table { min-width:720px; } td.long { min-width:180px; }
+  .chart-wrap { height:240px; }
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+</head>
+<body>
+<main>
+<header><h1>FinOps: Budget Status</h1><p class="subtitle">Daily Azure budget-governance snapshot; currentSpend is updated asynchronously. Sample data (fictional).</p><p class="refreshed">Last refreshed: 2026-10-23 15:00 UTC</p></header>
+<aside class="warnings"><strong>Data quality</strong><ul><li>Run-rate forecasts are estimates, not Azure forecastSpend.</li></ul></aside>
+<div class="metrics"><article class="metric neutral"><div class="metric-label">Portfolio budget</div><div class="metric-value">$87,500.00</div><div class="metric-detail">Configured amount</div></article><article class="metric neutral"><div class="metric-label">Current spend</div><div class="metric-value">$63,920.02</div><div class="metric-detail">Azure currentSpend</div></article><article class="metric neutral"><div class="metric-label">Forecast spend</div><div class="metric-value">$87,173.00</div><div class="metric-detail">Azure or labeled run-rate forecast</div></article><article class="metric critical"><div class="metric-label">Gated budgets</div><div class="metric-value">1</div><div class="metric-detail">0 over, 1 forecast over</div></article><article class="metric neutral"><div class="metric-label">Portfolio states</div><div class="metric-value">4</div><div class="metric-detail">2 at risk, 1 on track</div></article></div>
+<section><h2>Percent of budget (100% = budget limit)</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>
+<section><h2>Managed scope</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul></section>
+<section><h2>Gated budgets</h2><p class="section-description">Budgets requiring a human review before additional spend.</p><div class="table-wrap"><table><thead><tr><th>Status</th><th>Budget</th><th>Reason</th></tr></thead><tbody><tr><td>forecast_over</td><td>rg-ai-prod-monthly</td><td>forecast is 114% of the budget amount</td></tr></tbody></table></div></section><section><h2>Budget status</h2><p class="section-description">Gated states first, followed by at-risk and on-track budgets.</p><div class="table-wrap"><table><thead><tr><th>Budget</th><th>Scope</th><th>Amount</th><th>Spent</th><th>Used</th><th>Forecast</th><th>Forecast source</th><th>Forecast %</th><th>Status</th><th>Breached thresholds</th></tr></thead><tbody><tr><td>rg-ai-prod-monthly</td><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai-prod</td><td class="num">$6,000.00</td><td class="num">$5,029.95</td><td class="num">83.8%</td><td class="num">$6,860.00</td><td>azure</td><td class="num">114.3%</td><td>forecast_over</td><td>actual_80: 80.0% actual</td></tr><tr><td>rg-web-prod-monthly</td><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-web-prod</td><td class="num">$20,000.00</td><td class="num">$15,140.65</td><td class="num">75.7%</td><td class="num">$20,640.00</td><td>run-rate</td><td class="num">103.2%</td><td>at_risk</td><td></td></tr><tr><td>contoso-prod-monthly</td><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td class="num">$60,000.00</td><td class="num">$43,094.22</td><td class="num">71.8%</td><td class="num">$58,780.00</td><td>azure</td><td class="num">98.0%</td><td>at_risk</td><td>actual_75: 75.0% actual</td></tr><tr><td>rg-dev-monthly</td><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dev</td><td class="num">$1,500.00</td><td class="num">$655.20</td><td class="num">43.7%</td><td class="num">$893.00</td><td>run-rate</td><td class="num">59.5%</td><td>on_track</td><td></td></tr></tbody></table></div></section><section><h2>Scope coverage</h2><p class="section-description">Included, excluded, and unattributed results by managed scope.</p><div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Included</th><th>Excluded</th><th>Unattributed</th><th>Cost</th><th>Detail</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td>complete</td><td class="num">1840</td><td class="num">0</td><td class="num">12</td><td class="num">$42,093.65</td><td>Contoso Production (sample data)</td></tr></tbody></table></div></section>
+</main>
+
+<script nonce="sample">
+const chartData = {"type":"bar","label":"Percent of budget (100% = budget limit)","labels":["rg-ai-prod-monthly \u2014 used","rg-ai-prod-monthly \u2014 forecast","rg-web-prod-monthly \u2014 used","rg-web-prod-monthly \u2014 forecast","contoso-prod-monthly \u2014 used","contoso-prod-monthly \u2014 forecast","rg-dev-monthly \u2014 used","rg-dev-monthly \u2014 forecast"],"values":[83.8,114.3,75.7,103.2,71.8,98.0,43.7,59.5]};
+const chartCanvas = document.getElementById('finops-chart');
+if (chartCanvas && window.Chart) {
+  new Chart(chartCanvas, {
+    type: chartData.type,
+    data: {
+      labels: chartData.labels,
+      datasets: [{
+        label: chartData.label,
+        data: chartData.values,
+        borderColor: '#2563eb',
+        backgroundColor: 'rgba(37, 99, 235, 0.18)',
+        borderWidth: 2,
+        tension: 0.25
+      }]
+    },
+    options: {responsive: true, maintainAspectRatio: false, animation: false}
+  });
+}
+</script>
+</body>
+</html>
