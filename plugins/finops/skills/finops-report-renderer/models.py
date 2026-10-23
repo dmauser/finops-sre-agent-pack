@@ -141,6 +141,14 @@ def _short_resource(resource_id):
     return resource_id.rstrip("/").rsplit("/", 1)[-1] if resource_id else "(unknown)"
 
 
+def _resource_group_of(resource_id):
+    parts = (resource_id or "").split("/")
+    for index, part in enumerate(parts[:-1]):
+        if part.casefold() == "resourcegroups":
+            return parts[index + 1]
+    return "—"
+
+
 def _validated(value, field):
     if value is None:
         return "verify first"
@@ -148,19 +156,30 @@ def _validated(value, field):
     return "validated" if valid else "contradicted — verify first"
 
 
+def _coverage_count(row, prefix, name, *keys):
+    value = _field(row, *keys)
+    if value is None:
+        return "—"
+    if isinstance(value, list):
+        return str(len(value))
+    return str(_integer(value, f"{prefix}.{name}"))
+
+
 def _scope_coverage_section(rows):
     coverage = []
     any_partial = False
+    any_pct = False
     for index, row in enumerate(_objects(rows, "scope_coverage")):
         prefix = f"scope_coverage[{index}]"
         scope = _text(_field(row, "scope", "scopeId"), f"{prefix}.scope")
         status = _text(row.get("status"), f"{prefix}.status", default="complete")
-        included = _field(row, "included", "included_count", "includedCount")
-        excluded = _field(row, "excluded", "excluded_count", "excludedCount")
-        unattributed = _field(
-            row, "unattributed", "unattributed_count", "unattributedCount"
+        cost = _field(row, "cost_usd", "costUsd", "included_cost_usd", "included_cost")
+        pct = _decimal(
+            _field(row, "attribution_coverage_pct", "coverage_pct"),
+            f"{prefix}.attribution_coverage_pct",
+            optional=True,
         )
-        cost = _field(row, "cost_usd", "costUsd")
+        any_pct = any_pct or pct is not None
         detail = _text(
             _field(row, "detail", "warning"), f"{prefix}.detail", default=""
         )
@@ -170,13 +189,14 @@ def _scope_coverage_section(rows):
             (
                 scope,
                 status,
-                "—" if included is None else str(_integer(included, f"{prefix}.included")),
-                "—" if excluded is None else str(_integer(excluded, f"{prefix}.excluded")),
-                "—"
-                if unattributed is None
-                else str(_integer(unattributed, f"{prefix}.unattributed")),
+                _coverage_count(row, prefix, "included", "included_count", "includedCount", "included"),
+                _coverage_count(row, prefix, "excluded", "excluded_count", "excludedCount", "excluded"),
+                _coverage_count(
+                    row, prefix, "unattributed", "unattributed_count", "unattributedCount", "unattributed"
+                ),
                 _money(_decimal(cost, f"{prefix}.cost_usd", optional=True)),
                 detail,
+                _percent(pct),
             )
         )
     coverage.sort(
@@ -195,19 +215,17 @@ def _scope_coverage_section(rows):
     )
     if not coverage:
         return None, any_partial
+    columns = ["Scope", "Status", "Included", "Excluded", "Unattributed", "Cost", "Detail"]
+    if any_pct:
+        columns.insert(6, "Attribution")
+        table = [list(row[:6]) + [row[7], row[6]] for row in coverage]
+    else:
+        table = [list(row[:7]) for row in coverage]
     return {
         "title": "Scope coverage",
         "description": "Included, excluded, and unattributed results by managed scope.",
-        "columns": [
-            "Scope",
-            "Status",
-            "Included",
-            "Excluded",
-            "Unattributed",
-            "Cost",
-            "Detail",
-        ],
-        "rows": [list(row) for row in coverage],
+        "columns": columns,
+        "rows": table,
         "emptyMessage": "No scope coverage rows were supplied.",
     }, any_partial
 
@@ -337,7 +355,28 @@ def build_cost_overview_model(
             f"overview.by_resource_group[{index}].cost_usd",
         )
         groups.append((name or "(unattributed)", cost))
+    # Azure resource-group names are case-insensitive; UsageDetails can emit
+    # several casings for one group, so merge them under the costliest casing.
+    merged = {}
+    for name, cost in groups:
+        entry = merged.setdefault(name.casefold(), {"total": Decimal(0), "variants": {}})
+        entry["total"] += cost
+        entry["variants"][name] = entry["variants"].get(name, Decimal(0)) + cost
+    groups = [
+        (
+            sorted(entry["variants"].items(), key=lambda item: (-item[1], item[0]))[0][0],
+            entry["total"],
+        )
+        for entry in merged.values()
+    ]
     groups.sort(key=lambda row: (-row[1], row[0].casefold(), row[0]))
+    dates = sorted({date for date, _ in daily})
+    if dates and len(dates) < 28:
+        spend_label = "Period spend"
+        spend_detail = f"{metric}, {dates[0]} to {dates[-1]} ({len(dates)} days)"
+    else:
+        spend_label = "30-day spend"
+        spend_detail = metric
 
     coverage = scope_coverage
     if coverage is None:
@@ -358,10 +397,10 @@ def build_cost_overview_model(
     }
     return _model(
         "FinOps: Cost Overview",
-        f"Daily-refreshed 30-day Azure {metric} snapshot; recent UsageDetails can still be settling.",
+        f"Daily-refreshed Azure {metric} snapshot of up to 30 days; recent UsageDetails can still be settling.",
         context,
         [
-            {"label": "30-day spend", "value": _money(total, currency), "detail": metric},
+            {"label": spend_label, "value": _money(total, currency), "detail": spend_detail},
             {
                 "label": "Days represented",
                 "value": str(len(daily)),
@@ -461,8 +500,10 @@ def build_rightsizing_savings_model(
     )
     quantified = [row["savings"] for row in findings if row["savings"] is not None]
     total_savings = sum(quantified, Decimal(0))
-    verified_count = sum(row["validated_raw"] is True for row in findings)
-    verify_count = len(findings) - verified_count
+    actionable = [row for row in findings if row["kind"].casefold() != "review"]
+    review_count = len(findings) - len(actionable)
+    verified_count = sum(row["validated_raw"] is True for row in actionable)
+    verify_count = len(actionable) - verified_count
     chart_rows = [row for row in findings if row["savings"] is not None][:10]
 
     context = _context(
@@ -486,8 +527,8 @@ def build_rightsizing_savings_model(
             },
             {
                 "label": "Recommendations",
-                "value": str(len(findings)),
-                "detail": "Ranked opportunities",
+                "value": str(len(actionable)),
+                "detail": f"Ranked opportunities; {review_count} high-spend for review",
             },
             {
                 "label": "Validated",
@@ -526,9 +567,9 @@ def build_rightsizing_savings_model(
                 "rows": [
                     [
                         row["resource_id"],
-                        row["resource_type"],
+                        row["resource_type"] or "—",
                         row["kind"],
-                        row["sku"],
+                        row["sku"] or "—",
                         row["action"],
                         _money(row["current"]),
                         _money(row["savings"]),
@@ -536,9 +577,32 @@ def build_rightsizing_savings_model(
                         row["evidence"],
                     ]
                     for row in findings
+                    if row["kind"].casefold() != "review"
                 ],
                 "emptyMessage": "No rightsizing opportunities were produced.",
-            }
+            },
+            {
+                "title": "High spend, no idle rule yet — review",
+                "description": "Costly resources no automated rule or Advisor evaluated. No savings are claimed.",
+                "columns": ["Resource", "Type", "Current monthly cost", "Evidence"],
+                "rows": [
+                    [
+                        row["resource_id"],
+                        row["resource_type"] or "—",
+                        _money(row["current"]),
+                        row["evidence"],
+                    ]
+                    for row in sorted(
+                        (row for row in findings if row["kind"].casefold() == "review"),
+                        key=lambda row: (
+                            -(row["current"] or Decimal(0)),
+                            row["resource_id"].casefold(),
+                            row["resource_id"],
+                        ),
+                    )
+                ],
+                "emptyMessage": "Every costly resource was evaluated by a rule or Advisor.",
+            },
         ],
     )
 
@@ -2213,16 +2277,11 @@ def build_cost_vs_reliability_model(
                 "description": "Resources ranked by reliability score, then monthly cost.",
                 "columns": [
                     "Resource",
-                    "Resource ID",
                     "Resource group",
                     "Service",
                     "Monthly cost",
                     "Alerts",
-                    "Sev0",
-                    "Sev1",
-                    "Sev2",
-                    "Sev3",
-                    "Sev4",
+                    "Sev0/1/2/3/4",
                     "Health events",
                     "Advisor HA",
                     "Reliability score",
@@ -2233,12 +2292,11 @@ def build_cost_vs_reliability_model(
                 "rows": [
                     [
                         row[0],
-                        row[1],
                         row[2],
                         row[3],
                         _money(row[4]),
                         str(row[5]),
-                        *[str(value) for value in row[6]],
+                        "/".join(str(value) for value in row[6]),
                         str(row[7]),
                         str(row[8]),
                         _number(row[9]),
@@ -3160,11 +3218,11 @@ def build_cost_allocation_model(
             "emptyMessage": "Every costed resource has at least one tag.",
         },
         {
-            "title": f"Resources without a {dimension} value",
+            "title": f"Resources without the {dimension} tag",
             "description": "Top unallocated resources; tag them to move their cost into showback.",
             "columns": ["Resource", "Monthly cost"],
             "rows": _resource_rows(unalloc_block.get("resources"), "result.unallocated.resources"),
-            "emptyMessage": f"Every costed resource has a {dimension} value.",
+            "emptyMessage": f"Every costed resource has the {dimension} tag.",
         },
         {
             "title": "Tag hygiene",
@@ -3219,18 +3277,25 @@ def build_cost_allocation_model(
         warnings=warnings,
         scope_coverage=scope_coverage,
     )
+    period = _text(
+        _field(result, "period", "period_label", default=None), "result.period", default=""
+    )
     metrics = [
-        {"label": "Cost analyzed", "value": _money(total), "detail": "Trailing ~30 days"},
+        {
+            "label": "Cost analyzed",
+            "value": _money(total),
+            "detail": period or "Retrieved UsageDetails window",
+        },
         {
             "label": "Allocated",
             "value": _money(allocated),
-            "detail": f"{len(groups)} {dimension} owners",
+            "detail": f"{len(groups)} distinct {dimension} tag values",
             "tone": "good",
         },
         {
             "label": "Unallocated",
             "value": _percent(unallocated_pct),
-            "detail": f"{_money(unallocated)} without a {dimension} value",
+            "detail": f"{_money(unallocated)} without the {dimension} tag",
             "tone": "warning" if unallocated > 0 else "good",
         },
         {
@@ -3353,10 +3418,21 @@ def build_waste_model(
             {
                 "title": "Waste findings",
                 "description": "Ranked by estimated monthly savings; review items carry no claimed saving.",
-                "columns": ["Resource", "Type", "Kind", "Reason", "Monthly cost", "Savings", "Action", "Evidence"],
+                "columns": [
+                    "Resource",
+                    "Resource group",
+                    "Type",
+                    "Kind",
+                    "Reason",
+                    "Monthly cost",
+                    "Savings",
+                    "Action",
+                    "Evidence",
+                ],
                 "rows": [
                     [
-                        row["resource_id"],
+                        _short_resource(row["resource_id"]),
+                        _resource_group_of(row["resource_id"]),
                         row["type"],
                         row["kind"],
                         row["reason"],

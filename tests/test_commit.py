@@ -247,3 +247,24 @@ def test_inventory_unavailable_is_a_gap_not_zero_commitments():
     assert "Reservations Reader" in gap and "Savings plan Reader" in gap
     assert result["headline"]["coverage_pct"] == 60.0
     assert result["headline"]["unused_commitment_cost"] == 8.0
+
+
+def test_shared_scope_benefit_recommendations_are_excluded_for_managed_scope():
+    shared = {
+        "kind": "SavingsPlan",
+        "properties": {
+            "scope": "Shared",
+            "term": "P3Y",
+            "lookBackPeriod": "Last30Days",
+            "costWithoutBenefit": 2_000_000.0,
+            "recommendationDetails": {"savingsAmount": 500_000.0, "commitmentAmount": 1000.0},
+            "totalHours": 720,
+        },
+    }
+    out = analyze(
+        benefit_recommendations=[shared],
+        managed_scopes=[SUB],
+        as_of=TODAY,
+    )
+    assert out["purchases"] == []
+    assert any("Shared-scope" in w for w in out["warnings"])

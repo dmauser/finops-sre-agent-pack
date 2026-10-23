@@ -200,7 +200,7 @@ def _sp_recommendation(item, default_currency):
     without = _num(props.get("costWithoutBenefit"))
     return {
         "family": "savings_plan",
-        "resource_type": "Compute_Savings_Plan",
+        "resource_type": _text(props.get("armSkuName")) or "Compute_Savings_Plan",
         "sku": _text(props.get("armSkuName") or "Compute_Savings_Plan"),
         "location": "",
         "scope": _text(props.get("scope")),
@@ -403,16 +403,23 @@ def analyze_commitments(*, reservations=None, savings_plans=None,
 
     raw_recs = []
     dropped = 0
+    shared_recs = 0
     for parser, items in ((_ri_recommendation, reservation_recommendations),
                           (_sp_recommendation, benefit_recommendations)):
         for item in items or []:
             rec = parser(item, currency)
             if rec is None:
                 dropped += 1
+            elif managed_scopes is not None and rec["scope"].casefold() == "shared":
+                shared_recs += 1
             else:
                 raw_recs.append(rec)
     if dropped:
         warnings.append(f"{dropped} recommendation(s) lacked term or savings data and were skipped")
+    if shared_recs:
+        warnings.append(f"{shared_recs} Shared-scope recommendation(s) are sized on billing-account "
+                        "usage beyond the managed boundary and were excluded; request "
+                        "properties/scope eq 'Single' for scoped savings")
     purchases = [r for r in _best_per_group(raw_recs)
                  if r["est_monthly_savings"] >= min_monthly_savings]
     purchases.sort(key=lambda r: (-r["est_monthly_savings"], r["family"], r["sku"].casefold(),

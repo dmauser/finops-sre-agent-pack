@@ -610,13 +610,41 @@ def test_cost_overview_adapter_preserves_partial_scope_and_sorts():
     assert model["sections"][-1]["title"] == "Scope coverage"
 
 
+def test_cost_overview_merges_resource_group_casing_and_labels_short_period():
+    overview = _overview()
+    overview["by_resource_group"] = [
+        {"resource_group": "LAB-VWAN", "cost_usd": 1},
+        {"resource_group": "lab-vwan", "cost_usd": 5},
+        {"resource_group": "Lab-Vwan", "cost_usd": 1},
+        {"resource_group": "rg-a", "cost_usd": 6.5},
+        {"resource_group": "", "cost_usd": 0.5},
+    ]
+    model = models.build_cost_overview_model(overview, **_context())
+    assert model["sections"][1]["rows"] == [
+        ["lab-vwan", "$7.00"],
+        ["rg-a", "$6.50"],
+        ["(unattributed)", "$0.50"],
+    ]
+    assert model["metrics"][0]["label"] == "Period spend"
+    assert "2026-08-01 to 2026-08-02 (2 days)" in model["metrics"][0]["detail"]
+
+    overview["daily"] = [
+        {"date": f"2026-08-{day:02d}", "cost_usd": 1} for day in range(1, 31)
+    ]
+    assert models.build_cost_overview_model(overview, **_context())["metrics"][0]["label"] == "30-day spend"
+
+
 def test_rightsizing_adapter_uses_decimal_boundaries_and_verify_labels():
     model = models.build_rightsizing_savings_model(_rightsizing(), **_context())
 
     assert model["metrics"][0]["value"] == "$0.30"
-    assert model["metrics"][3]["value"] == "2"
+    assert model["metrics"][1]["value"] == "2"
+    assert model["metrics"][3]["value"] == "1"
     assert model["chart"]["values"] == [0.2, 0.1]
-    assert model["sections"][0]["rows"][-1][6] == "—"
+    review = model["sections"][1]
+    assert review["title"] == "High spend, no idle rule yet — review"
+    assert review["rows"][0][2] == "$100.00"
+    assert all(row[2] != "review" for row in model["sections"][0]["rows"])
     assert model["sections"][0]["rows"][0][7] == "verify first"
 
 
@@ -658,8 +686,8 @@ def test_cost_vs_reliability_adapter_preserves_quality_and_signal_fields():
     assert model["partial"] is True
     assert model["metrics"][3]["value"] == "50.0%"
     spend_row = model["sections"][0]["rows"][0]
-    assert spend_row[5:13] == ["2", "0", "1", "1", "0", "0", "1", "1"]
-    assert spend_row[13:] == ["14", "11.67", "high", "alert"]
+    assert spend_row[4:8] == ["2", "0/1/1/0/0", "1", "1"]
+    assert spend_row[8:] == ["14", "11.67", "high", "alert"]
     assert model["sections"][2]["rows"][0][0] == "high_incident_low_spend"
     assert model["sections"][3]["rows"][0][0] == "high_spend_no_pain"
     assert any(row[0] == "limitation" for row in model["sections"][5]["rows"])
@@ -748,14 +776,14 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_cost_overview_model,
             _overview,
-            "b50527d4e68a9c69e6cac6b590f1530754d2f4026de5e92dbc8928b65dd5d2a9",
-            "9bdeba67a802fc235b0a256e496cbe343ac3b4292777fbdd97a90243e03d031a",
+            "21012f2aa4f1e6c78e446a02c205f6042038262d4ba60b92a52b6e41205477fe",
+            "2ecc86c52a4964bcd514eced1a6c08b5c6fc3ecec3e2369ca6855ad99b4182fe",
         ),
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
-            "582d55595fb372e18e87690e04380614a2ba67cc84a3535f0441674e5095801f",
-            "b2e2f82daa25b6ddfd0b0ea37cebf7203ec27937d5fa3bb528f07dc2340a1159",
+            "4cfefec879f0c8d54f3c63c5e0b923888f058f73d6db941525c83e6e94b84d2b",
+            "9f8f482467bc6825dce88c1dd4abc9d379076d01c0de57810f6bd0554f482993",
         ),
         (
             models.build_budget_status_model,
@@ -778,8 +806,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_cost_vs_reliability_model,
             _reliability,
-            "71af9517bf5436e8b8f7d23045995cac37f18cb2d6a9bd83cbc13d03c24a8111",
-            "dde7b90607fa2c90512ccf9e6900442d2fa5e7b973dddbcc193a96c238212139",
+            "d6443b5bd04a7c7766e12ac4d1fe2805cb439609a603d6d5be307100e6beffee",
+            "697146eb4eeb92e19d2504242fdfce3ae166bf2c8f2117b124076cd8910d7f9f",
         ),
         (
             models.build_monthly_review_model,
@@ -1204,3 +1232,24 @@ def test_anomaly_model_reports_spike_and_credit_separately():
     assert metrics["Credits and refunds"] == "$5.00"
     assert model["chart"]["type"] == "line"
     assert len(model["chart"]["labels"]) == 32
+
+
+def test_scope_coverage_accepts_filter_result_and_waste_shows_short_names():
+    result = _waste_result()
+    coverage = [{
+        "scope": "/subscriptions/s",
+        "status": "complete",
+        "included_count": 10,
+        "excluded_count": 0,
+        "unattributed_count": 1,
+        "included_cost_usd": 1131.5,
+        "attribution_coverage_pct": 99.82,
+        "included": [{}] * 10,
+    }]
+    model = models.build_waste_model(result, **{**_context(), "scope_coverage": coverage})
+    section = next(s for s in model["sections"] if s["title"] == "Scope coverage")
+    assert section["columns"][5:7] == ["Cost", "Attribution"]
+    assert section["rows"][0][2:7] == ["10", "0", "1", "$1,131.50", "99.8%"]
+    findings = model["sections"][0]
+    assert findings["columns"][:2] == ["Resource", "Resource group"]
+    assert all("/" not in row[0] for row in findings["rows"])

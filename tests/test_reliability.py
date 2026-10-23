@@ -217,3 +217,15 @@ def test_cost_resource_id_prefers_arm_instance_name():
     assert reliability._cost_resource_id({"instanceName": "app", "resourceId": arm}) == arm
     assert reliability._cost_resource_id({"properties": {"instanceName": arm}}) == arm
     assert reliability._cost_resource_id({"instanceName": "app"}) == "app"
+
+def test_service_rollup_merges_casing_and_pain_is_blank_below_one_dollar():
+    lower_b = B.lower()
+    out = analyze_cost_vs_reliability(
+        [_line(100.0, rid=A), _line(0.5, rid=lower_b, service="microsoft.compute")],
+        advisor_recommendations=[_advisor(A), _advisor(lower_b)],
+    )
+    services = [row["service"].casefold() for row in out["by_service"]]
+    assert services.count("microsoft.compute") == 1
+    assert out["by_service"][0]["resource_count"] == 2
+    tiny = next(r for r in out["by_resource"] if r["resourceId"].casefold() == lower_b)
+    assert tiny["pain_per_1000_usd"] is None

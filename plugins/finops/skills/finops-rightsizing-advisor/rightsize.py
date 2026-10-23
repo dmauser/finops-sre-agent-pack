@@ -139,6 +139,7 @@ def recommend_rightsizing(
     min_monthly_savings_usd: float = DEFAULT_MIN_MONTHLY_SAVINGS_USD,
     rightsize_savings_fraction: float = DEFAULT_RIGHTSIZE_SAVINGS_FRACTION,
     review_min_monthly_usd: float = DEFAULT_REVIEW_MIN_MONTHLY_USD,
+    existing_resource_ids=None,
 ):
     """Merge Advisor recs, inventory heuristics, utilization, and cost into a single
     ranked list of read-only rightsizing / idle-cleanup recommendations.
@@ -149,6 +150,10 @@ def recommend_rightsizing(
     environments (empty, or all their apps received zero traffic) and always-on container
     apps (minReplicas>=1) that keep billing while receiving no requests.
 
+    `existing_resource_ids` is an optional iterable of every resource id that still exists in
+    scope (a `Resources | project id` Resource Graph pull). When given, the cost-led review
+    sweep skips ids that no longer exist: their cost is history, not a live opportunity.
+
     Returns a list of finding dicts sorted by estimated monthly savings (descending);
     findings whose savings can be quantified below `min_monthly_savings_usd` are dropped,
     while findings with unknown savings are kept (they cannot be ruled out) and sort last.
@@ -158,10 +163,15 @@ def recommend_rightsizing(
     cost = _index_by_id(costs)
     activity = _index_by_id(activity)
     advisor = advisor or []
+    existing = (
+        None if existing_resource_ids is None
+        else {_key(rid) for rid in existing_resource_ids if rid}
+    )
 
     findings: dict = {}
 
     def finding_for(resource_id, resource_type=None):
+        resource_type = resource_type or _type_from_id(resource_id)
         key = _key(resource_id)
         if key not in findings:
             findings[key] = _Finding(resource_id, resource_type)
@@ -310,6 +320,8 @@ def recommend_rightsizing(
     for rid, monthly in (costs or {}).items():
         if _key(rid) in findings:
             continue  # already evaluated/flagged by a rule or Advisor
+        if existing is not None and _key(rid) not in existing:
+            continue  # deleted since it billed: nothing left to rightsize
         if not isinstance(monthly, (int, float)) or monthly < review_min_monthly_usd:
             continue
         rtype = _type_from_id(rid)

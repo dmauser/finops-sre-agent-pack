@@ -330,3 +330,18 @@ def test_advisor_rate_recommendations_are_not_rightsizing():
     out = rightsize.recommend_rightsizing(advisor=advisor)
     assert [f["resourceId"] for f in out] == [vm]
     assert out[0]["recommendedAction"] == "Resize to Standard_D2s_v5."
+
+
+def test_review_sweep_skips_resources_that_no_longer_exist():
+    gone = "/subscriptions/s/resourceGroups/old/providers/Microsoft.Network/vpnGateways/gw"
+    live = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Cache/Redis/cache1"
+    costs = {gone: 110.0, live: 40.0}
+    assert {f["resourceId"] for f in recommend(costs=costs)} == {gone, live}
+    out = recommend(costs=costs, existing_resource_ids=[live.upper()])
+    assert [f["resourceId"] for f in out] == [live]
+
+
+def test_advisor_only_finding_gets_type_from_resource_id():
+    rid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/expressRouteCircuits/er1"
+    out = recommend(advisor=[{"resourceId": rid, "problem": "Delete unused", "savingsUsd": 19.2}])
+    assert out[0]["resourceType"] == "microsoft.network/expressroutecircuits"

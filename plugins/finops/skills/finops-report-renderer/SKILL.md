@@ -74,7 +74,10 @@ All twelve functions have the same keyword-only context arguments:
 - Input-level `partial`, `warnings`, `scope_summary`, and `scope_coverage` fields are also preserved
   when present. Any partial coverage row makes the report partial.
 - Scope coverage rows accept the fields shown above. Counts must be integers and monetary values
-  must be finite numbers, not numeric strings.
+  must be finite numbers, not numeric strings. `cost_usd` is the included cost in USD, never a
+  percentage. A `filter_usage_details` result row can be passed with `scope` and `status` added:
+  its `*_count`, `included_cost_usd`, and `attribution_coverage_pct` fields are read directly,
+  and the percentage renders in its own Attribution column.
 - Text is retained verbatim in the model. Escaping happens only in `render_report`.
 - Cost formatting and cost summation use decimal arithmetic at currency boundaries. Invalid,
   non-finite, boolean, or string-encoded numbers are rejected instead of broadly coerced.
@@ -92,7 +95,7 @@ All twelve functions have the same keyword-only context arguments:
 | `build_cost_vs_reliability_model(result, ...)` | The object returned by `analyze_cost_vs_reliability`. |
 | `build_monthly_review_model(review, ...)` | `{"month", "scorecard", "forecast", "month_over_month", "routing", "unit_economics", "sre_agents"}` holding `kpi_scorecard`, `forecast_spend`, `month_over_month`, `route_to_owners`, `unit_economics`, and `analyze_sre_agent_costs` outputs. Only `scorecard` is required; missing inputs become warnings. |
 | `build_cost_anomaly_model(result, ...)` | The list returned by `detect_anomalies`, or `{"date", "anomalies", "credits", "daily"}` where `credits` is `summarize_credits` output and `daily` is `[{date, cost_usd}]` for the trend chart. Anomalies may carry optional `cause` or `candidate_causes`. |
-| `build_cost_allocation_model(result, ...)` | The object returned by `allocate_costs`, optionally with `month_over_month` set to the `month_over_month` output. Unallocated and undistributed shared cost stay visible as their own rows. |
+| `build_cost_allocation_model(result, ...)` | The object returned by `allocate_costs`, optionally with `month_over_month` set to the `month_over_month` output and `period` set to the analyzed date range text. Unallocated and undistributed shared cost stay visible as their own rows. |
 | `build_waste_model(result, ...)` | The object returned by `find_waste`. |
 | `build_commitment_model(result, ...)` | The object returned by `analyze_commitments`. Pass `inventory_unavailable` to the helper on a 403 so the report shows "unknown" and is marked partial instead of "no commitments". |
 

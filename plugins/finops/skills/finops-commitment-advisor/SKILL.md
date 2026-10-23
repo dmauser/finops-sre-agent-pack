@@ -101,13 +101,16 @@ group for an RG-only scope, by using that resource group id as the scope prefix)
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<EFFECTIVE_SUBSCRIPTION_ID>/providers/Microsoft.CostManagement/benefitRecommendations?api-version=2023-11-01&%24filter=properties/lookBackPeriod eq 'Last30Days' AND properties/term eq 'P3Y'&%24expand=properties/allRecommendationDetails" \
+  --url "https://management.azure.com/subscriptions/<EFFECTIVE_SUBSCRIPTION_ID>/providers/Microsoft.CostManagement/benefitRecommendations?api-version=2023-11-01&%24filter=properties/lookBackPeriod eq 'Last30Days' AND properties/term eq 'P3Y' AND properties/scope eq 'Single'&%24expand=properties/allRecommendationDetails" \
   -o json
 ```
 
 Repeat the benefit call with `properties/term eq 'P1Y'` so both terms are compared. Both are GET
 APIs; do not use the Cost Management POST endpoints. Keep only rows whose `subscriptionId` (or
-scope) is inside the effective scope.
+scope) is inside the effective scope. Always keep the `properties/scope eq 'Single'` filter: without
+it the API also returns `Shared` recommendations sized on the whole billing account or enrollment,
+which can exceed the subscription's spend by orders of magnitude. When `managed_scopes` is passed,
+`commit.py` drops any `Shared` row that slips through and adds a warning.
 
 ### Step 3 — Pull amortized cost for coverage (recommended)
 

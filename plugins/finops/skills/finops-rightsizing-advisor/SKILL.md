@@ -107,6 +107,16 @@ On large subscriptions Resource Graph caps at 1000 rows per page — **paginate 
 same `--subscriptions` value and, for RG-only scope, the same `resourceGroup =~` predicate and
 client-side ARM-prefix filter.
 
+Also pull every resource id that still exists in scope, with the same `--subscriptions`, RG predicate,
+and pagination rules, and pass it as `existing_resource_ids` in Step 5:
+
+```bash
+az graph query --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> -q "Resources | project id" --first 1000 -o json
+```
+
+UsageDetails still bills resources deleted earlier in the window. Without this list the cost-led
+sweep lists them as "review" even though nothing is left to act on.
+
 Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, readySessionInstances, tags}`:
 
 - **VM** `powerState` from `properties.extended.instanceView.powerState.code` (e.g.
@@ -215,6 +225,7 @@ recs = recommend_rightsizing(
     activity=activity,         # from Step 3b {resourceId: {"requests_total", "sample_days"}}
     costs=costs,               # from Step 4  {resourceId: monthly_usd}
     advisor=advisor,           # from Step 1
+    existing_resource_ids=existing_ids,  # from Step 2 `Resources | project id`
 )   # returns findings ranked by estMonthlySavingsUsd desc
 ```
 
@@ -236,7 +247,8 @@ recs = recommend_rightsizing(
   `review_min_monthly_usd` (default $20/mo) whose **type has no idle rule** and that **no other signal
   flagged** is surfaced as `kind="review"` (no savings claimed, `validated=None`). This guarantees no
   expensive line item is silently dropped just because we lack a heuristic for its type. Covered types
-  that a rule evaluated but did not flag are **not** re-listed as review.
+  that a rule evaluated but did not flag are **not** re-listed as review. When
+  `existing_resource_ids` is passed, resources that no longer exist are skipped.
 - Signals for the same `resourceId` (Advisor + inventory + utilization) merge into one finding, joined
   case-insensitively.
 
