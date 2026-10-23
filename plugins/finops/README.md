@@ -83,15 +83,29 @@ script, but the agent and scheduled tasks never execute it. Existing agents are 
 > **Installed the plugin from the portal and `/agent` doesn't list FinOps?** That is expected: an
 > SRE Agent plugin carries only skills (and MCP server requirements). Custom agents and scheduled
 > tasks are never created by a plugin install. Either run `install-api.sh` (it detects the existing
-> plugin and adds the agent and tasks), or create the agent by hand:
+> plugin and adds the agent and tasks), or create the agent from the portal YAML tab:
 >
-> 1. Open **Builder → Agent Canvas → Create custom agent**, name it `finops-investigator`.
+> 1. Render the YAML with your agent's resource ID (Cloud Shell has Python):
+>    `python agents/render_agent_yaml.py --agent-resource-id <AGENT_RESOURCE_ID> > finops-investigator.yaml`
+>    (or copy [`agents/finops-investigator.yaml`](agents/finops-investigator.yaml) and replace
+>    `{{AGENT_RESOURCE_ID}}` with your agent's full ARM resource ID).
+> 2. Open **Agent Canvas → Create → Custom agent → YAML**, paste the file, and select **Create**.
+>    It sets the instructions, exactly the five read-only tools, and the 13 FinOps skills in one step.
+> 3. Refresh the chat, type `/agent`, and select `finops-investigator`.
+>
+> The same YAML can be applied from an MCP client with the Azure MCP `sreagent_workflows_apply`
+> command. To fill in the **Form** tab by hand instead:
+>
+> 1. Name it `finops-investigator`.
 > 2. Paste `properties.instructions` from [`agents/finops-investigator.json`](agents/finops-investigator.json),
 >    replacing `{{AGENT_RESOURCE_ID}}` with your agent's full ARM resource ID.
-> 3. Tools: `RunAzCliReadCommands`, `ExecutePythonCode`, `ListReports`, `GetReport`, `SaveReport`.
->    Do not add any write tool.
-> 4. Choose Skills: every `finops-*` skill plus `live_report_authoring`.
+> 3. **Choose tools**: `RunAzCliReadCommands`, `ExecutePythonCode`, `ListReports`, `GetReport`,
+>    `SaveReport`. Leaving tools empty inherits every global tool, including write tools.
+> 4. **Choose skills**: every `finops-*` skill plus `live_report_authoring`.
 > 5. Save, refresh the chat, then type `/agent` and select `finops-investigator`.
+>
+> A manually created agent does not get the scheduled tasks (Live Reports, email reviews) or RBAC;
+> those still come from `install-api.sh`.
 >
 > Skills themselves never appear under `/`; the agent loads them automatically when a question
 > matches, or when you name one ("Use finops-waste-finder on my subscription").

@@ -236,3 +236,35 @@ def test_installer_rejects_custom_manifest_missing_core_tool():
 
     assert result.returncode != 0
     assert "Read-only Azure safety error" in result.stderr
+
+
+def _load_yaml_renderer():
+    import importlib.util
+    path = ROOT / "plugins" / "finops" / "agents" / "render_agent_yaml.py"
+    spec = importlib.util.spec_from_file_location("render_agent_yaml", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_portal_yaml_template_is_in_sync_with_manifest():
+    renderer = _load_yaml_renderer()
+    committed = renderer.TEMPLATE.read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert committed == renderer.render()
+
+
+def test_portal_yaml_mirrors_manifest_and_substitutes_resource_id():
+    yaml = __import__("pytest").importorskip("yaml")
+    renderer = _load_yaml_renderer()
+    rid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.App/agents/a"
+    doc = yaml.safe_load(renderer.render(rid))
+    props = json.loads(MANIFEST.read_text())["properties"]
+    assert doc["kind"] == "ExtendedAgent" and doc["api_version"] == "azuresre.ai/v2"
+    assert doc["metadata"]["name"] == "finops-investigator"
+    assert set(doc["spec"]) == set(props)
+    for key, value in props.items():
+        if key == "instructions":
+            assert doc["spec"][key] == value.replace("{{AGENT_RESOURCE_ID}}", rid)
+            assert "{{" not in doc["spec"][key]
+        else:
+            assert doc["spec"][key] == value, key

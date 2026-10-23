@@ -281,7 +281,7 @@ ok "Cost Management transport scopes: ${#COST_READER_SCOPES[@]}"
 ok "Agent UAMI principal: $UAMI_PRINCIPAL_ID"
 
 TOKEN="$(az account get-access-token --resource "$TOKEN_RESOURCE" --query accessToken -o tsv)" \
-  || die "Failed to mint token for $TOKEN_RESOURCE"
+  || die "Failed to mint token for $TOKEN_RESOURCE. In Azure Cloud Shell the built-in identity cannot issue this audience: run 'az login --scope $TOKEN_RESOURCE/.default' (or run from WSL/a local shell), or create the agent from agents/finops-investigator.yaml (see README)."
 [ -n "$TOKEN" ] || die "Empty access token."
 ok "Access token acquired for $TOKEN_RESOURCE"
 
