@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- **UsageDetails chain isolation**: `find_usage_tool_output_chains` gains `after_timestamp` (ignore
+  `tmp/ToolOutputs` files from earlier scheduled-task executions) and `request_url_prefix` (never
+  merge chains from other subscriptions or API versions). Production had merged stale pages into a
+  28-page chain of mixed dates.
+- **MOSP/MCA date filters**: `finops-managed-scope` documents that UsageDetails ignores every date
+  filter for MOSP and MCA subscriptions (current billing period only; `billingPeriods` is empty).
+  Detect it on the first page, stop retrying, filter client-side, and label results partial.
+- **Deterministic inputs**: new `save_finops_input` / `load_finops_input` helpers write Advisor,
+  inventory, budget, and tag responses to `tmp/finops-data/<name>.json`, replacing heuristic
+  ToolOutputs scanning. The Monthly Review prompt and `finops-kpi-scorecard` use them.
+
 ### Added
 
 - **`finops-sre-agent`** (14th skill): FinOps for Azure SRE Agent. Attributes Azure Agent Unit (AAU)

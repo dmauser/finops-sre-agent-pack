@@ -275,3 +275,75 @@ def test_tool_output_loader_rejects_files_after_chain_end(tmp_path):
     _save_tool_output(b, {"nextLink": None, "value": []}, 2)
     with pytest.raises(ValueError):
         usage.load_usage_tool_output_pages("https://x", [str(a), str(b)])
+
+
+def _save_with_command(path, envelope, mtime, url):
+    import json, os
+    path.write_text(json.dumps({
+        "command": f'az rest --method get --url "{url}" --query "{{value: value, nextLink: nextLink}}"',
+        "cliExecutionResult": {"output": json.dumps(envelope)},
+    }))
+    os.utime(path, (mtime, mtime))
+
+
+USAGE_A = "https://management.azure.com/subscriptions/aaa/providers/Microsoft.Consumption/usageDetails"
+USAGE_B = "https://management.azure.com/subscriptions/bbb/providers/Microsoft.Consumption/usageDetails"
+
+
+def test_tool_output_chains_ignore_files_from_previous_runs(tmp_path):
+    row = {"id": "r1", "date": "2026-09-01", "cost": 1.0}
+    nxt_old = USAGE_A + "?api-version=2023-05-01&%24skiptoken=old"
+    _save_tool_output(tmp_path / "o_RunAzCliReadCommands_1.json", {"nextLink": nxt_old, "value": [row]}, 100)
+    _save_tool_output(tmp_path / "o_RunAzCliReadCommands_2.json", {"nextLink": nxt_old + "2", "value": [row]}, 110)
+    _save_tool_output(tmp_path / "n_RunAzCliReadCommands_1.json", {"nextLink": None, "value": [row]}, 500)
+
+    assert len(usage.find_usage_tool_output_chains(str(tmp_path))) == 1
+    assert len(usage.find_usage_tool_output_chains(str(tmp_path))[0]) == 3  # old pages merged in
+    chains = usage.find_usage_tool_output_chains(str(tmp_path), after_timestamp=400.0)
+    assert [[pathlib.Path(p).name for p in c] for c in chains] == [["n_RunAzCliReadCommands_1.json"]]
+
+
+def test_tool_output_chains_filter_by_request_url_prefix(tmp_path):
+    row = {"id": "r1", "date": "2026-09-01", "cost": 1.0}
+    first_a = USAGE_A + "?api-version=2023-05-01&metric=AmortizedCost&%24top=1000"
+    next_a = USAGE_A + "?api-version=2023-05-01&amp;%24skiptoken=2"
+    _save_with_command(tmp_path / "1_RunAzCliReadCommands.json", {"nextLink": next_a, "value": [row]}, 10, first_a)
+    _save_with_command(tmp_path / "2_RunAzCliReadCommands.json", {"nextLink": None, "value": [row]}, 20, USAGE_B + "?x=1")
+    # no command recorded: URL inferred from the previous page's nextLink
+    _save_tool_output(tmp_path / "3_RunAzCliReadCommands.json", {"nextLink": None, "value": [row]}, 30)
+
+    chains = usage.find_usage_tool_output_chains(
+        str(tmp_path), request_url_prefix="/subscriptions/AAA/providers/Microsoft.Consumption/usageDetails")
+    assert [[pathlib.Path(p).name for p in c] for c in chains] == [
+        ["1_RunAzCliReadCommands.json", "3_RunAzCliReadCommands.json"]
+    ]
+    pages = usage.load_usage_tool_output_pages(first_a, chains[0])
+    assert pages[1]["request_url"] == USAGE_A + "?api-version=2023-05-01&%24skiptoken=2"
+
+    only_b = usage.find_usage_tool_output_chains(str(tmp_path), request_url_prefix=USAGE_B)
+    assert [[pathlib.Path(p).name for p in c] for c in only_b] == [["2_RunAzCliReadCommands.json"]]
+
+
+def test_save_and_load_finops_inputs_are_deterministic(tmp_path):
+    import json
+    out = tmp_path / "finops-data"
+    src = tmp_path / "x_RunAzCliReadCommands.json"
+    src.write_text(json.dumps({"cliExecutionResult": {"output": json.dumps({"data": [{"category": "Cost"}]})}}))
+
+    usage.save_finops_input("advisor", source_path=str(src), directory=str(out))
+    usage.save_finops_input("budgets", '{"value": [{"name": "b1"}]}', directory=str(out))
+    usage.save_finops_input("tags", {"value": []}, directory=str(out))
+
+    assert usage.load_finops_input("advisor", str(out)) == {"data": [{"category": "Cost"}]}
+    assert usage.load_finops_input("budgets", str(out))["value"][0]["name"] == "b1"
+    assert usage.load_finops_input("inventory", str(out), default=None) is None
+    with pytest.raises(FileNotFoundError):
+        usage.load_finops_input("inventory", str(out))
+    with pytest.raises(ValueError):
+        usage.save_finops_input("../evil", {}, directory=str(out))
+    with pytest.raises(ValueError):
+        usage.save_finops_input("advisor", {}, source_path=str(src), directory=str(out))
+    bad = tmp_path / "bad_RunAzCliReadCommands.json"
+    bad.write_text('{"cliExecutionResult": {"output": "timed out"}}')
+    with pytest.raises(ValueError):
+        usage.save_finops_input("tags", source_path=str(bad), directory=str(out))

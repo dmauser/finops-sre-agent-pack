@@ -3,6 +3,7 @@
 import glob
 import json
 import os
+import re
 from decimal import Decimal, InvalidOperation
 from html import unescape
 from urllib.parse import parse_qsl, urlsplit
@@ -338,28 +339,91 @@ def prepare_usage_details(
 _USAGE_ROW_KEYS = {"date", "cost", "costinbillingcurrency", "billingcost"}
 
 
-def _tool_output_envelope(path):
-    """Return the projected `{value, nextLink}` envelope saved by RunAzCliReadCommands, or None."""
+def _unwrap_tool_output(data):
+    """Peel RunAzCliReadCommands wrappers (`cliExecutionResult.output` JSON strings) off a payload."""
 
-    try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    for _ in range(3):
-        if isinstance(data, dict) and isinstance(data.get("value"), list):
+    for _ in range(4):
+        if not isinstance(data, dict) or isinstance(data.get("value"), list):
             return data
-        if not isinstance(data, dict):
-            return None
         inner = data.get("cliExecutionResult") or data
         output = inner.get("output") if isinstance(inner, dict) else None
         if not isinstance(output, str):
-            return None
+            return data
         try:
             data = json.loads(output)
         except ValueError:
             return None
+    return data
+
+
+def _read_tool_output(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def _tool_output_envelope(path):
+    """Return the projected `{value, nextLink}` envelope saved by RunAzCliReadCommands, or None."""
+
+    data = _unwrap_tool_output(_read_tool_output(path))
+    if isinstance(data, dict) and isinstance(data.get("value"), list):
+        return data
     return None
+
+
+_URL_KEYS = {"request_url", "requesturl", "url", "uri"}
+_COMMAND_KEYS = {"command", "commands", "clicommand", "cmd", "arguments", "args", "input"}
+_URL_IN_COMMAND = re.compile(
+    r"""--ur[il]\s+(?:"([^"]+)"|'([^']+)'|(\S+))|(https://\S+|/subscriptions/\S+)""", re.IGNORECASE
+)
+
+
+def _url_from_command(text):
+    match = _URL_IN_COMMAND.search(text or "")
+    if not match:
+        return None
+    return next(group for group in match.groups() if group).rstrip("\"',;")
+
+
+def _tool_output_request_url(data, depth=0):
+    """Find the request URL recorded alongside a saved tool output, never inside its `output` data."""
+
+    if depth > 4:
+        return None
+    if isinstance(data, list):
+        for item in data:
+            found = _tool_output_request_url(item, depth + 1)
+            if found:
+                return found
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key, value in data.items():
+        folded = str(key).casefold()
+        if folded in _URL_KEYS and isinstance(value, str) and value.strip():
+            return value.strip()
+        if folded in _COMMAND_KEYS:
+            found = (_url_from_command(value) if isinstance(value, str)
+                     else _tool_output_request_url(value, depth + 1))
+            if found:
+                return found
+    for key, value in data.items():
+        if str(key).casefold() not in {"output", "value", "nextlink"} and isinstance(value, (dict, list)):
+            found = _tool_output_request_url(value, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _normalize_request_url(url):
+    text = unescape(_text(url) or "")
+    for host in ("https://management.azure.com", "http://management.azure.com"):
+        if text.casefold().startswith(host):
+            text = text[len(host):]
+            break
+    return text.casefold()
 
 
 def _looks_like_usage_page(envelope):
@@ -372,28 +436,108 @@ def _looks_like_usage_page(envelope):
     return isinstance(first, dict) and bool(_USAGE_ROW_KEYS & {k.casefold() for k in first})
 
 
-def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCliReadCommands*.json"):
+def find_usage_tool_output_chains(directory="tmp/ToolOutputs", pattern="*RunAzCliReadCommands*.json",
+                                  *, after_timestamp=None, request_url_prefix=None):
     """Group saved UsageDetails tool outputs into continuation chains, in fetch order.
 
     The SRE Agent runtime saves every RunAzCliReadCommands result under `tmp/ToolOutputs`. Files
     are ordered by modification time; non-UsageDetails outputs and failed/timed-out calls are
     skipped, and a page without a nextLink closes its chain. Returns a list of path lists. Pass
     each chain, with the exact URL of its first request, to `load_usage_tool_output_pages`.
+
+    The directory persists across scheduled-task executions, so isolate the current run:
+
+    after_timestamp     Unix epoch seconds (`time.time()` captured before the first `az rest`
+                        call). Files modified before it are ignored. None keeps every file.
+    request_url_prefix  Keep only pages whose request URL starts with this prefix (for example
+                        `/subscriptions/<id>/providers/Microsoft.Consumption/usageDetails`), so
+                        chains from other subscriptions or API versions never merge. The host
+                        `https://management.azure.com`, `&amp;` encoding, and case are ignored. The
+                        URL is read from the command saved with the output; when absent it is
+                        inferred from the previous page's nextLink or the page's own nextLink. A
+                        page whose URL cannot be determined is skipped. None keeps every page.
     """
+
+    if after_timestamp is not None:
+        after_timestamp = float(after_timestamp)
+    prefix = _normalize_request_url(request_url_prefix) if request_url_prefix else None
 
     paths = sorted(glob.glob(os.path.join(directory, pattern)), key=lambda p: (os.path.getmtime(p), p))
     chains, current = [], []
+    expected_url = None
     for path in paths:
-        envelope = _tool_output_envelope(path)
+        if after_timestamp is not None and os.path.getmtime(path) < after_timestamp:
+            continue
+        raw = _read_tool_output(path)
+        envelope = _unwrap_tool_output(raw)
+        if not isinstance(envelope, dict) or not isinstance(envelope.get("value"), list):
+            continue
         if not _looks_like_usage_page(envelope):
             continue
+        next_link = _text(envelope.get("nextLink"))
+        if prefix is not None:
+            url = _tool_output_request_url(raw) or (expected_url if current else None) or next_link
+            if not url or not _normalize_request_url(url).startswith(prefix):
+                continue
         current.append(path)
-        if not _text(envelope.get("nextLink")):
+        if not next_link:
             chains.append(current)
-            current = []
+            current, expected_url = [], None
+        else:
+            expected_url = unescape(next_link)
     if current:
         chains.append(current)
     return chains
+
+
+_INPUT_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_MISSING = object()
+
+
+def save_finops_input(name, data=None, *, source_path=None, directory="tmp/finops-data"):
+    """Persist one Azure response to `<directory>/<name>.json` for a later analysis step.
+
+    Pass either the parsed/inline response as `data` (a JSON string is parsed), or the exact
+    `tmp/ToolOutputs/...` path the runtime reported for that call as `source_path` (the
+    RunAzCliReadCommands wrapper is removed). Use fixed names such as `advisor`, `inventory`,
+    `budgets`, and `tags` so the analysis loads each input by name instead of scanning
+    ToolOutputs heuristically. Returns the written path.
+    """
+
+    if not isinstance(name, str) or not _INPUT_NAME.match(name):
+        raise ValueError(f"invalid input name {name!r}; use lowercase letters, digits, '-' or '_'")
+    if (data is None) == (source_path is None):
+        raise ValueError("pass exactly one of data or source_path")
+    if source_path is not None:
+        raw = _read_tool_output(source_path)
+        if raw is None:
+            raise ValueError(f"tool output is missing or not JSON: {source_path}")
+        data = _unwrap_tool_output(raw)
+        if data is None:
+            raise ValueError(f"tool output holds no JSON response (failed call?): {source_path}")
+    elif isinstance(data, str):
+        data = json.loads(data)
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{name}.json")
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, default=str)
+    os.replace(temp, path)
+    return path
+
+
+def load_finops_input(name, directory="tmp/finops-data", default=_MISSING):
+    """Load an input written by `save_finops_input`; return `default` (when given) if absent."""
+
+    if not isinstance(name, str) or not _INPUT_NAME.match(name):
+        raise ValueError(f"invalid input name {name!r}")
+    path = os.path.join(directory, f"{name}.json")
+    if not os.path.exists(path):
+        if default is _MISSING:
+            raise FileNotFoundError(path)
+        return default
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 def load_usage_tool_output_pages(initial_url, paths):

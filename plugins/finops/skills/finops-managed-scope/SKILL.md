@@ -174,11 +174,21 @@ Python/terminal step between pages to save, count, or print a page, and do not l
 subprocess (it has no Azure credentials). After the chain ends, rebuild every page with its exact
 request URL in **one** Python call and let `usage.py` (code, not the model) validate continuity:
 
+Before the first `az rest` call of the run, record the run start in a Python step
+(`run_start = time.time()`, written to `tmp/finops-data/run_start.txt`). `tmp/ToolOutputs/`
+persists across scheduled-task executions, so without it pages from earlier runs merge into the
+current chain (a live run assembled a 28-page chain of mixed dates instead of 4 pages).
+
 ```python
 from usage import prepare_usage_details
 from usage import find_usage_tool_output_chains, load_usage_tool_output_pages
 
-chain = find_usage_tool_output_chains("tmp/ToolOutputs")[-1]  # newest chain; one per scope/slice
+chains = find_usage_tool_output_chains(
+    "tmp/ToolOutputs",
+    after_timestamp=run_start,  # ignore outputs from earlier executions
+    request_url_prefix=f"/subscriptions/{sub_id}/providers/Microsoft.Consumption/usageDetails",
+)
+chain = chains[-1]  # newest chain for this subscription; one per scope/slice
 usage_pages = load_usage_tool_output_pages(first_request_url, chain)
 coverage = prepare_usage_details(
     usage_pages,
@@ -216,3 +226,56 @@ charge to an RG by guesswork.
 Retrieve analysis data for each effective scope independently, de-duplicate the merged
 rows, then apply this filter as a defensive check. Include excluded and unattributed
 coverage in the final report; do not broaden a query merely because RBAC permits it.
+
+## 5. MOSP and MCA subscriptions ignore UsageDetails date filters
+
+For **Microsoft Online Services Program (MOSP / pay-as-you-go)** and **Microsoft Customer
+Agreement (MCA)** subscriptions, the subscription-scoped Consumption UsageDetails API silently
+ignores **every** date filter: `properties/usageStart`, `properties/usageEnd`,
+`properties/usageDate`, and `properties/date` in `%24filter`, as well as other API versions. It
+returns the **current open billing period only**, whatever range was requested. The
+`billingPeriods` endpoint returns an empty `[]` for these subscription types, so
+billing-period-scoped URLs (`.../billingPeriods/<name>/providers/Microsoft.Consumption/usageDetails`)
+are not a fallback either. Production runs wasted ~10 tool calls retrying filter formats and API
+versions.
+
+- **Detect once, then stop.** After the first page of a chain, compare the row `date` values
+  with the requested window. If the page contains dates outside the requested range, or none of
+  the requested earlier months, the filter is being ignored. Do not retry other filter syntaxes,
+  API versions, or `billingPeriods` URLs. Finish paging that chain normally.
+- **Fallback.** Accept the current billing period's rows, filter them by `date` client-side after
+  retrieval (half-open: `start <= date < end`), and run the analysis on what remains.
+- **Label it partial.** Report the requested range against the range actually obtained (min/max
+  `date` of the retained rows). Mark every total, forecast, and month-over-month comparison
+  derived from the missing period as partial or `unknown`. Never fill the gap with estimates.
+- Enterprise Agreement subscriptions honour the date filters and expose `billingPeriods`; this
+  section does not apply to them.
+
+## 6. Pass every non-usage input through a deterministic file
+
+Do not rebuild analysis inputs by scanning `tmp/ToolOutputs/` with heuristics (checking for
+`category`, `type`, or `data` keys). Small responses are returned inline and never saved there, and
+budget, Advisor, and tag responses look alike. Only UsageDetails pages use the chain detection
+above.
+
+Instead, right after each non-usage Azure call (or once after a batch of calls, before any
+analysis), save the response under a fixed name with `usage.py`:
+
+```python
+from usage import save_finops_input, load_finops_input
+
+# response saved by the runtime: pass the exact path it reported for that call
+save_finops_input("advisor", source_path="tmp/ToolOutputs/<file reported for the Advisor call>.json")
+# response shown inline: pass the JSON exactly as returned (string or parsed)
+save_finops_input("budgets", budgets_json)
+save_finops_input("inventory", inventory_json)   # Resource Graph inventory
+save_finops_input("tags", tags_json)             # resource / tag data
+# usage_data -> handled by find_usage_tool_output_chains / load_usage_tool_output_pages
+
+# later, in the analysis script
+advisor = load_finops_input("advisor", default=None)   # None when the call failed or was skipped
+```
+
+Files go to `tmp/finops-data/<name>.json` (`advisor.json`, `inventory.json`, `budgets.json`,
+`tags.json`). Delete `tmp/finops-data/` at the start of a scheduled run so stale inputs never leak
+in. A missing file means that source was unavailable; report it as a gap rather than guessing.

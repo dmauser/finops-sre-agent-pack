@@ -61,6 +61,17 @@ Run, or reuse from the same conversation turn, the results of:
 Every input is optional; a missing input makes its KPI `unknown` rather than failing. Say which
 inputs were missing in the report.
 
+Pass raw Azure responses between steps through deterministic files, not ToolOutputs scanning
+(see `finops-managed-scope` section 6). Save each one with `usage.save_finops_input` before running
+the analysis: Advisor → `tmp/finops-data/advisor.json`, Resource Graph inventory →
+`inventory.json`, budgets → `budgets.json`, tags → `tags.json`. UsageDetails pages are rebuilt
+with `find_usage_tool_output_chains(..., after_timestamp=run_start, request_url_prefix=...)`.
+
+The forecast and month-over-month inputs need earlier months. For MOSP/MCA subscriptions the
+UsageDetails date filter is ignored and only the current billing period is returned
+(`finops-managed-scope` section 5): do not retry other filters; label the forecast and
+month-over-month as partial with the requested vs obtained date range.
+
 For **unit economics**, take business volume from the customer (orders, active users, GB processed)
 or, for web workloads, from Application Insights request counts in a managed resource group:
 
