@@ -4,6 +4,8 @@
 
 ### Added
 
+- `docs/ONBOARDING.md`: *Updating an existing deployment* (automated rerun and portal steps).
+
 - **`finops-kpi-scorecard`** (13th skill): month-end and next-month forecast (linear trend with
   weekday seasonality, 80% band, budget status), unit economics (cost per request/order/user and
   trend), a FinOps KPI scorecard with tag and budget governance checks and a crawl/walk/run
@@ -43,6 +45,9 @@
   scope, grant RBAC, connect the customer's IaC repo as a code source, and set up a FinOps cadence.
 
 ### Fixed
+
+- `install-api.sh` (`PLUGIN_SOURCE=direct`): rerunning on an agent with an existing direct install now
+  refreshes the plugin to the latest commit instead of skipping it, so new skills are picked up.
 
 - EA UsageDetails: cost is read in billing currency, so non-USD EA costs are no longer mislabelled.
 - Optimization analyses use AmortizedCost, so reservation and savings-plan purchases no longer

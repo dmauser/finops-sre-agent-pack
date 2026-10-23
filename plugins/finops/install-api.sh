@@ -476,14 +476,14 @@ data = json.load(sys.stdin)
 items = data if isinstance(data, list) else data.get("value", [])
 for item in items:
     spec = item.get("spec") or {}
-    if spec.get("pluginName") == os.environ["PLUGIN_NAME"]:
-        source = spec.get("source") or {}
-        origin = spec.get("marketplaceName") or source.get("repo") or "?"
-        print((item.get("metadata") or {}).get("name", "") + " (" + str(origin) + ")")
+    if spec.get("pluginName") == os.environ["PLUGIN_NAME"] and spec.get("marketplaceName"):
+        print((item.get("metadata") or {}).get("name", "") + " (" + spec["marketplaceName"] + ")")
         break
 ')" || die "Could not parse plugin installations."
+# A marketplace install is left alone. A direct install is re-posted: install-direct is
+# idempotent and refreshes the existing installation to the latest commit (new skills included).
 if [ -n "$existing_install" ]; then
-  ok "Plugin '$PLUGIN_NAME' already installed: $existing_install — skipping install"
+  ok "Plugin '$PLUGIN_NAME' already installed from a marketplace: $existing_install — skipping install"
 else
   direct_body="$INSTALL_WORK_DIR/install-direct.json"
   REPO_SLUG="$REPO_SLUG" PLUGIN_PATH="$PLUGIN_PATH" GITHUB_PAT="$GITHUB_PAT" python3 - "$direct_body" <<'PY'
@@ -509,7 +509,7 @@ PY
     200|201|202)
       printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if d.get("success") else 1)' 2>/dev/null \
         || die "Direct plugin install failed: $resp"
-      ok "Plugin installed from URL with auto-update (HTTP $HTTP_CODE)";;
+      ok "Plugin installed or refreshed from URL with auto-update (HTTP $HTTP_CODE)";;
     *) die "Direct plugin install failed (HTTP $HTTP_CODE): $resp";;
   esac
 fi

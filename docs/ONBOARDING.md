@@ -228,6 +228,38 @@ Both paths install the reports. To run FinOps as a monthly operating rhythm, als
 
 ---
 
+## Updating an existing deployment
+
+When `main` gains skills, subagent changes or tasks, bring an agent up to date the same way you
+onboarded it.
+
+**Automated.** Rerun the deploy script against the existing agent. It skips the infrastructure,
+refreshes the plugin to the latest commit, upserts `finops-investigator`, and upserts the tasks you
+list (existing tasks with the same name are updated in place):
+
+```bash
+./plugins/finops/deploy/deploy.sh -n sre-finops-demo -g SRE-FinOps-Demo \
+  --tasks cost-optimization-report,monthly-finops-review
+```
+
+**Manual (portal).**
+
+1. **Skills**: with auto-update on, the plugin follows `main`. To pull immediately, reinstall the
+   plugin from the same URL; the installation is refreshed in place and reports the new skill
+   count.
+2. **Subagent**: open `finops-investigator`, paste the current instructions from
+   [`finops-investigator.yaml`](../plugins/finops/agents/finops-investigator.yaml) (replace the
+   agent resource ID placeholder), and add any new skill (for example `finops-kpi-scorecard`) to
+   its allowed skills.
+3. **Tasks**: create any new task (for example the monthly review) from its YAML in
+   `plugins/finops/scheduled-tasks/`.
+4. **RBAC**: confirm the agent identity still holds **Cost Management Reader** on the subscription.
+
+> A task you created by hand under a different name is not replaced by the installer. Pause or
+> delete it so two tasks do not refresh the same Live Report.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |
