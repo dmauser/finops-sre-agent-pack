@@ -116,7 +116,7 @@ and can optionally apply the second to the SRE Agent's managed identity.
 | Grant | Needed for | Command |
 |-------|-----------|---------|
 | **Reader on the exact agent ARM resource** | Every run must read the current `knowledgeGraphConfiguration.managedResources` | Automatically granted and verified by `install-api.sh`; the installing identity needs role-assignment permission at `AGENT_RESOURCE_ID` |
-| **Cost Management Reader on each UsageDetails transport scope** *(optional installer grant)* | Cost skills (`costInUSD` is null without suitable access) | Set `MI_OBJECT_ID=<AGENT_MI_OBJECT_ID>` during installation. Subscription scopes remain subscription-scoped; RG scopes require the containing subscription because Consumption UsageDetails has no RG endpoint; management-group scopes remain management-group-scoped. |
+| **Cost Management Reader on each UsageDetails transport scope** *(optional installer grant)* | Cost skills (UsageDetails returns no cost values without suitable access) | Set `MI_OBJECT_ID=<AGENT_MI_OBJECT_ID>` during installation. Subscription scopes remain subscription-scoped; RG scopes require the containing subscription because Consumption UsageDetails has no RG endpoint; management-group scopes remain management-group-scoped. |
 | **Cost Management Contributor** *(write)* | Needed only by a human who chooses to run a generated budget application script. The pack, agent, and installer do not use or grant this role. | Grant out-of-band at the exact budget scope according to your governance process. |
 | **Log Analytics Reader** + `api.loganalytics.io` scope | Pod/namespace-level AKS rightsizing (Container Insights KQL) | Grant the role on the workspace and allowlist the scope for the MI |
 
@@ -128,7 +128,8 @@ not broaden the FinOps logical boundary. Old broad assignments are not revoked a
 ## Why read-only `az` is sufficient for cost
 
 Actual cost comes from the **modern Consumption UsageDetails REST GET**
-(`Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost`), which passes the
+(`Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost`, or `metric=ActualCost`
+for budget cash-flow derivation), which passes the
 read-only tool gate. The Cost Management **Query API is POST-based and stays blocked, but is not
 required** — line items are aggregated / detected client-side in the sandbox. (Legacy
 `az consumption usage list` returns null under MCA modern billing and is not used.)
@@ -366,7 +367,7 @@ inlining is needed). This is the cleaner long-term path.
 
 Before either manual skill install works end-to-end, grant **Reader** on the agent ARM resource and
 appropriate **Cost Management Reader** access on each UsageDetails transport scope (see Prerequisites above) —
-otherwise scope discovery fails or `costInUSD` is null and no cost data flows.
+otherwise scope discovery fails or UsageDetails rows carry no cost values. (Enterprise Agreement rows never carry `costInUSD`; the pack uses their billing-currency `cost` instead.)
 
 ## Validation status
 

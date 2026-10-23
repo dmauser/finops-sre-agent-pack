@@ -18,8 +18,8 @@ _spec.loader.exec_module(recommend)
 
 recommend_budgets = recommend.recommend_budgets
 
-# Anchor date-sensitive tests so run-rate math is deterministic (day 15 of a 30-day window).
-AS_OF = date(2026, 7, 15)
+# Anchor date-sensitive tests so run-rate math is deterministic (day 15 of 30-day June).
+AS_OF = date(2026, 6, 15)
 
 
 def _budget(name, amount, current, *, forecast=None, notifications=None,

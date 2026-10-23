@@ -28,13 +28,13 @@ _API_VERSION = "2023-05-01"
 _MANAGEMENT_ENDPOINT = "https://management.azure.com"
 _UNSET = object()
 
-_GRAIN_DAYS = {
-    "monthly": 30,
-    "billingmonth": 30,
-    "quarterly": 91,
-    "billingquarter": 91,
-    "annually": 365,
-    "billingannual": 365,
+_GRAIN_MONTHS = {
+    "monthly": 1,
+    "billingmonth": 1,
+    "quarterly": 3,
+    "billingquarter": 3,
+    "annually": 12,
+    "billingannual": 12,
 }
 _SUPPORTED_GRAINS = {"monthly": "Monthly", "quarterly": "Quarterly", "annually": "Annually"}
 _PRIOR_PERIOD_COUNTS = {"Monthly": 3, "Quarterly": 4, "Annually": 1}
@@ -944,21 +944,41 @@ def compare_budget_readback(proposal_or_body, readback):
 # ---------------------------------------------------------------------------
 # Backward-compatible recommendation API
 
+def _add_months(day, months):
+    total = day.year * 12 + (day.month - 1) + months
+    return date(total // 12, total % 12 + 1, 1)
+
+
 def _grain_fraction_elapsed(time_grain, time_period, as_of):
-    grain = str(time_grain or "monthly").strip().lower()
-    days_in_window = _GRAIN_DAYS.get(grain, 30)
+    """Elapsed fraction of the budget's current reset window, using real calendar lengths.
+
+    Mirrors finops-budget-governance: windows are anchored at timePeriod.startDate and step
+    by the grain's calendar months (clipped to endDate); calendar-aligned without a start.
+    """
+    months = _GRAIN_MONTHS.get(str(time_grain or "monthly").strip().lower())
+    if months is None:
+        return None
     start = _parse_date((time_period or {}).get("startDate"))
     end = _parse_date((time_period or {}).get("endDate"))
-    if start and end and 0 < (end - start).days <= days_in_window + 2:
-        days_in_window = (end - start).days
-        elapsed = (as_of - start).days + 1
-    elif grain in ("monthly", "billingmonth"):
-        elapsed = min(as_of.day, days_in_window)
+    if start is not None:
+        if as_of < start:
+            return None
+        anchor = date(start.year, start.month, 1)
     else:
-        elapsed = None
-    if elapsed is None or days_in_window <= 0:
+        anchor = date(as_of.year, ((as_of.month - 1) // months) * months + 1, 1)
+    elapsed_months = (as_of.year - anchor.year) * 12 + (as_of.month - anchor.month)
+    window_start = _add_months(anchor, (elapsed_months // months) * months)
+    window_end = _add_months(window_start, months)
+    if start is not None and start > window_start:
+        window_start = start
+    if end is not None:
+        if end <= window_start:
+            return None
+        window_end = min(window_end, end)
+    days_in_window = (window_end - window_start).days
+    if days_in_window <= 0:
         return None
-    elapsed = max(1, min(elapsed, days_in_window))
+    elapsed = max(1, min((as_of - window_start).days + 1, days_in_window))
     return elapsed / days_in_window
 
 

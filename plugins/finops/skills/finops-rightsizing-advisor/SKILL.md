@@ -166,14 +166,16 @@ This map is passed as `activity=` below.
 ### Step 4 — Pull per-resource monthly cost (optional but recommended)
 
 Reuse the `finops-cost-anomaly-detection` cost pull (modern Consumption UsageDetails GET, paginated) over
-the trailing ~30 days and aggregate `costInUSD` by resource id into `{resourceId: monthly_usd}`.
+the trailing ~30 days (`metric=AmortizedCost`, so reserved/savings-plan-covered VMs show their
+effective cost instead of $0) and aggregate the normalized `cost` from `prepare_usage_details`
+`included_rows` by resource id into `{resourceId: monthly_cost}`.
 In **modern billing the full ARM resource id is in `properties.instanceName`** (the `resourceId`
 field is null) — key on `instanceName` and fall back to `resourceId`. Ids are matched
 case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
 Start with the complete trailing window using `\$top=1000`, project only the needed fields with
-`--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD,
+`--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType,
 subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup,
 resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"`,
 and paginate every `nextLink`. If a request returns `413 Request Too Large`, retry with `\$top=100`,

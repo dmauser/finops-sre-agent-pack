@@ -123,7 +123,7 @@ disclose/stop on missing pages:
 ```bash
 az rest --method get \
   --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$filter=properties/usageStart ge '<START>' and properties/usageEnd le '<END>'&\$top=1000" \
-  --query "{value:value[].{id:id,date:properties.date,cost:properties.costInUSD,subscriptionId:properties.subscriptionId,resourceGroup:properties.resourceGroup,resourceId:properties.instanceName || properties.resourceId},nextLink:nextLink}" \
+  --query "{value:value[].{id:id,date:properties.date,cost:properties.costInUSD,billingCost:properties.costInBillingCurrency || properties.cost,billingCurrency:properties.billingCurrencyCode || properties.billingCurrency,chargeType:properties.chargeType,subscriptionId:properties.subscriptionId,resourceGroup:properties.resourceGroup,resourceId:properties.instanceName || properties.resourceId},nextLink:nextLink}" \
   -o json
 ```
 

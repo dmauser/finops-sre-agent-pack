@@ -272,8 +272,15 @@ def build_cost_overview_model(
     """Adapt a deterministic 30-day cost aggregation to the generic report model."""
 
     overview = _object(overview, "overview")
+    metric = _text(
+        _field(overview, "cost_metric", "costMetric"), "overview.cost_metric",
+        default="AmortizedCost",
+    ) or "AmortizedCost"
+    currency = _text(
+        _field(overview, "currency"), "overview.currency", default="USD"
+    ) or "USD"
     total = _decimal(
-        _field(overview, "total_usd", "totalUsd"), "overview.total_usd"
+        _field(overview, "total_usd", "totalUsd", "total_cost", "total"), "overview.total_usd"
     )
     daily = []
     for index, row in enumerate(
@@ -335,16 +342,16 @@ def build_cost_overview_model(
     )
     chart = {
         "type": "line",
-        "label": "Daily ActualCost (USD)",
+        "label": f"Daily {metric} ({currency})",
         "labels": [date for date, _ in daily],
         "values": [_chart_number(cost) for _, cost in daily],
     }
     return _model(
         "FinOps: Cost Overview",
-        "Daily-refreshed 30-day Azure ActualCost snapshot; recent UsageDetails can still be settling.",
+        f"Daily-refreshed 30-day Azure {metric} snapshot; recent UsageDetails can still be settling.",
         context,
         [
-            {"label": "30-day spend", "value": _money(total), "detail": "ActualCost"},
+            {"label": "30-day spend", "value": _money(total, currency), "detail": metric},
             {
                 "label": "Days represented",
                 "value": str(len(daily)),
@@ -362,14 +369,14 @@ def build_cost_overview_model(
                 "title": "Top services",
                 "description": "Service totals ranked by cost.",
                 "columns": ["Service", "Cost"],
-                "rows": [[name, _money(cost)] for name, cost in services],
+                "rows": [[name, _money(cost, currency)] for name, cost in services],
                 "emptyMessage": "No service cost rows were produced.",
             },
             {
                 "title": "Top resource groups",
                 "description": "Resource-group totals ranked by cost.",
                 "columns": ["Resource group", "Cost"],
-                "rows": [[name, _money(cost)] for name, cost in groups],
+                "rows": [[name, _money(cost, currency)] for name, cost in groups],
                 "emptyMessage": "No resource-group cost rows were produced.",
             },
         ],
@@ -630,6 +637,10 @@ def build_budget_status_model(
     )
 
     generated = []
+    if len({row["currency"] for row in budgets}) > 1:
+        generated.append(
+            "Budgets use more than one currency; portfolio totals are not summed across currencies."
+        )
     if has_run_rate:
         generated.append("Run-rate forecasts are estimates, not Azure forecastSpend.")
     if has_zero_spend:
@@ -656,15 +667,25 @@ def build_budget_status_model(
             chart_labels.append(f"{row['name']} — forecast")
             chart_values.append(_chart_number(row["forecast_pct"]))
 
+    summary_currency = _text(
+        summary.get("currency"), "result.summary.currency", default=""
+    )
+    if not summary_currency:
+        currencies = {row["currency"] for row in budgets}
+        summary_currency = currencies.pop() if len(currencies) == 1 else ""
+    mixed_currency = not summary_currency and bool(budgets)
     total_amount = _decimal(
-        summary.get("total_amount"), "result.summary.total_amount"
+        summary.get("total_amount"), "result.summary.total_amount", optional=mixed_currency
     )
     total_current = _decimal(
-        summary.get("total_current"), "result.summary.total_current"
+        summary.get("total_current"), "result.summary.total_current", optional=mixed_currency
     )
     total_forecast = _decimal(
-        summary.get("total_forecast"), "result.summary.total_forecast"
+        summary.get("total_forecast"), "result.summary.total_forecast", optional=mixed_currency
     )
+    if mixed_currency:
+        total_amount = total_current = total_forecast = None
+    summary_currency = summary_currency or "USD"
     over = _integer(summary.get("over_budget"), "result.summary.over_budget")
     forecast_over = _integer(
         summary.get("forecast_over"), "result.summary.forecast_over"
@@ -677,11 +698,11 @@ def build_budget_status_model(
         "Daily Azure budget-governance snapshot; currentSpend is updated asynchronously.",
         context,
         [
-            {"label": "Portfolio budget", "value": _money(total_amount), "detail": "Configured amount"},
-            {"label": "Current spend", "value": _money(total_current), "detail": "Azure currentSpend"},
+            {"label": "Portfolio budget", "value": _money(total_amount, summary_currency), "detail": "Configured amount" if not mixed_currency else "Mixed currencies"},
+            {"label": "Current spend", "value": _money(total_current, summary_currency), "detail": "Azure currentSpend"},
             {
                 "label": "Forecast spend",
-                "value": _money(total_forecast),
+                "value": _money(total_forecast, summary_currency),
                 "detail": "Azure or labeled run-rate forecast",
             },
             {
@@ -1299,7 +1320,7 @@ def build_ai_spend_model(
         "Weekly Azure OpenAI, Foundry, Cognitive Services, and Machine Learning cost snapshot.",
         context,
         [
-            {"label": "Total AI spend", "value": _money(total), "detail": "Monthly ActualCost"},
+            {"label": "Total AI spend", "value": _money(total), "detail": "Monthly UsageDetails cost"},
             {"label": "AI resources", "value": str(resource_count), "detail": "Attributed resources"},
             {"label": "Models", "value": str(model_count), "detail": "Token-meter models"},
             {"label": "Model-token spend", "value": _money(token_spend), "detail": "Kept separate from compute"},
@@ -1637,7 +1658,7 @@ def build_cost_vs_reliability_model(
         "Weekly view of Azure spend against transparent weighted reliability signals.",
         context,
         [
-            {"label": "Monthly spend", "value": _money(total), "detail": "ActualCost"},
+            {"label": "Monthly spend", "value": _money(total), "detail": "UsageDetails cost"},
             {"label": "Costed resources", "value": str(resource_count), "detail": "UsageDetails resources"},
             {"label": "Reliability signals", "value": str(signal_count), "detail": "Alerts, health, and Advisor HA"},
             {

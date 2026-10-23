@@ -113,12 +113,24 @@ logical analysis boundary.
 Use this canonical UsageDetails transport contract in every consuming FinOps skill:
 
 - Use GET on `/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails` with
-  `metric=ActualCost`, starting at `\$top=1000`; never use the POST Cost Management Query API.
+  `metric=AmortizedCost` for analysis (showback, anomaly, rightsizing, AI, reliability, cost
+  overview) so reservation/savings plan purchases are spread across the resources that used them
+  instead of appearing as one-time spikes with $0 covered usage. Use `metric=ActualCost` only when
+  matching invoice/budget cash flow (for example `finops-budget-editor`). Start at `\$top=1000`;
+  never use the POST Cost Management Query API.
 - Project the response envelope as `{value: value[].{...}, nextLink: nextLink}`. Keep only the
   fields needed by scope enforcement and the analysis, alias `cost` once from
-  `properties.costInUSD`, and resolve the analysis `resourceId` from
+  `properties.costInUSD`, and always add `billingCost: properties.costInBillingCurrency ||
+  properties.cost`, `billingCurrency: properties.billingCurrencyCode || properties.billingCurrency`,
+  and `chargeType: properties.chargeType`. Resolve the analysis `resourceId` from
   `properties.instanceName || properties.resourceId`. Include `subscriptionId` and
   `resourceGroup` whenever rows may need metadata-based attribution.
+- Legacy Enterprise Agreement rows have no `costInUSD`; their cost is `properties.cost` in the
+  billing currency. `prepare_usage_details` normalizes every row's `cost` deterministically: USD
+  when all rows carry `costInUSD`, otherwise billing currency for all rows (rejecting mixed billing
+  currencies). Report its `currency`, `cost_source`, `cost_metric`, and `warnings`. A null
+  `costInUSD` alone is **not** evidence of missing Cost Management Reader access — only
+  `missing_cost_count` (rows with no cost value at all) is.
 - If any request returns 413, retry that request with `\$top=100`, then `20`. Use verified,
   half-open `usageStart` date slices only if bounded pages still fail, and de-duplicate the
   combined rows.
@@ -147,7 +159,11 @@ coverage = prepare_usage_details(
 ```
 
 `prepare_usage_details` rejects restarted/mixed chains, requires the final `nextLink` to be
-retrieved, merges all rows, and calls `filter_usage_details`. Set `require_complete=False` only
+retrieved, merges all rows, normalizes each row's `cost`/`currency`, and calls
+`filter_usage_details`. It also returns `unused_commitment_cost` (AmortizedCost
+`UnusedReservation`/`UnusedSavingsPlan` rows — commitment waste that is not attributable to any
+resource; report it separately, never spread it onto RGs) and `purchase_cost` (one-time purchases
+in an ActualCost pull). Set `require_complete=False` only
 after all bounded-page and date-slice fallbacks fail; the returned `partial` flag and
 `remaining_next_link` must then be disclosed on every downstream total.
 

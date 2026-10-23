@@ -52,14 +52,15 @@ DEFAULT_ACTUAL_THRESHOLD = 100.0     # spent >= budget
 DEFAULT_FORECAST_THRESHOLD = 100.0   # forecast to exceed budget
 AT_RISK_PCT = 80.0                   # portfolio "at risk" band
 
-# Approximate number of days per time-grain window (used only if timePeriod can't bound it).
-_GRAIN_DAYS = {
-    "monthly": 30,
-    "billingmonth": 30,
-    "quarterly": 91,
-    "billingquarter": 91,
-    "annually": 365,
-    "billingannual": 365,
+# Calendar months per time-grain window. Windows are anchored at timePeriod.startDate (Azure
+# requires budgets to start on the first of a month) and use real day counts.
+_GRAIN_MONTHS = {
+    "monthly": 1,
+    "billingmonth": 1,
+    "quarterly": 3,
+    "billingquarter": 3,
+    "annually": 12,
+    "billingannual": 12,
 }
 
 
@@ -96,29 +97,59 @@ def _parse_date(text):
         return None
 
 
+def _add_months(day, months):
+    """Shift a first-of-month date by whole months."""
+    total = day.year * 12 + (day.month - 1) + months
+    return date(total // 12, total % 12 + 1, 1)
+
+
+def _grain_window(time_grain, time_period, as_of):
+    """Return the (start, end_exclusive) budget reset window that contains `as_of`.
+
+    Recurring windows are anchored at timePeriod.startDate (first of a month) and step by
+    the grain's calendar months, so July has 31 days, Q1 has 90/91, and a quarterly budget
+    starting in February resets Feb/May/Aug/Nov. Without a startDate the window aligns to the
+    calendar (month, quarter, or year). A window is clipped to timePeriod.endDate. Returns
+    None for unknown grains or when `as_of` is outside the budget's active period.
+    """
+    grain = str(time_grain or "monthly").strip().lower()
+    months = _GRAIN_MONTHS.get(grain)
+    if months is None:
+        return None
+    start = _parse_date((time_period or {}).get("startDate"))
+    end = _parse_date((time_period or {}).get("endDate"))
+    if start is not None:
+        anchor = date(start.year, start.month, 1)
+        if as_of < start:
+            return None
+    else:
+        anchor = date(as_of.year, ((as_of.month - 1) // months) * months + 1, 1)
+    elapsed_months = (as_of.year - anchor.year) * 12 + (as_of.month - anchor.month)
+    window_start = _add_months(anchor, (elapsed_months // months) * months)
+    window_end = _add_months(window_start, months)
+    if start is not None and start > window_start:
+        window_start = start
+    if end is not None:
+        if end <= window_start:
+            return None
+        window_end = min(window_end, end)
+    return window_start, window_end
+
+
 def _grain_fraction_elapsed(time_grain, time_period, as_of):
     """Fraction (0, 1] of the current time-grain window that has elapsed as of `as_of`.
 
-    Prefers the budget's own timePeriod when it bounds a single window; otherwise falls
-    back to an approximate day count for the grain. Returns None if it can't be computed.
+    Counts `as_of` as an elapsed day and uses the real calendar length of the window.
+    Returns None if the window can't be determined.
     """
-    grain = str(time_grain or "monthly").strip().lower()
-    days_in_window = _GRAIN_DAYS.get(grain, 30)
-
-    start = _parse_date((time_period or {}).get("startDate"))
-    end = _parse_date((time_period or {}).get("endDate"))
-    # Only trust timePeriod when it spans one grain window (not the multi-year active range
-    # Azure returns for a recurring Monthly budget).
-    if start and end and 0 < (end - start).days <= days_in_window + 2:
-        days_in_window = (end - start).days
-        elapsed = (as_of - start).days + 1
-    elif grain in ("monthly", "billingmonth"):
-        elapsed = min(as_of.day, days_in_window)
-    else:
-        elapsed = None
-
-    if elapsed is None or days_in_window <= 0:
+    window = _grain_window(time_grain, time_period, as_of)
+    if window is None:
         return None
+    window_start, window_end = window
+    days_in_window = (window_end - window_start).days
+    if days_in_window <= 0:
+        return None
+    elapsed = (as_of - window_start).days + 1
     elapsed = max(1, min(elapsed, days_in_window))
     return elapsed / days_in_window
 
@@ -151,8 +182,9 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
                       forecast_spend, forecast_source, pct_forecast, status,
                       breached_notifications: [{name, threshold, type}],
                       mtd_crosscheck: {agent_mtd, azure_current, delta, delta_pct} | None } ... ],
-        "summary": {total_amount, total_current, total_forecast,
-                    over_budget, forecast_over, at_risk, on_track},
+        "summary": {currency, total_amount, total_current, total_forecast,
+                    totals_by_currency, over_budget, forecast_over, at_risk, on_track},
+                   # total_* are None when budgets span currencies (see totals_by_currency)
         "gates": [ {name, reason, status} ... ],   # budgets needing a human decision
         "no_budgets": bool,                          # True + guidance when nothing is defined
       }
@@ -169,7 +201,9 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
             "budget_count": 0,
             "budgets": [],
             "summary": {
+                "currency": None,
                 "total_amount": 0.0, "total_current": 0.0, "total_forecast": 0.0,
+                "totals_by_currency": {},
                 "over_budget": 0, "forecast_over": 0, "at_risk": 0, "on_track": 0,
             },
             "gates": [],
@@ -178,7 +212,7 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
 
     evaluated = []
     tally = defaultdict(int)
-    total_amount = total_current = total_forecast = 0.0
+    totals_by_currency = {}
 
     for b in budgets:
         props = b.get("properties") or {}
@@ -223,9 +257,19 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
         })
 
         tally[status] += 1
-        total_amount += amount or 0.0
-        total_current += current
-        total_forecast += forecast or 0.0
+        bucket = totals_by_currency.setdefault(
+            currency, {"total_amount": 0.0, "total_current": 0.0, "total_forecast": 0.0}
+        )
+        bucket["total_amount"] += amount or 0.0
+        bucket["total_current"] += current
+        bucket["total_forecast"] += forecast or 0.0
+
+    for bucket in totals_by_currency.values():
+        for key in bucket:
+            bucket[key] = round(bucket[key], 2)
+    # Never add amounts in different currencies: portfolio totals are only reported when every
+    # budget shares one currency; otherwise use totals_by_currency.
+    single = next(iter(totals_by_currency.values())) if len(totals_by_currency) == 1 else None
 
     evaluated.sort(key=lambda e: _severity(e["status"]), reverse=True)
     gates = [
@@ -238,9 +282,11 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
         "budget_count": len(evaluated),
         "budgets": evaluated,
         "summary": {
-            "total_amount": round(total_amount, 2),
-            "total_current": round(total_current, 2),
-            "total_forecast": round(total_forecast, 2),
+            "currency": next(iter(totals_by_currency)) if single else None,
+            "total_amount": single["total_amount"] if single else None,
+            "total_current": single["total_current"] if single else None,
+            "total_forecast": single["total_forecast"] if single else None,
+            "totals_by_currency": dict(sorted(totals_by_currency.items())),
             "over_budget": tally["over_budget"],
             "forecast_over": tally["forecast_over"],
             "at_risk": tally["at_risk"],

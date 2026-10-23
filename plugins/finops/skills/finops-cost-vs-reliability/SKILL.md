@@ -15,7 +15,7 @@ For cost spikes use `finops-cost-anomaly-detection`; for concrete savings recomm
 
 ## Required access
 
-- **Cost Management Reader** on the subscription (`costInUSD` is null without it). **Reader** for
+- **Cost Management Reader** on the subscription (UsageDetails returns no cost values without it; EA rows use billing-currency `cost`). **Reader** for
   Azure Monitor Alerts, Resource Health, Advisor, and optional Activity Log pulls.
 - Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
   available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
@@ -62,13 +62,14 @@ complete trailing ~30-day result, using this skill's needed fields:
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000" \
-  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, pretaxCost: properties.pretaxCost, consumedService: properties.consumedService, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"
+  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&\$top=1000" \
+  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType, pretaxCost: properties.pretaxCost, consumedService: properties.consumedService, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"
 ```
 
 In modern billing the full ARM resource id is usually in `properties.instanceName`; the projection
-falls back to `properties.resourceId`. If `costInUSD` is null, the bundled core uses the same fallback
-order as the other skills: `cost` / `costInUSD` / `pretaxCost`. If the pull cannot complete after all
+falls back to `properties.resourceId`. `prepare_usage_details` normalizes `cost` (USD, or the
+billing-currency cost for Enterprise Agreement rows that have no `costInUSD`); the bundled core
+then reads `cost` / `costInUSD` / `pretaxCost`. If the pull cannot complete after all
 fallbacks, keep the partial rows but label the report totals **partial — cost pull truncated**.
 
 Pass persisted page envelopes through `finops-managed-scope`'s

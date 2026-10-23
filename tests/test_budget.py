@@ -18,7 +18,7 @@ _spec.loader.exec_module(budget)
 
 evaluate_budgets = budget.evaluate_budgets
 
-# Anchor every date-sensitive test so run-rate math is deterministic (day 15 of a 30-day window).
+# Anchor every date-sensitive test so run-rate math is deterministic (day 15 of 31-day July).
 AS_OF = date(2026, 7, 15)
 
 
@@ -76,12 +76,74 @@ def test_native_forecast_preferred_over_run_rate():
 
 
 def test_run_rate_fallback_when_forecast_absent():
-    # No forecastSpend: day 15 of a 30-day month, 600 spent -> forecast ~1200 -> forecast_over.
+    # No forecastSpend: day 15 of 31-day July, 600 spent -> 600 / (15/31) = 1240 -> forecast_over.
     b = _budget("m", 1000.0, 600.0)
     e = evaluate_budgets([b], as_of=AS_OF)["budgets"][0]
     assert e["forecast_source"] == "run-rate"
-    assert e["forecast_spend"] == 1200.0
+    assert e["forecast_spend"] == 1240.0
     assert e["status"] == "forecast_over"
+
+
+def _with_period(b, start, end="2030-01-01T00:00:00Z"):
+    b["properties"]["timePeriod"] = {"startDate": start, "endDate": end}
+    return b
+
+
+def test_run_rate_uses_real_february_length():
+    b = _with_period(_budget("m", 1000.0, 140.0), "2026-01-01T00:00:00Z")
+    e = evaluate_budgets([b], as_of=date(2026, 2, 14))["budgets"][0]
+    assert e["forecast_spend"] == 280.0  # 14 of 28 days
+
+
+def test_quarterly_recurring_budget_gets_run_rate_forecast():
+    # Calendar Q3 2026 = Jul 1..Sep 30 (92 days); Aug 15 is day 46 -> half elapsed.
+    b = _with_period(_budget("q", 3000.0, 1600.0, time_grain="Quarterly"),
+                     "2026-01-01T00:00:00Z")
+    e = evaluate_budgets([b], as_of=date(2026, 8, 15))["budgets"][0]
+    assert e["forecast_source"] == "run-rate"
+    assert e["forecast_spend"] == 3200.0
+    assert e["status"] == "forecast_over"
+
+
+def test_quarterly_window_anchored_at_start_month():
+    # Starts in Feb -> windows Feb-Apr, May-Jul, Aug-Oct. Aug 1 is day 1 of 92.
+    b = _with_period(_budget("q", 3000.0, 10.0, time_grain="Quarterly"),
+                     "2026-02-01T00:00:00Z")
+    e = evaluate_budgets([b], as_of=date(2026, 8, 1))["budgets"][0]
+    assert e["forecast_spend"] == 920.0
+
+
+def test_annual_recurring_budget_gets_run_rate_forecast():
+    b = _with_period(_budget("y", 12000.0, 3650.0, time_grain="Annually"),
+                     "2025-01-01T00:00:00Z")
+    e = evaluate_budgets([b], as_of=date(2026, 4, 10))["budgets"][0]  # day 100 of 365
+    assert e["forecast_source"] == "run-rate"
+    assert e["forecast_spend"] == 13322.5
+
+
+def test_budget_not_started_has_no_run_rate():
+    b = _with_period(_budget("m", 1000.0, 0.0), "2026-09-01T00:00:00Z")
+    e = evaluate_budgets([b], as_of=AS_OF)["budgets"][0]
+    assert e["forecast_source"] == "unavailable"
+
+
+def test_summary_totals_single_currency():
+    out = evaluate_budgets([_budget("a", 100.0, 10.0, forecast=20.0),
+                            _budget("b", 200.0, 30.0, forecast=40.0)], as_of=AS_OF)
+    s = out["summary"]
+    assert s["currency"] == "USD"
+    assert (s["total_amount"], s["total_current"], s["total_forecast"]) == (300.0, 40.0, 60.0)
+
+
+def test_summary_never_sums_across_currencies():
+    eur = _budget("eur", 500.0, 50.0, forecast=100.0)
+    eur["properties"]["currentSpend"]["unit"] = "EUR"
+    out = evaluate_budgets([_budget("usd", 100.0, 10.0, forecast=20.0), eur], as_of=AS_OF)
+    s = out["summary"]
+    assert s["currency"] is None
+    assert s["total_amount"] is None and s["total_current"] is None
+    assert s["totals_by_currency"]["EUR"]["total_amount"] == 500.0
+    assert s["totals_by_currency"]["USD"]["total_current"] == 10.0
 
 
 def test_at_risk_band_by_actual_pct():
