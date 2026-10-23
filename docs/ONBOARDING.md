@@ -28,7 +28,7 @@ against it: the script detects the existing agent and adds only what is missing.
 | Your RBAC | **SRE Agent Administrator** on the agent (data-plane access) |
 | Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 14 skills |
 | Subagent `finops-investigator` | Instructions, exactly five read-only tools, the FinOps skills plus `live_report_authoring` |
-| Scheduled task | `FinOps: Cost Optimization (Live Report, Weekly)`, Mondays 09:00 UTC, **Autonomous**, response agent `finops-investigator` |
+| Scheduled task | `FinOps: Cost Optimization (Live Report, Weekly)`, Mondays 17:00 UTC, **Autonomous**, response agent `finops-investigator` |
 | Live Report | `FinOps: Cost Optimization` in Operations Hub. Created on the task's first run and refreshed on every run after that |
 
 > **A Live Report refreshes only while its scheduled task exists and is Active.** A report saved
@@ -82,7 +82,7 @@ kept, and phase 2 only upserts.
 | `-g` / `RESOURCE_GROUP` | `SRE-FinOps-Demo` | Resource group, created if missing |
 | `-s` / `SUBSCRIPTION_ID` | current `az` subscription | Target subscription |
 | `--tasks` / `TASK_IDS` | `cost-optimization-report` | Comma-separated task ids, or `all` for all 12 tasks (each saves a Live Report; anomaly alerts and the monthly review also email) |
-| `COST_OPT_CRON` | `0 9 * * 1` | Cost Optimization schedule (UTC) |
+| `COST_OPT_CRON` | `0 17 * * 1` (manifest default) | Cost Optimization schedule (UTC). Other tasks use their own `*_CRON` variables; see `task-manifest.json` |
 | `ALERT_EMAIL`, `GITHUB_REPO` | unset | Email delivery and change correlation for the email-review tasks |
 | `GRANT_COMMITMENT_READERS=1` | off | Also grant tenant-level Reservations Reader and Savings plan Reader (needs elevated access) |
 | `REPO_SLUG` | `dmauser/finops-sre-agent-pack` | Install the plugin from your fork |
@@ -183,7 +183,7 @@ To fill in the **Form** tab field by field instead, see
    ```bash
    TASK_AGENT_NAME=finops-investigator \
    TASK_IDS=cost-optimization-report \
-   COST_OPT_CRON="0 9 * * 1" \
+   COST_OPT_CRON="0 17 * * 1" \
    AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/SRE-FinOps-Demo/providers/Microsoft.App/agents/sre-finops-demo \
    python3 plugins/finops/scheduled-tasks/render_tasks.py api > finops-tasks.json
    ```
@@ -194,7 +194,7 @@ To fill in the **Form** tab field by field instead, see
    |---|---|
    | Task name | `FinOps: Cost Optimization (Live Report, Weekly)` |
    | Instructions | the rendered `agentPrompt`, pasted unedited |
-   | Schedule | custom cron `0 9 * * 1` (UTC) |
+   | Schedule | custom cron `0 17 * * 1` (UTC) |
    | Response custom agent | `finops-investigator` |
    | Agent autonomy level | **Autonomous**. The portal defaults to Review, which stalls unattended runs |
    | Date range / Run limit | leave unset |

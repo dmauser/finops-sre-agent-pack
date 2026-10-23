@@ -10,8 +10,16 @@
 - **Sample reports**: `docs/samples/generate_samples.py` builds all 12 Live Reports from fictional
   "Contoso" data through the real skill helpers and renderer. The README gallery now shows these
   samples (`docs/samples/*.html`, `docs/images/reports/*.png`) instead of live customer data.
+- **Install details**: the README lists the four resources `deploy.sh` creates, every role it
+  grants (including the non-read Monitoring Contributor), optional settings, first-run and
+  troubleshooting notes, and `az` commands that grant optional roles to the agent's managed
+  identity. The GitHub Copilot install prompt now retries a failed clone, targets the managed
+  identity, and restores the default `az` subscription.
 
 ### Fixed
+
+- **Cost Optimization schedule**: `deploy.sh` no longer forces `COST_OPT_CRON` to Mondays 09:00
+  UTC. The task now uses the manifest default (Mondays 17:00 UTC) that the README documents.
 
 - **UsageDetails chain isolation**: `find_usage_tool_output_chains` gains `after_timestamp` (ignore
   `tmp/ToolOutputs` files from earlier scheduled-task executions) and `request_url_prefix` (never

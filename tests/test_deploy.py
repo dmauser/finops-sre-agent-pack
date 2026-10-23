@@ -78,7 +78,9 @@ def test_deploy_script_defaults_and_handoff():
     assert 'DEFAULT_AGENT_NAME="sre-finops-demo"' in script
     assert 'DEFAULT_LOCATION="centralus"' in script
     assert 'DEFAULT_RESOURCE_GROUP="SRE-FinOps-Demo"' in script
-    assert 'DEFAULT_COST_OPT_CRON="0 9 * * 1"' in script
+    # The manifest defaultCron is the single schedule source; deploy.sh must not override it.
+    assert 'DEFAULT_COST_OPT_CRON' not in script
+    assert 'COST_OPT_CRON="${COST_OPT_CRON:-}"' in script
     # install-api.sh treats AGENT_NAME as a task-agent alias; it must not leak in.
     assert "env -u AGENT_NAME" in script
     assert 'PLUGIN_SOURCE="${PLUGIN_SOURCE:-direct}"' in script

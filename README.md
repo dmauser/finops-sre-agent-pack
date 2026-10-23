@@ -261,10 +261,16 @@ Install the Azure SRE Agent FinOps pack from https://github.com/dmauser/finops-s
 5. Run plugins/finops/deploy/deploy.sh with --dry-run first, show me the plan, and wait for my
    approval. Then run it for real, for example:
      ./plugins/finops/deploy/deploy.sh -n <agent> -l <region> -g <rg> [--tasks all]
-6. Tell me which roles from the README "Permissions" table I still need to grant myself
-   (Reader on managed scopes, Reservations/Savings plan Reader, Carbon Optimization Reader),
-   with the exact az commands, but do not run role assignments without my approval.
-7. Summarize what was installed and how to open the Live Reports in the SRE Agent portal.
+   If the run fails because the service cannot clone the repository, re-run the same command
+   once; deploy.sh is idempotent.
+6. List the optional roles from the README "Permissions" table that are still missing
+   (Reservations Reader, Savings plan Reader, Carbon Optimization Reader). They go to the
+   agent's managed identity, not to my user: give the exact az commands using its principal ID
+   with --assignee-principal-type ServicePrincipal, but do not run them without my approval.
+7. Summarize what was installed, the roles that were granted, and each task's schedule. Remind
+   me that no Live Report exists until a task runs, and explain how to use Run now and open
+   Operations Hub > Live Reports in the SRE Agent portal.
+8. If you changed my default az subscription, switch it back.
 
 Do not modify or delete any existing Azure resources other than the SRE Agent you create or
 the agent I name.
@@ -284,6 +290,35 @@ It prompts only for the agent name, region, and resource group:
 ```
 
 To add the pack to an agent that already exists, run `deploy.sh -n <agent> -g <rg>`.
+
+A new deployment creates exactly four resources in the resource group: the SRE Agent, a
+user-assigned managed identity, a Log Analytics workspace, and Application Insights. The agent's
+managed scope is the whole subscription. The script also grants the roles marked *deploy.sh* in
+[Permissions](#permissions), including **SRE Agent Administrator** for you on the agent.
+
+Optional settings (environment variables):
+
+| Variable | Effect when unset |
+|---|---|
+| `ALERT_EMAIL` | No alert emails; findings appear only in task results and Live Reports |
+| `GITHUB_REPO` | Cost changes are not correlated with GitHub commits and deployments |
+| `COST_OPT_CRON` and the other `*_CRON` variables | Each task uses its schedule from [Live Reports](#live-reports) |
+| `GRANT_COMMITMENT_READERS=1` | Reservations Reader and Savings plan Reader are not granted (needs tenant-level access) |
+| `REPO_SLUG`, `GITHUB_PAT` | The plugin installs from this public repository |
+
+#### First run and troubleshooting
+
+- **No reports yet?** A Live Report is created on its task's first run. In
+  [sre.azure.com](https://sre.azure.com), open the agent, go to **Scheduled tasks**, choose a FinOps
+  task, and select **Run now**. Then open **Operations Hub → Live Reports**.
+- **Plugin clone failed.** The agent service occasionally fails to clone the repository on the first
+  attempt. Re-run the same `deploy.sh` command; it never re-provisions an existing agent and only
+  upserts the configuration.
+- **Data-plane 403 right after deployment.** The SRE Agent Administrator role can take a few minutes
+  to propagate. The script retries automatically; if it still fails, wait and re-run.
+- **`/agent finops-investigator` is missing in chat.** Start a new chat or hard-refresh the page.
+- **Default subscription changed.** Passing `-s` runs `az account set`. Switch back afterward with
+  `az account set --subscription <id>`.
 
 ### Manual (portal)
 
@@ -316,13 +351,32 @@ all configuration options. `SUB_ID` is deprecated and ignored for scheduled scop
 
 ### Permissions
 
+All roles except SRE Agent Administrator are assigned to the **agent's managed identity**, not to
+your user account.
+
 | Role | Scope | Granted by | Needed for |
 |---|---|---|---|
-| Reader | The agent ARM resource | Installer (always) | Reading `managedResources` |
-| Cost Management Reader | Managed subscriptions (set `MI_OBJECT_ID`) | Installer (optional) | UsageDetails, budgets, forecasts |
-| Reader | Managed scopes | You | Resource Graph, Advisor, Monitor, Resource Health |
-| Reservations Reader, Savings plan Reader | Tenant (`/providers/Microsoft.Capacity`, `/providers/Microsoft.BillingBenefits`) | You | Existing commitment inventory and utilization |
+| Reader | The agent ARM resource | deploy.sh, installer (always) | Reading `managedResources` |
+| Reader, Log Analytics Reader | Subscription | deploy.sh | Resource Graph, Advisor, Monitor, Resource Health, logs |
+| Cost Management Reader | Managed subscriptions | deploy.sh; installer when `MI_OBJECT_ID` is set | UsageDetails, budgets, forecasts |
+| Monitoring Contributor | Subscription and the agent's resource group | deploy.sh | Standard SRE Agent monitoring setup. The only non-read role; the FinOps pack never uses it to write |
+| SRE Agent Administrator | The agent (assigned to **you**) | deploy.sh | Data-plane access to configure the agent |
+| Reader | Managed scopes | You (existing agents) | Resource Graph, Advisor, Monitor, Resource Health |
+| Reservations Reader, Savings plan Reader | Tenant (`/providers/Microsoft.Capacity`, `/providers/Microsoft.BillingBenefits`) | You, or `GRANT_COMMITMENT_READERS=1` | Existing commitment inventory and utilization |
 | Carbon Optimization Reader | Managed subscriptions | You | Carbon emissions reports |
+
+Grant the optional roles to the managed identity's principal ID (shown in the portal under the
+identity, or with `az identity show --query principalId`):
+
+```bash
+MI=<managed-identity-principal-id>
+az role assignment create --assignee-object-id $MI --assignee-principal-type ServicePrincipal \
+  --role "Reservations Reader" --scope /providers/Microsoft.Capacity
+az role assignment create --assignee-object-id $MI --assignee-principal-type ServicePrincipal \
+  --role "Savings plan Reader" --scope /providers/Microsoft.BillingBenefits
+az role assignment create --assignee-object-id $MI --assignee-principal-type ServicePrincipal \
+  --role "Carbon Optimization Reader" --scope /subscriptions/<sub-id>
+```
 
 For a resource-group boundary, Azure exposes UsageDetails only at the subscription endpoint, so Cost
 Management Reader is granted at that subscription while the pack still reports only the managed
