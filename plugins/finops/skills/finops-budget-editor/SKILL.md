@@ -40,6 +40,18 @@ scheduled mutations, or filtered budget creation.
 The generated script runs under the human's Azure CLI identity. The pack does not grant RBAC. The
 human needs Cost Management Contributor (or equivalent budget write permission) at the target scope.
 
+When recommending a budget, follow Microsoft's budgeting guidance:
+
+- Base the amount on prior months.
+- Pair an Actual alert with a Forecasted alert.
+- Suggest a `Quarterly` or `Annually` budget alongside the monthly one when the business plans spend
+  on those horizons.
+- Mention that budgets count one-time purchases. A consumption-only budget needs a
+  `ChargeType = Usage` filter, which this planner does not create; a human adds it in the portal.
+
+Source: https://learn.microsoft.com/en-us/cloud-computing/finops/framework/quantify/budgeting.
+Last reviewed: 2026-10-23.
+
 ## Procedure
 
 ### Step 0 — Resolve the managed boundary

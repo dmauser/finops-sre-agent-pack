@@ -195,3 +195,36 @@ Read-only only. Do not use any write/POST Azure operations.
 - Recommendations use a 30-day look-back by default; seasonal workloads may need `Last60Days`.
 - Thresholds (`low_utilization_pct`, `expiry_window_days`, `min_monthly_savings`) are keyword
   arguments to `analyze_commitments`.
+
+## Microsoft rate optimization guidance
+
+Use these when explaining recommendations. They are advice only; the agent never purchases,
+exchanges, refunds or renews.
+
+- **Start small, but start.** Begin with high-confidence commitments that cover stable usage, then
+  expand. Don't delay commitments on usage that is already stable.
+- **Reservations** save up to 72% compared with pay-as-you-go. They fit stable usage of a specific
+  SKU in a specific region.
+- **Savings plans** save up to 65% and fit usage that shifts across SKUs or regions. They are
+  available only for EA, MCA and MPA billing accounts. They cannot be cancelled or refunded.
+- **Savings plan for databases** covers SQL Database and SQL Managed Instance, PostgreSQL, MySQL,
+  Cosmos DB, and SQL Server on Azure VMs or Arc. Mention it when database spend dominates.
+- **Fixing under-utilization:**
+  - widen the reservation scope (to shared or management group);
+  - enable instance size flexibility;
+  - exchange for a better-fitting reservation.
+
+  Reservation refunds are limited to USD 50,000 in a rolling 12-month window.
+- **Operate commitments:**
+  - recommend utilization alerts;
+  - recommend enabling auto-renew for commitments that are still needed;
+  - recommend central purchasing and shared scope so benefits apply across subscriptions.
+- **Azure Hybrid Benefit** applies to Windows Server, RHEL/SLES and SQL Server licenses. Dev/Test
+  subscriptions already use dev/test pricing and are excluded. Entitlement must be verified.
+- The 70% coverage and 95% utilization targets in `finops-kpi-scorecard` come from FinOps Foundation
+  practice, not from Microsoft.
+
+Sources: https://learn.microsoft.com/en-us/cloud-computing/finops/framework/optimize/rates ·
+https://learn.microsoft.com/en-us/azure/cost-management-billing/savings-plan/savings-plan-compute-overview ·
+https://learn.microsoft.com/en-us/azure/cost-management-billing/reservations/save-compute-costs-reservations
+Last reviewed: 2026-10-23

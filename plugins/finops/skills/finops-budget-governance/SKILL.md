@@ -143,3 +143,29 @@ After reporting, refresh the shared Live Report `FinOps: Budget Status` so the r
 2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
 3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_budget_status_model(evaluate_budgets_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, "finops-budget-status.html")`.
 4. SaveReport the static file with `allowedTools: []`, name `FinOps: Budget Status`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
+
+## How Azure evaluates budgets (Microsoft guidance)
+
+Use these when explaining a budget's status or recommending changes:
+
+- **What a budget counts.** Budgets evaluate ActualCost, which includes one-time purchases such as
+  reservations, savings plans and Marketplace. A purchase month can therefore breach a usage budget.
+  To budget consumption only, recommend a budget filtered to `Publisher type = Azure` and
+  `Charge type = Usage`. A human creates it in the portal; `finops-budget-editor` only plans
+  scope-wide creates.
+- **When data arrives.** Cost data refreshes every 8–24 hours, and budgets are evaluated about once
+  every 24 hours. Alerts are not real time.
+- **New subscriptions.** A budget on a new subscription may not have data for up to 48 hours. This
+  is why a new budget can show `current_spend: 0`.
+- **Management groups.** Budgets on management groups do not support subscriptions with more than
+  one billing currency.
+- **Thresholds and actions.** A budget supports up to five notification thresholds, each between
+  0.01% and 1000% of the amount. Action groups work only on subscription and resource-group budgets.
+  Recommend both an **actual** and a **forecasted** threshold.
+- **Planning horizon.** Start with any budget and alert rather than none, base the amount on prior
+  months, and add **quarterly or annual** budgets for spend that is planned on those horizons.
+  `finops-budget-editor` plans all three time grains.
+
+Sources: https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-create-budgets ·
+https://learn.microsoft.com/en-us/cloud-computing/finops/framework/quantify/budgeting
+Last reviewed: 2026-10-23

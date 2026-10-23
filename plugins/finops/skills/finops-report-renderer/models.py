@@ -2599,6 +2599,35 @@ def build_monthly_review_model(
         "critical" if counts["fail"] else "warning" if counts["warn"] else "good" if known else "neutral"
     )
     governance = [row for row in kpis if "governance" in row[1].casefold()]
+    practice_sections = []
+    if "next_iteration_focus" in scorecard:
+        focus = _strings(scorecard.get("next_iteration_focus"), "review.scorecard.next_iteration_focus")
+        practice_sections.append(
+            {
+                "title": "Next FinOps iteration",
+                "description": "Capabilities with failing, then warning, KPIs: pick these as the "
+                "focus of the next iteration and set 1-3 goals for each.",
+                "columns": ["Order", "Capability"],
+                "rows": [[str(i + 1), name] for i, name in enumerate(focus)],
+                "emptyMessage": "Every scored KPI passes; keep the current focus.",
+            }
+        )
+    if "benchmarks" in scorecard:
+        bench_rows = []
+        for index, row in enumerate(_objects(scorecard.get("benchmarks"), "review.scorecard.benchmarks")):
+            prefix = f"review.scorecard.benchmarks[{index}]"
+            unit = _text(row.get("unit"), f"{prefix}.unit")
+            shown = _kpi_value(row.get("value"), unit, f"{prefix}.value")
+            bench_rows.append([_text(row.get("name"), f"{prefix}.name"), shown])
+        practice_sections.append(
+            {
+                "title": "Benchmarks",
+                "description": "Context values without a Microsoft-published target; not scored.",
+                "columns": ["Benchmark", "Value"],
+                "rows": bench_rows,
+                "emptyMessage": "No benchmark inputs were supplied.",
+            }
+        )
     sre_sections = []
     if review.get("sre_agents") is not None:
         _, sre_sections = _sre_agent_rollup_sections(review["sre_agents"], "review.sre_agents")
@@ -2697,6 +2726,7 @@ def build_monthly_review_model(
                 "emptyMessage": "No KPI actions are open.",
             },
         ]
+        + practice_sections
         + sre_sections,
     )
 

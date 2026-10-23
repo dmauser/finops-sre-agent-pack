@@ -149,6 +149,8 @@ def _healthy_inputs():
         forecast={"available": True, "month_end_forecast": 10000, "run_rate_30d": 10000},
         unit_costs=[{"change_pct": -3}, {"change_pct": -1}],
         managed_scopes=[f"{sub}/resourceGroups/app"],
+        prior_forecast=9500,
+        actual_spend=10000,
         as_of=date(2025, 7, 1),
     )
 
@@ -201,3 +203,37 @@ def test_scorecard_target_override_and_no_managed_scopes():
 def test_scope_coverage_requires_arm_prefix_boundary():
     assert sc._scope_covered("/subscriptions/000/resourceGroups/app", ["/Subscriptions/000"])
     assert not sc._scope_covered("/subscriptions/0001", ["/subscriptions/000"])
+
+
+def test_daily_costs_can_exclude_purchases():
+    rows = [
+        {"date": "2025-06-01", "cost": 10, "chargeType": "Usage"},
+        {"date": "2025-06-01", "cost": 500, "chargeType": "Purchase"},
+    ]
+    assert sc.daily_costs(rows) == {date(2025, 6, 1): 510.0}
+    assert sc.daily_costs(rows, exclude_purchases=True) == {date(2025, 6, 1): 10.0}
+
+
+@pytest.mark.parametrize("prior,status", [(9500, "pass"), (8500, "warn"), (7000, "fail")])
+def test_scorecard_forecast_accuracy_bands(prior, status):
+    inputs = _healthy_inputs()
+    inputs["prior_forecast"] = prior
+    card = sc.kpi_scorecard(**inputs)
+    kpi = next(k for k in card["kpis"] if k["id"] == "forecast_accuracy_pct")
+    assert kpi["status"] == status
+    assert kpi["detail"] == {"prior_forecast_usd": prior, "actual_usd": 10000.0}
+
+
+def test_scorecard_benchmarks_and_next_iteration_focus():
+    inputs = _healthy_inputs()
+    inputs["anomalies"] = [{"impact_usd": 40, "direction": "up"}, {"impact_usd": 9, "direction": "down"}]
+    inputs["advisor_cost_score"] = 72.5
+    inputs["allocation"]["untagged_usd"] = 2000
+    inputs["prior_forecast"] = 7000
+    card = sc.kpi_scorecard(**inputs)
+    bench = {b["id"]: b["value"] for b in card["benchmarks"]}
+    assert bench == {"anomaly_count": 1, "anomaly_impact_usd": 40.0, "advisor_cost_score": 72.5}
+    assert card["next_iteration_focus"][:2] == ["Allocation", "Forecasting"]
+    assert len(card["next_iteration_focus"]) <= 3
+    healthy = sc.kpi_scorecard(**_healthy_inputs())
+    assert healthy["next_iteration_focus"] == []

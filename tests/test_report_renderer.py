@@ -971,3 +971,15 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
     bare = models.build_monthly_review_model({"scorecard": {}}, refreshed_at=REFRESHED_AT)
     assert "Forecast was not supplied." in bare["warnings"]
     assert "Month-over-month variance was not supplied." in bare["warnings"]
+    assert "Next FinOps iteration" not in [s["title"] for s in bare["sections"]]
+
+    practice = models.build_monthly_review_model(
+        {"scorecard": {"next_iteration_focus": ["Allocation", "Forecasting"],
+                       "benchmarks": [{"id": "anomaly_impact_usd", "name": "Impact",
+                                       "value": 40, "unit": "USD"},
+                                      {"id": "anomaly_count", "name": "Count",
+                                       "value": 1, "unit": "count"}]}},
+        refreshed_at=REFRESHED_AT)
+    sections = {s["title"]: s for s in practice["sections"]}
+    assert sections["Next FinOps iteration"]["rows"] == [["1", "Allocation"], ["2", "Forecasting"]]
+    assert sections["Benchmarks"]["rows"][0] == ["Impact", "$40.00"]

@@ -116,3 +116,9 @@ write/POST Azure operations.
 - Add `finops-rightsizing-advisor` savings to this skill's savings for the total usage-optimization
   opportunity; the rule sets are disjoint by design.
 - Tag the owner on each finding (`tags`) when present so cleanup can be routed (accountability).
+- Microsoft recommends cleaning up unused resources as a first, low-risk optimization step. Pair it
+  with an environment tag and auto-shutdown for non-production. The service-specific Advisor
+  checks are listed in `finops-rightsizing-advisor` under "Microsoft workload optimization
+  guidance". Source:
+  https://learn.microsoft.com/en-us/cloud-computing/finops/framework/optimize/workloads.
+  Last reviewed: 2026-10-23.

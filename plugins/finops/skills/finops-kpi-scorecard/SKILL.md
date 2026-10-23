@@ -12,10 +12,15 @@ on top of what the other skills already found:
 - **Unit economics**: cost per 1,000 requests, per order, per active user, per GB processed, and
   whether it is improving while spend grows.
 - **KPIs and governance checks**: allocation %, untagged spend, tag hygiene, budget coverage of
-  every managed scope, budgets over, forecast vs budget, commitment coverage and utilization,
-  addressable waste %, anomaly impact %, unit-cost change; with pass/warn/fail and a maturity
-  indication (crawl/walk/run).
+  every managed scope, budgets over, forecast vs budget, forecast accuracy, commitment coverage and
+  utilization, addressable waste %, anomaly impact %, unit-cost change; with pass/warn/fail and a
+  maturity indication (crawl/walk/run). Unscored benchmarks are also reported: anomaly count and
+  impact, and the Azure Advisor Cost score.
 - **Accountability**: one action list per owner/team from waste, rightsizing and anomaly findings.
+- **Practice operations**: the next FinOps iteration's focus, assessment cadence, steering
+  committee, onboarding, education and chargeback sequencing. See
+  [microsoft-finops-practice.md](microsoft-finops-practice.md) and load it with
+  `read_skill_file(skill_name="finops-kpi-scorecard", file_path="microsoft-finops-practice.md")`.
 
 It is the analysis layer of the monthly FinOps review scheduled task. It never changes Azure.
 
@@ -57,6 +62,8 @@ Run, or reuse from the same conversation turn, the results of:
 | `rightsizing` | `finops-rightsizing-advisor` → `recommend_rightsizing(...)` | addressable waste |
 | `anomalies` | `finops-cost-anomaly-detection` → `detect_anomalies(...)` | anomaly impact |
 | `rows` | prepared AmortizedCost UsageDetails, trailing **60 days** | forecast |
+| `prior_forecast`, `actual_spend` | last month's saved `month_end_forecast` and that month's actual cost | forecast accuracy |
+| `advisor_cost_score` | `GET .../providers/Microsoft.Advisor/advisorScore/Cost` (see the practice guide) | benchmark |
 
 Every input is optional; a missing input makes its KPI `unknown` rather than failing. Say which
 inputs were missing in the report.
@@ -99,7 +106,9 @@ unit = unit_economics(cost_30d, requests_30d, unit_name="request", per=1000,
                       previous_cost=cost_prev_30d, previous_units=requests_prev_30d)
 card = kpi_scorecard(allocation=allocation, budgets=budgets, commitments=commitments,
                      waste=waste, rightsizing=rightsizing, anomalies=anomalies,
-                     forecast=forecast, unit_costs=unit, managed_scopes=effective_scopes)
+                     forecast=forecast, unit_costs=unit, managed_scopes=effective_scopes,
+                     prior_forecast=last_month_forecast, actual_spend=last_month_actual,
+                     advisor_cost_score=advisor_cost_score)
 owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, source="optimization")
 ```
 
@@ -111,7 +120,14 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
 - `kpi_scorecard` defaults follow common FinOps targets (allocated ≥ 90%, untagged ≤ 5%,
   every managed scope budgeted, commitment utilization ≥ 95%, waste ≤ 5% of spend). Override with
   `targets={"commitment_coverage_pct": {"target": 60}}` when the customer has agreed different
-  targets, and say so.
+  targets, and say so. The commitment coverage and utilization targets come from FinOps Foundation
+  practice; Microsoft's documentation does not publish numeric targets for them.
+- `forecast_accuracy_pct` is `|prior_forecast - actual| / actual`. It passes below 12% and warns up
+  to 20%, following Microsoft's forecasting guidance (under 12% is optimized, 12–20% acceptable).
+  The previous Monthly Review's month-end forecast is the prior forecast; if it is not available,
+  the KPI is `unknown`.
+- `next_iteration_focus` lists up to 3 capabilities with failing, then warning, KPIs. Present them
+  as candidates for the next FinOps iteration (see the practice guide).
 - `route_to_owners` checks the `owner`, `team`, `costCenter`, `service`, `app` tags (case-insensitive,
   first match wins). Unrouted findings are themselves a tag-governance action.
 
@@ -120,7 +136,8 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
 1. **Forecast**: month-to-date, month-end forecast with its band, budget status, next month,
    confidence and method. Never present the forecast as a single exact number.
 2. **Scorecard**: one table row per KPI (value, target, status), the score and the maturity
-   indication, and the ordered `actions` list (fail before warn).
+   indication, the ordered `actions` list (fail before warn), `benchmarks`, and
+   `next_iteration_focus`.
 3. **Governance checks**: `governance_checks` (tag policy and budget coverage) with
    `uncovered_budget_scopes` listed by name.
 4. **Unit economics**: cost per unit, change vs previous period, and the interpretation. A rising
@@ -169,5 +186,18 @@ features configured by the customer; this skill and `finops-investigator` stay r
 - Forecasts are statistical, not commitments; with less than 14 days of history confidence is low.
 - Exclude credits from a usage forecast with `daily_costs(rows, include_credits=False)` when the
   customer wants the usage trend rather than the invoice.
+- Microsoft's forecasting guidance:
+  - Exclude one-time purchases (`ChargeType=Purchase`) from the usage trend with
+    `daily_costs(rows, exclude_purchases=True)`, and forecast them separately.
+  - Use a look-back period at least as long as the forecast horizon. The 60-day default covers the
+    month-end and next-month horizons; widen `history_days` for longer horizons.
+  - Review forecasts monthly or quarterly.
+
+  Source: https://learn.microsoft.com/en-us/cloud-computing/finops/framework/quantify/forecasting.
+  Last reviewed: 2026-10-23.
+- Unit economics: cost that cannot be mapped to a unit is shared overhead. Report it as overhead;
+  do not spread it silently.
+  Source: https://learn.microsoft.com/en-us/cloud-computing/finops/framework/quantify/unit-economics.
+  Last reviewed: 2026-10-23.
 - KPI values are as good as their inputs: a scorecard built from a partial UsageDetails pull must be
   labeled partial.

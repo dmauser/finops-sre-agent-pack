@@ -17,6 +17,21 @@
 
 ### Added
 
+- **Microsoft FinOps alignment** (audited against learn.microsoft.com/cloud-computing/finops,
+  last reviewed 2026-10-23):
+  - **`finops-carbon-optimization`** (15th skill): Azure Carbon Optimization emissions for the
+    managed scope — trend, month-over-month change, top items, largest increases, and access gaps.
+    The report API is a query POST, so `carbon.py` builds validated requests and a human-run
+    read-only script, then analyzes the saved JSON.
+  - `finops-kpi-scorecard`: forecast accuracy KPI (`prior_forecast`), `exclude_purchases`, Advisor
+    cost score input, benchmarks, next-iteration focus, and `microsoft-finops-practice.md`
+    (iterations, maturity, practice operations, onboarding, governance, chargeback).
+  - `finops-cost-allocation`: `microsoft-allocation-guidance.md` (hierarchy, tag inheritance,
+    allocation rules, audit-first tag policy).
+  - Microsoft guidance sections in anomaly detection (native anomaly alerts, ARG change
+    correlation), budget governance/editor, commitment advisor, rightsizing, waste finder, and
+    managed scope (Exports and FinOps hubs at scale).
+  - README "Microsoft FinOps alignment" domain map and complementary Microsoft tools.
 - **`finops-sre-agent`** (14th skill): FinOps for Azure SRE Agent. Attributes Azure Agent Unit (AAU)
   spend per agent, splits always-on flow (4 AAU/agent-hour until deletion) from active flow using
   each agent's read-only `dailyUsageDetails`, breaks active flow down by source (chat, scheduled

@@ -153,7 +153,9 @@ dimension grouping: `tag_inventory`, coverage, and `untagged_resources` still re
 **own** tags (so the tagging backlog stays honest); untagged entries filled by inheritance carry
 `inherited_owner` / `inherited_from` (`resourceGroup` | `subscription`). With `inherited_tags=None`
 (default) results are unchanged. Report inherited spend as "allocated via inheritance" so owners know
-it was not tagged at the resource.
+it was not tagged at the resource. Also recommend turning on native Cost Management tag inheritance
+(EA/MCA/MPA only; current month only; 8–24 h). The details are in
+[microsoft-allocation-guidance.md](microsoft-allocation-guidance.md).
 
 #### Optional: shared-cost split (`shared`)
 
@@ -212,6 +214,24 @@ fully-loaded columns plus any undistributed amount. Recommend tagging actions on
 cost was partial (Step 1 truncation), say so at the top. If everything is allocated and there is no
 untagged spend, say so in one line.
 
+## Microsoft allocation guidance
+
+Load [microsoft-allocation-guidance.md](microsoft-allocation-guidance.md) with
+`read_skill_file(skill_name="finops-cost-allocation", file_path="microsoft-allocation-guidance.md")`
+when the user asks how to improve allocation, tagging or chargeback. It covers:
+
+- the allocation strategy: top-down, prototype small, a list of common shared services, and the
+  `cm-resource-parent` tag;
+- native tag inheritance;
+- **cost allocation rules**, whose reassignments do not appear in the UsageDetails data this skill
+  reads;
+- audit-first Azure Policy tag enforcement, with a read-only Resource Graph compliance check;
+- showback before chargeback;
+- the FinOps hubs limitation for pay-as-you-go (MOSA) subscriptions.
+
+Source: https://learn.microsoft.com/en-us/cloud-computing/finops/framework/understand/allocation.
+Last reviewed: 2026-10-23.
+
 ## Data source: UsageDetails today, FOCUS exports at scale
 
 This pack uses the **Consumption UsageDetails** API (read-only GET) today. For large estates —
@@ -242,3 +262,7 @@ Guidance (not something the current read-only tool set does automatically):
   may need that access configured first.
 - Keep managed-scope filtering: filter export rows by `ResourceId` / subscription against the
   effective scope exactly as for UsageDetails.
+- **Pay-as-you-go (MOSA) caveat:** FinOps hubs v0.2 and later need FOCUS exports, which the hubs
+  documentation says are not available for MOSA subscriptions. For those, stay on UsageDetails.
+  Source: https://learn.microsoft.com/en-us/cloud-computing/finops/toolkit/hubs/finops-hubs-overview.
+  Last reviewed: 2026-10-23.

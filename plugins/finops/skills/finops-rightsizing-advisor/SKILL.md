@@ -265,3 +265,31 @@ After reporting, refresh the shared Live Report `FinOps: Rightsizing Savings` so
   flow through as `advisor` findings; utilization validation applies only to VM CPU today.
 - The 50% one-tier savings estimate and the CPU thresholds are tunable via `recommend_rightsizing`
   keyword args if a subscription needs a different risk posture.
+
+## Microsoft workload optimization guidance
+
+- **How Advisor flags a VM.** Advisor recommends shutdown or resize when CPU is at most 5% and
+  network traffic is at most 7 MB on at least 4 of the last 7 days. It needs at least 14 days of
+  data. A VM that Advisor does not flag may still be idle by this pack's rules, and the reverse is
+  also true. Recommend that owners subscribe to Advisor alerts for new cost recommendations.
+- **Non-production levers.** Recommend the following before resizing production:
+  - tag the environment (for example `Env=dev`);
+  - auto-shutdown outside working hours;
+  - autoscale instead of fixed capacity;
+  - serverless or auto-pause tiers;
+  - Spot VMs for interruptible work;
+  - avoiding cross-region data transfer.
+- **Service-specific Advisor checks.** Advisor also covers:
+  - Log Analytics: Basic logs and commitment tiers;
+  - AKS: cost analysis, the vertical pod autoscaler, and Spot node pools;
+  - Azure Data Explorer clusters;
+  - Synapse auto-pause;
+  - Premium disk snapshots that can move to Standard.
+
+  These arrive as Step 1 `advisor` findings.
+- **Complementary tools.** The FinOps toolkit Cost optimization workbook and the Azure Optimization
+  Engine give a broader inventory view. Recommend them to customers who want a standing dashboard.
+
+Sources: https://learn.microsoft.com/en-us/cloud-computing/finops/framework/optimize/workloads ·
+https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-opt-recommendations
+Last reviewed: 2026-10-23

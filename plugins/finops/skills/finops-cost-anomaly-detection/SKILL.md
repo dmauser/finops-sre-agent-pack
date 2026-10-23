@@ -166,6 +166,20 @@ Interpreting the new signals:
   elevated day (today − 2). A non-sustained spike is more likely a burst, batch job, or retry storm.
 - **Credits** from `summarize_credits` are not anomalies; mention them so a net-cost view that
   includes refunds does not look like a drop.
+- **Resource changes (who changed what):** Azure Resource Graph keeps the last 14 days of resource
+  changes. Microsoft recommends it for finding the cause of unexpected charges:
+
+  ```bash
+  az graph query --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> -o json -q "resourcechanges
+  | extend t = todatetime(properties.changeAttributes.timestamp), rid = tostring(properties.targetResourceId)
+  | where t between (datetime(<T-1d>) .. datetime(<T+1d>)) and rid startswith '<SCOPE_ID_LOWER>'
+  | project t, rid, changeType = tostring(properties.changeType),
+            changedBy = tostring(properties.changeAttributes.changedBy), changes = properties.changes
+  | order by t desc"
+  ```
+
+  Source: https://learn.microsoft.com/en-us/azure/cost-management-billing/understand/analyze-unexpected-charges.
+  Last reviewed: 2026-10-23.
 
 ### Step 4 — Report
 
@@ -174,6 +188,39 @@ date, kind, direction, sustained, candidate cause(s) with links}`, plus a one-li
 summary and, when `summarize_credits` found any, a separate credits/refunds line. In scheduled mode,
 **report only when `detect_anomalies` returns a non-empty list**; otherwise emit a short "no
 anomalies" line.
+
+## Microsoft anomaly management guidance
+
+This skill complements Microsoft's native anomaly detection; it does not replace it.
+
+- **Native anomaly alerts.** Cost Management detects anomalies for each subscription with a
+  WaveNet-based model trained on the last 60 days of usage. It evaluates about 36 hours after the
+  end of each UTC day. Microsoft recommends subscribing to anomaly alerts on every subscription.
+  Check what exists with a read-only GET for each effective subscription:
+
+  ```bash
+  az rest --method get --url "https://management.azure.com/subscriptions/<SUB>/providers/Microsoft.CostManagement/scheduledActions?api-version=2023-11-01" \
+    --query "value[?kind=='InsightAlert'].{name:name, status:properties.status, to:properties.notification.to}" -o json
+  ```
+
+  If a subscription has no `InsightAlert`, recommend creating one in Cost Analysis → Alerts, or
+  with the scheduled actions API. Creating one needs Cost Management Contributor; the agent does
+  not create it. Native anomaly alerts are not available in Azure Government.
+- **Change types.** Microsoft classifies a cost change as **new** (a cost that did not exist before),
+  **removed** (a cost that stopped), or **changed** (a cost that went up or down). This skill maps
+  to them as follows:
+  - `kind: new_spend` → new
+  - a drop to zero → removed
+  - other spikes and drops → changed
+- **KPIs** to track over time, in the Monthly Review: number of anomalies, their cost impact, time
+  to detect, time to resolve, and false positives. `finops-kpi-scorecard` reports the anomaly count
+  and impact under `benchmarks`, and scores `anomaly_impact_pct`.
+- Combine automated detection with a periodic manual review of cost trends. The weekly and monthly
+  Live Reports provide that review.
+
+Sources: https://learn.microsoft.com/en-us/cloud-computing/finops/framework/understand/anomalies ·
+https://learn.microsoft.com/en-us/azure/cost-management-billing/understand/analyze-unexpected-charges
+Last reviewed: 2026-10-23
 
 ## Delivery modes
 

@@ -19,6 +19,7 @@ SKILL_NAMES = {
     "finops-cost-optimization-report",
     "finops-for-ai",
     "finops-sre-agent",
+    "finops-carbon-optimization",
     "finops-cost-vs-reliability",
 }
 

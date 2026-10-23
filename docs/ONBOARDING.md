@@ -1,6 +1,6 @@
 # Onboarding the FinOps SRE Agent
 
-Two supported paths produce the same result: an Azure SRE Agent with the fourteen FinOps skills
+Two supported paths produce the same result: an Azure SRE Agent with the fifteen FinOps skills
 (plugin), the read-only `finops-investigator` subagent, a scheduled task that keeps a Live Report
 fresh, and read-only cost RBAC.
 

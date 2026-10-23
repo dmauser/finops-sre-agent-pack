@@ -251,6 +251,24 @@ versions.
 - Enterprise Agreement subscriptions honour the date filters and expose `billingPeriods`; this
   section does not apply to them.
 
+**Cost data at scale (Microsoft guidance).** This pack reads UsageDetails because the agent's
+tools are read-only and have no storage. Microsoft's guidance for larger estates is different:
+
+- Use **Cost Management Exports** (scheduled to storage) for large or recurring datasets.
+- Use the **Cost Details API** for small, on-demand reports.
+- Move to Exports when a scope produces more than about 2 GB a month. One million rows is roughly
+  1 GB.
+- Query any one scope at most once a day; data refreshes about every four hours.
+- Split large pulls by date range and child scope.
+- Cache invoiced months, which no longer change.
+
+Recommend Exports, or FinOps hubs (about USD 120 a month plus about USD 10 for each USD 1M of spend
+monitored), when a scope repeatedly hits paging or throttling limits. Also recommend them when
+the customer needs the history that section 5 cannot provide. Cost allocation rule reassignments
+do not appear in UsageDetails; see `finops-cost-allocation`.
+Source: https://learn.microsoft.com/en-us/azure/cost-management-billing/automate/usage-details-best-practices.
+Last reviewed: 2026-10-23.
+
 ## 6. Pass every non-usage input through a deterministic file
 
 Do not rebuild analysis inputs by scanning `tmp/ToolOutputs/` with heuristics (checking for

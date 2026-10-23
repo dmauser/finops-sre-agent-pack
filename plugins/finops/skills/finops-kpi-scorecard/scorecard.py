@@ -38,6 +38,8 @@ DEFAULT_TARGETS = {
     "waste_pct": {"target": 5.0, "warn": 10.0, "higher_is_better": False},
     "anomaly_impact_pct": {"target": 1.0, "warn": 5.0, "higher_is_better": False},
     "unit_cost_change_pct": {"target": 0.0, "warn": 10.0, "higher_is_better": False},
+    # Microsoft FinOps forecasting guidance: variance under 12% is optimized, 12-20% acceptable.
+    "forecast_accuracy_pct": {"target": 12.0, "warn": 20.0, "higher_is_better": False},
 }
 
 OWNER_TAG_KEYS = ("owner", "team", "costCenter", "service", "app")
@@ -69,15 +71,20 @@ def _pct(part, whole):
 # Forecast
 # --------------------------------------------------------------------------------------------
 
-def daily_costs(rows, *, include_credits: bool = True):
+def daily_costs(rows, *, include_credits: bool = True, exclude_purchases: bool = False):
     """Sum prepared UsageDetails rows into {date: cost}. Rows without a date or cost are skipped.
 
     With include_credits=False negative rows (refunds, credits) are ignored, which is what a usage
     forecast wants; the default keeps them so totals reconcile with the invoice.
+    With exclude_purchases=True rows whose chargeType is "Purchase" (reservation, savings plan and
+    Marketplace purchases) are dropped, so one-time purchases do not skew a usage trend; forecast
+    them separately, as Microsoft's forecasting guidance recommends.
     """
     totals = defaultdict(float)
     for row in rows or ():
         if not isinstance(row, dict) or not row.get("date"):
+            continue
+        if exclude_purchases and str(row.get("chargeType") or "").strip().casefold() == "purchase":
             continue
         cost = _num(row.get("cost"))
         if cost is None or (cost < 0 and not include_credits):
@@ -435,6 +442,9 @@ def kpi_scorecard(
     managed_scopes=None,
     targets=None,
     as_of=None,
+    prior_forecast=None,
+    actual_spend=None,
+    advisor_cost_score=None,
 ):
     """Score the FinOps practice against KPI targets, including tag and budget governance checks.
 
@@ -449,10 +459,18 @@ def kpi_scorecard(
     managed_scopes validated managed scopes; a scope with no budget at or above it fails the
                    budget-coverage governance check
     targets        overrides for DEFAULT_TARGETS, e.g. {"allocated_pct": {"target": 95}}
+    prior_forecast the month-end forecast made for a closed period (e.g. last month's
+                   month_end_forecast); with actual_spend it scores forecast accuracy
+    actual_spend   the actual cost of that same closed period
+    advisor_cost_score  Azure Advisor Cost score (0-100) for the scope; reported as a benchmark,
+                   not scored, because Microsoft publishes no target for it
 
     Each KPI: {id, name, capability, value, unit, target, higher_is_better, status, action,
     detail}. status is pass | warn | fail | unknown (source not provided). The maturity indication
     is "run" when >= 80% of known KPIs pass, "walk" when >= 50%, otherwise "crawl".
+    `benchmarks` lists unscored context values (anomaly count and impact, Advisor cost score).
+    `next_iteration_focus` lists up to 3 capabilities with failing, then warning, KPIs: the
+    candidates for the next FinOps iteration (Microsoft recommends a small set per iteration).
     """
     rules = {k: dict(v) for k, v in DEFAULT_TARGETS.items()}
     for key, override in (targets or {}).items():
@@ -533,6 +551,16 @@ def kpi_scorecard(
     add("forecast_vs_budget_pct", "Month-end forecast as % of budget", "Forecasting", fvb, "%",
         "Forecast exceeds budget: act on the top optimization priorities now or re-plan the budget.")
 
+    accuracy = None
+    prior, actual = _num(prior_forecast), _num(actual_spend)
+    if prior is not None and actual:
+        accuracy = round(100.0 * abs(prior - actual) / abs(actual), 1)
+    add("forecast_accuracy_pct", "Forecast variance vs actual (closed period)", "Forecasting",
+        accuracy, "%",
+        "Forecast variance is high: exclude one-time purchases from the usage trend, match the "
+        "look-back period to the forecast horizon, and record planned changes in the forecast.",
+        {"prior_forecast_usd": prior, "actual_usd": actual} if accuracy is not None else None)
+
     # Rate optimization
     head = (commitments or {}).get("headline") or {}
     add("commitment_coverage_pct", "Eligible compute covered by commitments", "Rate optimization",
@@ -593,6 +621,22 @@ def kpi_scorecard(
         for k in sorted(kpis, key=lambda k: severity.get(k["status"], 2))
         if k["action"]
     ]
+    focus = []
+    for k in sorted(kpis, key=lambda k: severity.get(k["status"], 2)):
+        capability = k["capability"].split(" (")[0]
+        if k["status"] in severity and capability not in focus:
+            focus.append(capability)
+    benchmarks = []
+    if anomalies is not None:
+        ups = [a for a in anomalies if a.get("direction", "up") == "up"]
+        benchmarks.append({"id": "anomaly_count", "name": "Cost anomalies detected (increases)",
+                           "value": len(ups), "unit": "count"})
+        benchmarks.append({"id": "anomaly_impact_usd", "name": "Cost impact of anomalies",
+                           "value": round(impact or 0.0, 2), "unit": "USD"})
+    score_value = _num(advisor_cost_score)
+    if score_value is not None:
+        benchmarks.append({"id": "advisor_cost_score", "name": "Azure Advisor Cost score",
+                           "value": round(score_value, 1), "unit": "%"})
     if isinstance(as_of, date):
         as_of_text = as_of.isoformat()
     else:
@@ -611,4 +655,6 @@ def kpi_scorecard(
         ],
         "uncovered_budget_scopes": uncovered,
         "actions": actions,
+        "next_iteration_focus": focus[:3],
+        "benchmarks": benchmarks,
     }

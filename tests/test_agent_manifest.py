@@ -22,6 +22,7 @@ FINOPS_SKILLS = {
     "finops-cost-optimization-report",
     "finops-for-ai",
     "finops-sre-agent",
+    "finops-carbon-optimization",
     "finops-cost-vs-reliability",
     "finops-report-renderer",
 }
@@ -218,7 +219,7 @@ def test_installer_rejects_manifest_missing_required_finops_skill():
     result = _run_manifest_builder(manifest)
 
     assert result.returncode != 0
-    assert "all fourteen FinOps skills" in result.stderr
+    assert "all fifteen FinOps skills" in result.stderr
 
 
 def test_installer_rejects_custom_manifest_with_azure_write_tool():
