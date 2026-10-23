@@ -160,32 +160,32 @@ Schedules, names, and model tiers can be overridden at install time; see
 These reports use **fictional sample data** for a made-up "Contoso" estate; no customer data is shown.
 [`docs/samples/generate_samples.py`](docs/samples/generate_samples.py) passes the sample data through the
 same skill helpers and renderer that the scheduled tasks use, so each report looks exactly like a live one.
-Click an image to view it full size, or open the HTML in [`docs/samples/`](docs/samples/).
+Click an image to view it full size, or **View as HTML** to open the interactive report. Source files are in [`docs/samples/`](docs/samples/).
 
 <table>
   <tr>
-    <td width="50%"><b>Cost Overview</b><br/><a href="docs/images/reports/cost-overview.png"><img src="docs/images/reports/cost-overview.png" alt="Cost Overview Live Report"/></a></td>
-    <td width="50%"><b>Monthly Review (KPI scorecard)</b><br/><a href="docs/images/reports/monthly-review.png"><img src="docs/images/reports/monthly-review.png" alt="Monthly Review Live Report"/></a></td>
+    <td width="50%"><b>Cost Overview</b><br/><a href="docs/images/reports/cost-overview.png"><img src="docs/images/reports/cost-overview.png" alt="Cost Overview Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/cost-overview.html">View as HTML</a></td>
+    <td width="50%"><b>Monthly Review (KPI scorecard)</b><br/><a href="docs/images/reports/monthly-review.png"><img src="docs/images/reports/monthly-review.png" alt="Monthly Review Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/monthly-review.html">View as HTML</a></td>
   </tr>
   <tr>
-    <td><b>Cost Optimization</b><br/><a href="docs/images/reports/cost-optimization.png"><img src="docs/images/reports/cost-optimization.png" alt="Cost Optimization Live Report"/></a></td>
-    <td><b>Cost Anomalies</b><br/><a href="docs/images/reports/cost-anomalies.png"><img src="docs/images/reports/cost-anomalies.png" alt="Cost Anomalies Live Report"/></a></td>
+    <td><b>Cost Optimization</b><br/><a href="docs/images/reports/cost-optimization.png"><img src="docs/images/reports/cost-optimization.png" alt="Cost Optimization Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/cost-optimization.html">View as HTML</a></td>
+    <td><b>Cost Anomalies</b><br/><a href="docs/images/reports/cost-anomalies.png"><img src="docs/images/reports/cost-anomalies.png" alt="Cost Anomalies Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/cost-anomalies.html">View as HTML</a></td>
   </tr>
   <tr>
-    <td><b>Budget Status</b><br/><a href="docs/images/reports/budget-status.png"><img src="docs/images/reports/budget-status.png" alt="Budget Status Live Report"/></a></td>
-    <td><b>Cost Allocation</b><br/><a href="docs/images/reports/cost-allocation.png"><img src="docs/images/reports/cost-allocation.png" alt="Cost Allocation Live Report"/></a></td>
+    <td><b>Budget Status</b><br/><a href="docs/images/reports/budget-status.png"><img src="docs/images/reports/budget-status.png" alt="Budget Status Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/budget-status.html">View as HTML</a></td>
+    <td><b>Cost Allocation</b><br/><a href="docs/images/reports/cost-allocation.png"><img src="docs/images/reports/cost-allocation.png" alt="Cost Allocation Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/cost-allocation.html">View as HTML</a></td>
   </tr>
   <tr>
-    <td><b>Rightsizing Savings</b><br/><a href="docs/images/reports/rightsizing-savings.png"><img src="docs/images/reports/rightsizing-savings.png" alt="Rightsizing Savings Live Report"/></a></td>
-    <td><b>Waste Cleanup</b><br/><a href="docs/images/reports/waste-cleanup.png"><img src="docs/images/reports/waste-cleanup.png" alt="Waste Cleanup Live Report"/></a></td>
+    <td><b>Rightsizing Savings</b><br/><a href="docs/images/reports/rightsizing-savings.png"><img src="docs/images/reports/rightsizing-savings.png" alt="Rightsizing Savings Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/rightsizing-savings.html">View as HTML</a></td>
+    <td><b>Waste Cleanup</b><br/><a href="docs/images/reports/waste-cleanup.png"><img src="docs/images/reports/waste-cleanup.png" alt="Waste Cleanup Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/waste-cleanup.html">View as HTML</a></td>
   </tr>
   <tr>
-    <td><b>Commitments</b><br/><a href="docs/images/reports/commitments.png"><img src="docs/images/reports/commitments.png" alt="Commitments Live Report"/></a></td>
-    <td><b>SRE Agent Spend</b><br/><a href="docs/images/reports/sre-agent-spend.png"><img src="docs/images/reports/sre-agent-spend.png" alt="SRE Agent Spend Live Report"/></a></td>
+    <td><b>Commitments</b><br/><a href="docs/images/reports/commitments.png"><img src="docs/images/reports/commitments.png" alt="Commitments Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/commitments.html">View as HTML</a></td>
+    <td><b>SRE Agent Spend</b><br/><a href="docs/images/reports/sre-agent-spend.png"><img src="docs/images/reports/sre-agent-spend.png" alt="SRE Agent Spend Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/sre-agent-spend.html">View as HTML</a></td>
   </tr>
   <tr>
-    <td><b>Cost vs Reliability</b><br/><a href="docs/images/reports/cost-vs-reliability.png"><img src="docs/images/reports/cost-vs-reliability.png" alt="Cost vs Reliability Live Report"/></a></td>
-    <td><b>AI Spend</b><br/><a href="docs/images/reports/ai-spend.png"><img src="docs/images/reports/ai-spend.png" alt="AI Spend Live Report"/></a></td>
+    <td><b>Cost vs Reliability</b><br/><a href="docs/images/reports/cost-vs-reliability.png"><img src="docs/images/reports/cost-vs-reliability.png" alt="Cost vs Reliability Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/cost-vs-reliability.html">View as HTML</a></td>
+    <td><b>AI Spend</b><br/><a href="docs/images/reports/ai-spend.png"><img src="docs/images/reports/ai-spend.png" alt="AI Spend Live Report"/></a><br/><a href="https://raw.githack.com/dmauser/finops-sre-agent-pack/main/docs/samples/ai-spend.html">View as HTML</a></td>
   </tr>
 </table>
 
