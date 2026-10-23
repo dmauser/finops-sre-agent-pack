@@ -162,7 +162,7 @@ if (chartCanvas && window.Chart) {{
         tension: 0.25
       }}]
     }},
-    options: {{responsive: true, maintainAspectRatio: false}}
+    options: {{responsive: true, maintainAspectRatio: false, animation: false}}
   }});
 }}
 </script>"""
