@@ -2,4 +2,10 @@ Run `finops-cost-anomaly-detection` for every effective scope. Read its SKILL.md
 
 {{ANOMALY_CORRELATION}}
 
+Then always author and SAVE the static snapshot Live Report `{{REPORT_NAME}}`, even when nothing is anomalous, reusing the same data pull:
+
+1. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+2. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_cost_anomaly_model({"date": <analyzed date>, "anomalies": <detect_anomalies output with each anomaly's `cause` or `candidate_causes`>, "credits": <summarize_credits output>, "daily": <[{"date", "cost_usd"}] daily usage totals>}, ...)`; do not generically construct a model or write/edit HTML. Run `write_report(model, "finops-cost-anomalies.html")`.
+3. SaveReport the generated static file with `allowedTools: []`, name `{{REPORT_NAME}}`, and the reused `reportId` when present. Make no view-time calls. A report failure must not suppress the anomaly result below.
+
 If no anomalies are found, return exactly `No cost anomalies detected for <date>.` and do not email. Otherwise return the skill's dollar-ranked anomaly table with candidate-cause evidence, then {{ANOMALY_DELIVERY}}

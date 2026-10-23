@@ -1030,3 +1030,177 @@ def test_table_cells_keep_numbers_whole_and_wrap_long_ids():
 def test_threshold_cells_stay_on_one_line():
     assert renderer._cell("\u2265 100.0%").startswith('<td class="num">')
 
+
+
+def _skill(name, folder, filename):
+    path = PATH.parents[1] / folder / filename
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_alloc = _skill("report_allocate", "finops-cost-allocation", "allocate.py")
+_waste = _skill("report_waste", "finops-waste-finder", "waste.py")
+_commit = _skill("report_commit", "finops-commitment-advisor", "commit.py")
+_detect = _skill("report_detect", "finops-cost-anomaly-detection", "detect.py")
+_AS_OF = __import__("datetime").date(2026, 8, 1)
+_RG = "/subscriptions/sub/resourceGroups/managed/providers"
+
+
+def _allocation():
+    costs = {f"{_RG}/Microsoft.Compute/virtualMachines/vm{i}": 10.0 * i for i in range(1, 6)}
+    tags = {
+        f"{_RG}/Microsoft.Compute/virtualMachines/vm1": {"team": EVIL},
+        f"{_RG}/Microsoft.Compute/virtualMachines/vm2": {"Team": "platform"},
+        f"{_RG}/Microsoft.Compute/virtualMachines/vm3": {"team": "Platform"},
+    }
+    result = _alloc.allocate_costs(costs, tags)
+    result["month_over_month"] = _alloc.month_over_month(
+        costs, {k: v / 2 for k, v in costs.items()}, dimension_tags=tags
+    )
+    return result
+
+
+def _waste_result():
+    rows = [
+        {
+            "id": f"{_RG}/Microsoft.Network/publicIPAddresses/{EVIL}",
+            "type": "microsoft.network/publicipaddresses",
+            "sku": {"name": "Standard"},
+            "properties": {},
+        },
+        {
+            "id": f"{_RG}/Microsoft.Compute/disks/d1",
+            "type": "microsoft.compute/disks",
+            "sku": {"name": "Premium_LRS"},
+            "properties": {"diskState": "Unattached", "diskSizeGB": 128},
+        },
+    ]
+    return _waste.find_waste(rows, costs={rows[0]["id"]: 3.65}, as_of=_AS_OF)
+
+
+def _commitments():
+    rec = {
+        "location": "eastus",
+        "properties": {
+            "subscriptionId": "sub",
+            "resourceType": "virtualmachines",
+            "skuName": EVIL,
+            "scope": "Single",
+            "lookBackPeriod": "Last30Days",
+            "term": "P3Y",
+            "recommendedQuantity": 1,
+            "netSavings": 3600.0,
+        },
+    }
+    return _commit.analyze_commitments(
+        reservation_recommendations=[rec],
+        currency="USD",
+        as_of=_AS_OF,
+        inventory_unavailable=["reservation", "savings_plan"],
+    )
+
+
+def _anomalies():
+    start = _AS_OF - __import__("datetime").timedelta(days=31)
+    items = []
+    for offset in range(32):
+        day = (start + __import__("datetime").timedelta(days=offset)).isoformat()
+        items.append(
+            {
+                "date": day,
+                "cost": 10.0 + (90.0 if offset == 30 else 0.0),
+                "meterCategory": EVIL,
+                "resourceGroup": "managed",
+                "resourceId": f"{_RG}/Microsoft.Compute/virtualMachines/vm1",
+            }
+        )
+    items.append(
+        {
+            "date": items[30]["date"],
+            "cost": -5.0,
+            "meterCategory": "Credit",
+            "resourceGroup": "managed",
+            "resourceId": "",
+        }
+    )
+    daily = {}
+    for item in items:
+        if item["cost"] > 0:
+            daily[item["date"]] = daily.get(item["date"], 0.0) + item["cost"]
+    return {
+        "date": items[30]["date"],
+        "anomalies": _detect.detect_anomalies(items),
+        "credits": _detect.summarize_credits(items),
+        "daily": [{"date": d, "cost_usd": v} for d, v in sorted(daily.items())],
+    }
+
+
+NEW_ADAPTERS = [
+    (models.build_cost_allocation_model, _allocation, "FinOps: Cost Allocation"),
+    (models.build_waste_model, _waste_result, "FinOps: Waste Cleanup"),
+    (models.build_commitment_model, _commitments, "FinOps: Commitments"),
+    (models.build_cost_anomaly_model, _anomalies, "FinOps: Cost Anomalies"),
+]
+
+
+@pytest.mark.parametrize(("builder", "fixture", "title"), NEW_ADAPTERS)
+def test_new_adapters_are_deterministic_escaped_and_titled(builder, fixture, title):
+    original = builder(fixture(), **_context())
+    reordered = builder(_reverse_lists(fixture()), **_context())
+    output = renderer.render_report(original)
+
+    assert original["title"] == title
+    assert _digest(original) == _digest(reordered)
+    assert output == renderer.render_report(reordered)
+    assert output.startswith("<!doctype html>")
+    assert _contains_exact(original, EVIL)
+    assert EVIL not in output
+    assert "&lt;script&gt;" in output
+
+
+@pytest.mark.parametrize(
+    ("builder", "empty"),
+    [
+        (models.build_cost_allocation_model, lambda: _alloc.allocate_costs({}, {})),
+        (models.build_waste_model, lambda: _waste.find_waste([], as_of=_AS_OF)),
+        (models.build_commitment_model, lambda: _commit.analyze_commitments(as_of=_AS_OF)),
+        (models.build_cost_anomaly_model, lambda: []),
+    ],
+)
+def test_new_adapters_render_empty_states(builder, empty):
+    model = builder(empty(), refreshed_at=REFRESHED_AT)
+    output = renderer.render_report(model)
+
+    assert output.startswith("<!doctype html>")
+    assert 'class="empty"' in output
+
+
+def test_commitment_model_flags_unavailable_inventory_as_partial():
+    model = models.build_commitment_model(_commitments(), refreshed_at=REFRESHED_AT)
+    metrics = {m["label"]: m["value"] for m in model["metrics"]}
+
+    assert model["partial"] is True
+    assert metrics["Active commitments"] == "unknown"
+    assert any("inventory unavailable" in w for w in model["warnings"])
+
+
+def test_allocation_model_keeps_unallocated_and_total_rows():
+    model = models.build_cost_allocation_model(_allocation(), refreshed_at=REFRESHED_AT)
+    showback = model["sections"][0]["rows"]
+    labels = [row[0] for row in showback]
+
+    assert labels[-1] == "Total"
+    assert any("unallocated" in label.lower() for label in labels)
+    assert showback[-1][3] == "$150.00"
+
+
+def test_anomaly_model_reports_spike_and_credit_separately():
+    model = models.build_cost_anomaly_model(_anomalies(), refreshed_at=REFRESHED_AT)
+    metrics = {m["label"]: m["value"] for m in model["metrics"]}
+
+    assert metrics["Spikes and new spend"] != "0"
+    assert metrics["Credits and refunds"] == "$5.00"
+    assert model["chart"]["type"] == "line"
+    assert len(model["chart"]["labels"]) == 32

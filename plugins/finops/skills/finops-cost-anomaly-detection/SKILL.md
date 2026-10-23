@@ -189,6 +189,14 @@ summary and, when `summarize_credits` found any, a separate credits/refunds line
 **report only when `detect_anomalies` returns a non-empty list**; otherwise emit a short "no
 anomalies" line.
 
+### Step 5 — Save the Live Report
+
+After reporting, refresh the shared Live Report `FinOps: Cost Anomalies` so the result is visible in Operations Hub. A scheduled task that already has ListReports/SaveReport steps owns this; follow it and do not save twice.
+
+1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Cost Anomalies (<scope>)`. Skip when the user asks not to save.
+2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_cost_anomaly_model({"date", "anomalies", "credits", "daily"}, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Pass the analyzed date, the anomalies with their `cause` or `candidate_causes`, `summarize_credits` output, and daily usage totals as `[{"date", "cost_usd"}]`. Save it even when no anomalies were found. Run `write_report(model, "finops-cost-anomalies.html")`.
+4. SaveReport the static file with `allowedTools: []`, name `FinOps: Cost Anomalies`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 ## Microsoft anomaly management guidance
 
 This skill complements Microsoft's native anomaly detection; it does not replace it.

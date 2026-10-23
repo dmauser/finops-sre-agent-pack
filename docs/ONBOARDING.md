@@ -81,7 +81,7 @@ kept, and phase 2 only upserts.
 | `-l` / `LOCATION` | `centralus` | Region; must be a region that supports SRE Agent (e.g. `eastus2`, `swedencentral`, `uksouth`, `australiaeast`) |
 | `-g` / `RESOURCE_GROUP` | `SRE-FinOps-Demo` | Resource group, created if missing |
 | `-s` / `SUBSCRIPTION_ID` | current `az` subscription | Target subscription |
-| `--tasks` / `TASK_IDS` | `cost-optimization-report` | Comma-separated task ids, or `all` for all 8 tasks (7 Live Reports, including the monthly review, plus anomaly alerts) |
+| `--tasks` / `TASK_IDS` | `cost-optimization-report` | Comma-separated task ids, or `all` for all 12 tasks (each saves a Live Report; anomaly alerts and the monthly review also email) |
 | `COST_OPT_CRON` | `0 9 * * 1` | Cost Optimization schedule (UTC) |
 | `ALERT_EMAIL`, `GITHUB_REPO` | unset | Email delivery and change correlation for the email-review tasks |
 | `GRANT_COMMITMENT_READERS=1` | off | Also grant tenant-level Reservations Reader and Savings plan Reader (needs elevated access) |
@@ -93,7 +93,8 @@ kept, and phase 2 only upserts.
 
 Task ids: `cost-anomaly`, `cost-overview-report`, `rightsizing-savings-report`,
 `budget-status-report`, `cost-optimization-report`, `ai-spend-report`,
-`sre-agent-spend-report`, `cost-vs-reliability-report`, `monthly-finops-review`.
+`sre-agent-spend-report`, `cost-vs-reliability-report`, `cost-allocation-report`,
+`waste-finder-report`, `commitment-report`, `monthly-finops-review`.
 
 ```bash
 # Everything, non-interactive, in another region

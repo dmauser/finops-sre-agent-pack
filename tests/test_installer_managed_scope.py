@@ -19,6 +19,10 @@ REPORT_TASKS = (
     "ai-spend-report-weekly.yaml",
     "sre-agent-spend-report-weekly.yaml",
     "cost-vs-reliability-report-weekly.yaml",
+    "cost-allocation-report-weekly.yaml",
+    "waste-finder-report-weekly.yaml",
+    "commitment-report-weekly.yaml",
+    "cost-anomaly-daily.yaml",
     "monthly-finops-review.yaml",
 )
 PROMPT_TASK_IDS = {
@@ -30,6 +34,9 @@ PROMPT_TASK_IDS = {
     "AI_REPORT_PROMPT": "ai-spend-report",
     "SRE_AGENT_REPORT_PROMPT": "sre-agent-spend-report",
     "RELIABILITY_REPORT_PROMPT": "cost-vs-reliability-report",
+    "ALLOCATION_REPORT_PROMPT": "cost-allocation-report",
+    "WASTE_REPORT_PROMPT": "waste-finder-report",
+    "COMMITMENT_REPORT_PROMPT": "commitment-report",
     "MONTHLY_REVIEW_PROMPT": "monthly-finops-review",
 }
 UAMI_ID = (
@@ -419,6 +426,10 @@ def test_installer_live_report_prompts_use_deterministic_renderer():
         "AI_REPORT_PROMPT": "build_ai_spend_model",
         "SRE_AGENT_REPORT_PROMPT": "build_sre_agent_spend_model",
         "RELIABILITY_REPORT_PROMPT": "build_cost_vs_reliability_model",
+        "ALLOCATION_REPORT_PROMPT": "build_cost_allocation_model",
+        "WASTE_REPORT_PROMPT": "build_waste_model",
+        "COMMITMENT_REPORT_PROMPT": "build_commitment_model",
+        "ANOMALY_PROMPT": "build_cost_anomaly_model",
         "MONTHLY_REVIEW_PROMPT": "build_monthly_review_model",
     }
     for prompt_name, adapter in adapters.items():
@@ -452,6 +463,10 @@ def test_live_report_templates_use_deterministic_renderer():
         "ai-spend-report-weekly.yaml": "build_ai_spend_model",
         "sre-agent-spend-report-weekly.yaml": "build_sre_agent_spend_model",
         "cost-vs-reliability-report-weekly.yaml": "build_cost_vs_reliability_model",
+        "cost-allocation-report-weekly.yaml": "build_cost_allocation_model",
+        "waste-finder-report-weekly.yaml": "build_waste_model",
+        "commitment-report-weekly.yaml": "build_commitment_model",
+        "cost-anomaly-daily.yaml": "build_cost_anomaly_model",
         "monthly-finops-review.yaml": "build_monthly_review_model",
     }
 
@@ -512,7 +527,7 @@ def test_rightsizing_review_is_retired_and_merged_without_schedule_collisions():
     tasks = module.load_manifest()
     retired = module.load_retired_tasks()
 
-    assert len(tasks) == 9
+    assert len(tasks) == 12
     assert {task["id"] for task in retired} == {"rightsizing-review"}
     assert not (TASK_DIR / "rightsizing-weekly.yaml").exists()
     assert len({task["defaultCron"] for task in tasks}) == len(tasks)
@@ -602,7 +617,7 @@ def test_install_plan_reuses_one_list_and_verifies_retirement(tmp_path, monkeypa
 
     module.write_install_plan(existing, plan)
 
-    assert len((plan / "task-plan.tsv").read_text().splitlines()) == 9
+    assert len((plan / "task-plan.tsv").read_text().splitlines()) == 12
     assert (plan / "retired-plan.tsv").read_text().split("\x1f") == [
         "retired-1",
         "FinOps: Rightsizing Review (Weekly)\n",
@@ -671,8 +686,9 @@ def test_anomaly_delivery_and_correlation_fail_safely_when_unconfigured(monkeypa
 
 
 def test_generated_task_files_and_cost_optimization_prompt_meet_reduction_targets():
-    baseline = 52_449
-    static_bytes = sum(path.stat().st_size for path in TASK_DIR.glob("*.yaml"))
+    yamls = list(TASK_DIR.glob("*.yaml"))
+    baseline = 52_449 / 9 * len(yamls)
+    static_bytes = sum(path.stat().st_size for path in yamls)
     assert static_bytes <= baseline * 0.65
 
     spec = importlib.util.spec_from_file_location("finops_task_renderer", TASK_RENDERER)

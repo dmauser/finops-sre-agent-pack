@@ -15,12 +15,14 @@
       "yaml": "cost-anomaly-daily.yaml",
       "nameEnv": "TASK_NAME",
       "defaultName": "FinOps: Cost Anomaly Detection (Daily)",
-      "description": "Part of the FinOps pack — installed with the finops-cost-anomaly-detection skill. Proactive daily cost-anomaly scan; reports only when a spike is detected.",
+      "description": "Part of the FinOps pack — installed with the finops-cost-anomaly-detection skill. Proactive daily cost-anomaly scan; always refreshes the Cost Anomalies Live Report and emails only when a spike is detected.",
       "cronEnv": "CRON",
       "defaultCron": "0 14 * * *",
       "modelEnv": "ANOMALY_MODEL_TIER",
+      "reportNameEnv": "ANOMALY_REPORT_NAME",
+      "defaultReportName": "FinOps: Cost Anomalies",
       "prompt": "prompts/cost-anomaly.txt",
-      "tags": ["finops", "finops-cost-anomaly-detection"]
+      "tags": ["finops", "finops-cost-anomaly-detection", "finops-live-report"]
     },
     {
       "id": "cost-overview-report",
@@ -119,6 +121,48 @@
       "defaultReportName": "FinOps: Cost vs Reliability",
       "prompt": "prompts/cost-vs-reliability-report.txt",
       "tags": ["finops", "finops-live-report"]
+    },
+    {
+      "id": "cost-allocation-report",
+      "yaml": "cost-allocation-report-weekly.yaml",
+      "nameEnv": "ALLOCATION_REPORT_TASK_NAME",
+      "defaultName": "FinOps: Cost Allocation (Live Report, Weekly)",
+      "description": "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) showback of Azure cost by owner tag: allocated vs unallocated spend, recommended ownership tags, untagged resources, tag hygiene, and month-over-month variance by owner.",
+      "cronEnv": "ALLOCATION_REPORT_CRON",
+      "defaultCron": "30 15 * * 1",
+      "modelEnv": "ALLOCATION_REPORT_MODEL_TIER",
+      "reportNameEnv": "ALLOCATION_REPORT_NAME",
+      "defaultReportName": "FinOps: Cost Allocation",
+      "prompt": "prompts/cost-allocation-report.txt",
+      "tags": ["finops", "finops-live-report", "finops-cost-allocation"]
+    },
+    {
+      "id": "waste-finder-report",
+      "yaml": "waste-finder-report-weekly.yaml",
+      "nameEnv": "WASTE_REPORT_TASK_NAME",
+      "defaultName": "FinOps: Waste Cleanup (Live Report, Weekly)",
+      "description": "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of orphaned, idle, and stale Azure resources with estimated monthly savings and review-only items. Recommends only; never deletes.",
+      "cronEnv": "WASTE_REPORT_CRON",
+      "defaultCron": "30 16 * * 1",
+      "modelEnv": "WASTE_REPORT_MODEL_TIER",
+      "reportNameEnv": "WASTE_REPORT_NAME",
+      "defaultReportName": "FinOps: Waste Cleanup",
+      "prompt": "prompts/waste-finder-report.txt",
+      "tags": ["finops", "finops-live-report", "finops-waste-finder"]
+    },
+    {
+      "id": "commitment-report",
+      "yaml": "commitment-report-weekly.yaml",
+      "nameEnv": "COMMITMENT_REPORT_TASK_NAME",
+      "defaultName": "FinOps: Commitments (Live Report, Weekly)",
+      "description": "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of rate optimization: reservation and savings plan purchase recommendations, commitment coverage and unused cost, utilization and expiry risks, and Azure Hybrid Benefit candidates. Recommends only; never purchases.",
+      "cronEnv": "COMMITMENT_REPORT_CRON",
+      "defaultCron": "30 17 * * 1",
+      "modelEnv": "COMMITMENT_REPORT_MODEL_TIER",
+      "reportNameEnv": "COMMITMENT_REPORT_NAME",
+      "defaultReportName": "FinOps: Commitments",
+      "prompt": "prompts/commitment-report.txt",
+      "tags": ["finops", "finops-live-report", "finops-commitment-advisor"]
     },
     {
       "id": "monthly-finops-review",

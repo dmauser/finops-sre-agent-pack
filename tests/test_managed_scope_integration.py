@@ -174,7 +174,7 @@ def test_usage_details_skills_delegate_page_assembly_to_code():
 
 def test_scheduled_templates_have_strict_dynamic_scope_preamble():
     templates = sorted((FINOPS / "scheduled-tasks").glob("*.yaml"))
-    assert len(templates) == 9
+    assert len(templates) == 12
 
     for path in templates:
         text = path.read_text()

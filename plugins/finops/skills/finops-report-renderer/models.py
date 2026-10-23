@@ -2767,9 +2767,894 @@ def build_monthly_review_model(
     )
 
 
+def _yes_no(value, field):
+    if value is None:
+        return "—"
+    return "yes" if _boolean(value, field) else "no"
+
+
+def _signed_money(value, currency="USD"):
+    if value is None:
+        return "—"
+    text = _money(value, currency)
+    return text if value < 0 else "+" + text
+
+
+def build_cost_anomaly_model(
+    result,
+    *,
+    refreshed_at,
+    scope_summary=None,
+    partial=False,
+    warnings=None,
+    scope_coverage=None,
+):
+    """Adapt detect_anomalies (+ optional summarize_credits and daily totals).
+
+    Accepts the anomaly list itself or ``{"date", "anomalies", "credits", "daily"}`` where
+    ``credits`` is the ``summarize_credits`` output and ``daily`` is ``[{date, cost_usd}]``.
+    """
+
+    source = result if isinstance(result, dict) else {}
+    raw = _field(source, "anomalies", default=[]) if source else result
+    anomalies = []
+    for index, row in enumerate(_objects(raw, "anomalies")):
+        prefix = f"anomalies[{index}]"
+        causes = _field(row, "candidate_causes", "causes", default=None)
+        if isinstance(causes, list):
+            cause = "; ".join(_strings(causes, f"{prefix}.candidate_causes"))
+        else:
+            cause = _text(_field(row, "cause", "candidate_cause"), f"{prefix}.cause")
+        anomalies.append(
+            {
+                "kind": _text(row.get("kind"), f"{prefix}.kind"),
+                "direction": _text(row.get("direction"), f"{prefix}.direction"),
+                "dimension": _text(row.get("dimension"), f"{prefix}.dimension"),
+                "value": _text(row.get("value"), f"{prefix}.value"),
+                "date": _text(row.get("date"), f"{prefix}.date"),
+                "current": _decimal(row.get("current_usd"), f"{prefix}.current_usd", optional=True),
+                "baseline": _decimal(
+                    row.get("baseline_mean_usd"), f"{prefix}.baseline_mean_usd", optional=True
+                ),
+                "dod": _decimal(row.get("dod_delta_usd"), f"{prefix}.dod_delta_usd", optional=True),
+                "wow": _decimal(row.get("wow_delta_usd"), f"{prefix}.wow_delta_usd", optional=True),
+                "impact": _decimal(row.get("impact_usd"), f"{prefix}.impact_usd", optional=True),
+                "sustained": row.get("sustained"),
+                "sustained_text": _yes_no(row.get("sustained"), f"{prefix}.sustained"),
+                "cause": cause,
+            }
+        )
+    anomalies.sort(
+        key=lambda row: (
+            row["impact"] is None,
+            -(row["impact"] or Decimal(0)),
+            row["dimension"].casefold(),
+            row["value"].casefold(),
+            row["value"],
+            row["kind"],
+            row["date"],
+        )
+    )
+    increases = [row for row in anomalies if row["direction"] != "down"]
+    drops = [row for row in anomalies if row["direction"] == "down"]
+    sustained = sum(row["sustained"] is True for row in anomalies)
+    largest = max((row["impact"] for row in increases if row["impact"] is not None), default=None)
+
+    daily = []
+    for index, row in enumerate(_objects(_field(source, "daily", default=[]), "daily")):
+        daily.append(
+            (
+                _text(_field(row, "date", "label"), f"daily[{index}].date"),
+                _decimal(_field(row, "cost_usd", "costUsd", "cost"), f"daily[{index}].cost_usd"),
+            )
+        )
+    daily.sort()
+
+    credits = _object(_field(source, "credits", default={}) or {}, "credits")
+    credit_total = _decimal(
+        credits.get("total_credit_usd"), "credits.total_credit_usd", optional=True
+    )
+    credit_rows = []
+    for index, row in enumerate(_objects(credits.get("by_charge_type"), "credits.by_charge_type")):
+        credit_rows.append(
+            [
+                _text(row.get("chargeType"), f"credits.by_charge_type[{index}].chargeType"),
+                _money(
+                    _decimal(
+                        row.get("credit_usd"), f"credits.by_charge_type[{index}].credit_usd"
+                    )
+                ),
+                str(_integer(row.get("row_count"), f"credits.by_charge_type[{index}].row_count")),
+            ]
+        )
+
+    analyzed = _text(_field(source, "date", "today"), "date") or (
+        anomalies[0]["date"] if anomalies else ""
+    )
+    if daily:
+        chart = {
+            "type": "line",
+            "title": "Daily spend",
+            "label": "Daily cost (USD)",
+            "labels": [date for date, _ in daily],
+            "values": [_chart_number(cost) for _, cost in daily],
+        }
+    else:
+        top = [row for row in anomalies if row["impact"] is not None][:10]
+        chart = {
+            "type": "bar",
+            "title": "Largest anomalies",
+            "label": "Impact (USD)",
+            "labels": [_short_resource(row["value"]) for row in top],
+            "values": [_chart_number(row["impact"]) for row in top],
+        }
+    context = _context(
+        source,
+        refreshed_at=refreshed_at,
+        scope_summary=scope_summary,
+        partial=partial,
+        warnings=warnings,
+        scope_coverage=scope_coverage,
+    )
+    return _model(
+        "FinOps: Cost Anomalies",
+        "Daily anomaly scan of the last complete day; the newest day is still settling and is excluded.",
+        context,
+        [
+            {
+                "label": "Day analyzed",
+                "value": analyzed or "—",
+                "detail": "Last complete billing day",
+            },
+            {
+                "label": "Spikes and new spend",
+                "value": str(len(increases)),
+                "detail": "Per dimension; one change can appear several times",
+                "tone": "critical" if increases else "good",
+            },
+            {
+                "label": "Largest increase",
+                "value": _money(largest),
+                "detail": "Impact vs baseline or last week",
+                "tone": "warning" if largest else "neutral",
+            },
+            {
+                "label": "Drops",
+                "value": str(len(drops)),
+                "detail": "Savings win or outage — verify",
+                "tone": "warning" if drops else "neutral",
+            },
+            {
+                "label": "Sustained",
+                "value": str(sustained),
+                "detail": "Elevated for 3 complete days",
+            },
+            {
+                "label": "Credits and refunds",
+                "value": _money(credit_total),
+                "detail": "Excluded from detection",
+            },
+        ],
+        chart,
+        [
+            {
+                "title": "Anomalies",
+                "description": (
+                    "Ranked by dollar impact. Causes are correlated evidence, not proof; "
+                    "the same change can surface by meter, resource group, and resource."
+                ),
+                "columns": [
+                    "Kind",
+                    "Dimension",
+                    "Value",
+                    "Day cost",
+                    "Baseline",
+                    "vs baseline",
+                    "vs last week",
+                    "Impact",
+                    "Sustained",
+                    "Candidate cause",
+                ],
+                "rows": [
+                    [
+                        row["kind"],
+                        row["dimension"],
+                        row["value"],
+                        _money(row["current"]),
+                        _money(row["baseline"]),
+                        _signed_money(row["dod"]),
+                        _signed_money(row["wow"]),
+                        _money(row["impact"]),
+                        row["sustained_text"],
+                        row["cause"] or "No correlated change found",
+                    ]
+                    for row in anomalies
+                ],
+                "emptyMessage": "No cost anomalies were detected for the last complete day.",
+            },
+            {
+                "title": "Credits and refunds",
+                "description": "Negative-cost rows reported separately so they do not look like drops.",
+                "columns": ["Charge type", "Credit", "Rows"],
+                "rows": sorted(credit_rows, key=lambda r: (r[0].casefold(), r[0])),
+                "emptyMessage": "No credits or refunds in the analyzed window.",
+            },
+        ],
+    )
+
+
+def build_cost_allocation_model(
+    result,
+    *,
+    refreshed_at,
+    scope_summary=None,
+    partial=False,
+    warnings=None,
+    scope_coverage=None,
+):
+    """Adapt allocate_costs output (optionally with a ``month_over_month`` key) to a showback report."""
+
+    result = _object(result, "result")
+    dimension = _text(result.get("dimension"), "result.dimension", default="team") or "team"
+    total = _decimal(result.get("total_usd"), "result.total_usd")
+    allocated = _decimal(result.get("allocated_usd"), "result.allocated_usd")
+    unallocated = _decimal(result.get("unallocated_usd"), "result.unallocated_usd")
+    unallocated_pct = _decimal(result.get("unallocated_pct"), "result.unallocated_pct", optional=True)
+    untagged = _decimal(result.get("untagged_usd"), "result.untagged_usd")
+    undistributed = _decimal(
+        result.get("undistributed_usd"), "result.undistributed_usd", optional=True
+    ) or Decimal(0)
+    inheritance = _object(result.get("inheritance") or {}, "result.inheritance")
+    inherited = _decimal(
+        inheritance.get("allocated_via_inheritance_usd"),
+        "result.inheritance.allocated_via_inheritance_usd",
+        optional=True,
+    )
+
+    groups = []
+    for index, row in enumerate(_objects(result.get("groups"), "result.groups")):
+        prefix = f"result.groups[{index}]"
+        direct = _decimal(_field(row, "direct_usd", "monthly_usd"), f"{prefix}.direct_usd")
+        groups.append(
+            {
+                "owner": _text(row.get("owner"), f"{prefix}.owner"),
+                "direct": direct,
+                "shared": _decimal(row.get("shared_usd"), f"{prefix}.shared_usd", optional=True)
+                or Decimal(0),
+                "loaded": _decimal(
+                    row.get("fully_loaded_usd"), f"{prefix}.fully_loaded_usd", optional=True
+                )
+                or direct,
+                "pct": _decimal(row.get("pct"), f"{prefix}.pct", optional=True),
+                "count": _integer(row.get("resource_count"), f"{prefix}.resource_count"),
+                "inherited": _decimal(
+                    row.get("inherited_usd"), f"{prefix}.inherited_usd", optional=True
+                ),
+            }
+        )
+    groups.sort(key=lambda g: (-g["loaded"], g["owner"].casefold(), g["owner"]))
+    unalloc_block = _object(result.get("unallocated") or {}, "result.unallocated")
+    showback = [
+        [
+            g["owner"],
+            _money(g["direct"]),
+            _money(g["shared"]),
+            _money(g["loaded"]),
+            _percent(g["pct"]),
+            str(g["count"]),
+            _money(g["inherited"]),
+        ]
+        for g in groups
+    ]
+    showback.append(
+        [
+            "(unallocated)",
+            _money(unallocated),
+            "—",
+            _money(unallocated),
+            _percent(unallocated_pct),
+            str(_integer(unalloc_block.get("resource_count"), "result.unallocated.resource_count")),
+            "—",
+        ]
+    )
+    if undistributed:
+        showback.append(["(shared, undistributed)", "—", _money(undistributed), _money(undistributed), "—", "—", "—"])
+    showback.append(["Total", "—", "—", _money(total), "100.0%", "—", "—"])
+
+    def _resource_rows(rows, field, extra=False):
+        out = []
+        for index, row in enumerate(_objects(rows, field)):
+            prefix = f"{field}[{index}]"
+            rid = _text(row.get("resourceId"), f"{prefix}.resourceId")
+            cost = _decimal(row.get("monthly_usd"), f"{prefix}.monthly_usd", optional=True)
+            line = [rid, _money(cost)]
+            if extra:
+                owner = _text(row.get("inherited_owner"), f"{prefix}.inherited_owner")
+                source = _text(row.get("inherited_from"), f"{prefix}.inherited_from")
+                line.append(f"{owner} (from {_short_resource(source)})" if owner else "—")
+            out.append((-(cost or Decimal(0)), rid.casefold(), rid, line))
+        out.sort(key=lambda r: r[:3])
+        return [r[3] for r in out]
+
+    inventory = []
+    for index, row in enumerate(_objects(result.get("tag_inventory"), "result.tag_inventory")):
+        prefix = f"result.tag_inventory[{index}]"
+        cost = _decimal(row.get("cost_usd"), f"{prefix}.cost_usd")
+        inventory.append(
+            (
+                -cost,
+                _text(row.get("key"), f"{prefix}.key"),
+                str(_integer(row.get("resource_count"), f"{prefix}.resource_count")),
+                _money(cost),
+                _percent(_decimal(row.get("pct"), f"{prefix}.pct", optional=True)),
+            )
+        )
+    inventory.sort(key=lambda r: (r[0], r[1].casefold(), r[1]))
+
+    coverage_rows = []
+    for index, row in enumerate(
+        _objects(result.get("recommended_coverage"), "result.recommended_coverage")
+    ):
+        prefix = f"result.recommended_coverage[{index}]"
+        present = _boolean(row.get("present"), f"{prefix}.present")
+        coverage_rows.append(
+            [
+                _text(row.get("key"), f"{prefix}.key"),
+                "present" if present else "missing — adopt",
+                str(_integer(row.get("resource_count"), f"{prefix}.resource_count")),
+                _money(_decimal(row.get("cost_usd"), f"{prefix}.cost_usd", optional=True)),
+                _percent(_decimal(row.get("pct"), f"{prefix}.pct", optional=True)),
+            ]
+        )
+    coverage_rows.sort(key=lambda r: (r[1] == "present", r[0].casefold(), r[0]))
+
+    hygiene = []
+    for index, row in enumerate(_objects(result.get("tag_hygiene"), "result.tag_hygiene")):
+        prefix = f"result.tag_hygiene[{index}]"
+        variants = _object(row.get("variants") or {}, f"{prefix}.variants")
+        affected = _decimal(row.get("cost_affected"), f"{prefix}.cost_affected", optional=True)
+        canonical = _text(row.get("canonical"), f"{prefix}.canonical")
+        hygiene.append(
+            (
+                -(affected or Decimal(0)),
+                canonical.casefold(),
+                [
+                    canonical,
+                    ", ".join(_stable_strings([_text(k, f"{prefix}.variants key") for k in variants])),
+                    _money(affected),
+                ],
+            )
+        )
+    hygiene = [r[2] for r in sorted(hygiene, key=lambda r: (r[0], r[1], r[2]))]
+
+    sections = [
+        {
+            "title": f"Showback by {dimension}",
+            "description": (
+                "Direct cost per owner, shared cost redistributed, and the fully loaded total. "
+                "Unallocated spend stays visible and is never spread onto owners."
+            ),
+            "columns": ["Owner", "Direct", "Shared", "Fully loaded", "% of total", "Resources", "Via inheritance"],
+            "rows": showback,
+            "emptyMessage": "No cost rows were allocated.",
+        },
+        {
+            "title": "Recommended ownership tags",
+            "description": "Coverage of the recommended allocation keys; add missing keys through Azure Policy.",
+            "columns": ["Tag key", "Status", "Resources", "Cost covered", "% of cost"],
+            "rows": coverage_rows,
+            "emptyMessage": "No recommended keys were evaluated.",
+        },
+        {
+            "title": "Tag inventory",
+            "description": "Every tag key in use, ranked by the cost it covers.",
+            "columns": ["Tag key", "Resources", "Cost covered", "% of cost"],
+            "rows": [list(r[1:]) for r in inventory],
+            "emptyMessage": "No tags were found on any costed resource.",
+        },
+        {
+            "title": "Untagged resources",
+            "description": "Resources with no tags at all, ranked by cost — the tagging backlog.",
+            "columns": ["Resource", "Monthly cost", "Inherited owner"],
+            "rows": _resource_rows(result.get("untagged_resources"), "result.untagged_resources", True),
+            "emptyMessage": "Every costed resource has at least one tag.",
+        },
+        {
+            "title": f"Resources without a {dimension} value",
+            "description": "Top unallocated resources; tag them to move their cost into showback.",
+            "columns": ["Resource", "Monthly cost"],
+            "rows": _resource_rows(unalloc_block.get("resources"), "result.unallocated.resources"),
+            "emptyMessage": f"Every costed resource has a {dimension} value.",
+        },
+        {
+            "title": "Tag hygiene",
+            "description": "One owner spelled several ways splits their spend; consolidate the values.",
+            "columns": ["Canonical value", "Variants", "Cost affected"],
+            "rows": hygiene,
+            "emptyMessage": "No inconsistent owner spellings were found.",
+        },
+    ]
+
+    mom = result.get("month_over_month")
+    if mom:
+        mom = _object(mom, "result.month_over_month")
+        rows = []
+        for index, row in enumerate(_objects(mom.get("by_owner"), "result.month_over_month.by_owner")):
+            prefix = f"result.month_over_month.by_owner[{index}]"
+            owner = _text(row.get("owner"), f"{prefix}.owner")
+            delta = _decimal(row.get("delta_usd"), f"{prefix}.delta_usd", optional=True)
+            rows.append(
+                (
+                    -abs(delta or Decimal(0)),
+                    owner.casefold(),
+                    owner,
+                    [
+                        owner,
+                        _money(_decimal(row.get("previous_usd"), f"{prefix}.previous_usd", optional=True)),
+                        _money(_decimal(row.get("current_usd"), f"{prefix}.current_usd", optional=True)),
+                        _signed_money(delta),
+                        _percent(_decimal(row.get("delta_pct"), f"{prefix}.delta_pct", optional=True)),
+                    ],
+                )
+            )
+        rows = [r[3] for r in sorted(rows, key=lambda r: r[:3])]
+        sections.append(
+            {
+                "title": "Month-over-month by owner",
+                "description": "Variance per owner between the two analyzed windows.",
+                "columns": ["Owner", "Previous", "Current", "Change", "Change %"],
+                "rows": rows,
+                "emptyMessage": "No month-over-month rows were produced.",
+            }
+        )
+
+    chart_rows = [(g["owner"], g["loaded"]) for g in groups[:10]]
+    if unallocated > 0:
+        chart_rows.append(("(unallocated)", unallocated))
+    context = _context(
+        result,
+        refreshed_at=refreshed_at,
+        scope_summary=scope_summary,
+        partial=partial,
+        warnings=warnings,
+        scope_coverage=scope_coverage,
+    )
+    metrics = [
+        {"label": "Cost analyzed", "value": _money(total), "detail": "Trailing ~30 days"},
+        {
+            "label": "Allocated",
+            "value": _money(allocated),
+            "detail": f"{len(groups)} {dimension} owners",
+            "tone": "good",
+        },
+        {
+            "label": "Unallocated",
+            "value": _percent(unallocated_pct),
+            "detail": f"{_money(unallocated)} without a {dimension} value",
+            "tone": "warning" if unallocated > 0 else "good",
+        },
+        {
+            "label": "Untagged spend",
+            "value": _money(untagged),
+            "detail": "Resources with no tags at all",
+            "tone": "warning" if untagged > 0 else "good",
+        },
+    ]
+    if inheritance.get("enabled"):
+        metrics.append(
+            {"label": "Via tag inheritance", "value": _money(inherited), "detail": "Resource group or subscription tag"}
+        )
+    return _model(
+        "FinOps: Cost Allocation",
+        f"Weekly showback of Azure cost by {dimension} tag with tag coverage and hygiene; recommend-only.",
+        context,
+        metrics,
+        {
+            "type": "bar",
+            "title": f"Cost by {dimension}",
+            "label": "Fully loaded cost (USD)",
+            "labels": [name for name, _ in chart_rows],
+            "values": [_chart_number(cost) for _, cost in chart_rows],
+        },
+        sections,
+    )
+
+
+def build_waste_model(
+    result,
+    *,
+    refreshed_at,
+    scope_summary=None,
+    partial=False,
+    warnings=None,
+    scope_coverage=None,
+):
+    """Adapt find_waste output to the generic report model."""
+
+    result = _object(result, "result")
+    currency = _text(result.get("currency"), "result.currency", default="USD") or "USD"
+    headline = _object(result.get("headline") or {}, "result.headline")
+    findings = []
+    for index, row in enumerate(_objects(result.get("findings"), "result.findings")):
+        prefix = f"result.findings[{index}]"
+        findings.append(
+            {
+                "resource_id": _text(row.get("resourceId"), f"{prefix}.resourceId"),
+                "type": _text(row.get("resourceType"), f"{prefix}.resourceType"),
+                "kind": _text(row.get("kind"), f"{prefix}.kind"),
+                "reason": _text(row.get("reason"), f"{prefix}.reason"),
+                "action": _text(row.get("recommendedAction"), f"{prefix}.recommendedAction"),
+                "monthly": _decimal(row.get("monthlyCost"), f"{prefix}.monthlyCost", optional=True),
+                "savings": _decimal(
+                    row.get("estMonthlySavings"), f"{prefix}.estMonthlySavings", optional=True
+                ),
+                "evidence": " ".join(_strings(row.get("evidence"), f"{prefix}.evidence")),
+            }
+        )
+    findings.sort(
+        key=lambda row: (
+            row["savings"] is None,
+            -(row["savings"] or Decimal(0)),
+            row["kind"],
+            row["resource_id"].casefold(),
+            row["resource_id"],
+        )
+    )
+    actionable = [row for row in findings if row["kind"] in ("orphan", "idle", "stale")]
+    savings = _decimal(
+        headline.get("potential_monthly_savings"), "result.headline.potential_monthly_savings",
+        optional=True,
+    )
+    if savings is None:
+        savings = sum((row["savings"] or Decimal(0) for row in actionable), Decimal(0))
+    unknown = sum(row["savings"] is None for row in actionable)
+    by_kind = {}
+    for row in findings:
+        by_kind[row["kind"]] = by_kind.get(row["kind"], 0) + 1
+    chart_rows = [row for row in actionable if row["savings"]][:10]
+    context = _context(
+        result,
+        refreshed_at=refreshed_at,
+        scope_summary=scope_summary,
+        partial=partial,
+        warnings=warnings,
+        scope_coverage=scope_coverage,
+    )
+    return _model(
+        "FinOps: Waste Cleanup",
+        "Weekly scan for orphaned, idle, and stale resources; confirm with the owner before deleting.",
+        context,
+        [
+            {
+                "label": "Potential monthly savings",
+                "value": _money(savings, currency),
+                "detail": "Orphaned, idle, and stale resources",
+                "tone": "good",
+            },
+            {
+                "label": "Actionable findings",
+                "value": str(len(actionable)),
+                "detail": f"{unknown} without cost data" if unknown else "All have cost data",
+            },
+            {
+                "label": "Review items",
+                "value": str(len(findings) - len(actionable)),
+                "detail": "Configuration or hygiene, no direct saving",
+            },
+        ],
+        {
+            "type": "bar",
+            "title": "Largest cleanup savings",
+            "label": f"Estimated monthly savings ({currency})",
+            "labels": [_short_resource(row["resource_id"]) for row in chart_rows],
+            "values": [_chart_number(row["savings"]) for row in chart_rows],
+        },
+        [
+            {
+                "title": "Waste findings",
+                "description": "Ranked by estimated monthly savings; review items carry no claimed saving.",
+                "columns": ["Resource", "Type", "Kind", "Reason", "Monthly cost", "Savings", "Action", "Evidence"],
+                "rows": [
+                    [
+                        row["resource_id"],
+                        row["type"],
+                        row["kind"],
+                        row["reason"],
+                        _money(row["monthly"], currency),
+                        _money(row["savings"], currency),
+                        row["action"],
+                        row["evidence"],
+                    ]
+                    for row in findings
+                ],
+                "emptyMessage": "No orphaned, idle, or stale resources were found.",
+            },
+            {
+                "title": "Findings by kind",
+                "description": "orphan = unattached; idle = attached but unused; stale = old snapshots.",
+                "columns": ["Kind", "Findings"],
+                "rows": [[kind, str(count)] for kind, count in sorted(by_kind.items())],
+                "emptyMessage": "No findings.",
+            },
+        ],
+    )
+
+
+def build_commitment_model(
+    result,
+    *,
+    refreshed_at,
+    scope_summary=None,
+    partial=False,
+    warnings=None,
+    scope_coverage=None,
+):
+    """Adapt analyze_commitments output to the generic report model."""
+
+    result = _object(result, "result")
+    currency = _text(result.get("currency"), "result.currency", default="USD") or "USD"
+    headline = _object(result.get("headline") or {}, "result.headline")
+    coverage = _object(result.get("coverage") or {}, "result.coverage")
+    savings = _decimal(
+        headline.get("potential_monthly_savings"), "result.headline.potential_monthly_savings",
+        optional=True,
+    )
+    best = _text(headline.get("best_family"), "result.headline.best_family")
+    coverage_pct = _decimal(headline.get("coverage_pct"), "result.headline.coverage_pct", optional=True)
+    unused = _decimal(
+        headline.get("unused_commitment_cost"), "result.headline.unused_commitment_cost",
+        optional=True,
+    )
+    unavailable = _stable_strings(
+        _strings(headline.get("inventory_unavailable"), "result.headline.inventory_unavailable")
+    )
+    count = _integer(headline.get("commitment_count"), "result.headline.commitment_count")
+
+    inventory = []
+    for index, row in enumerate(_objects(result.get("inventory"), "result.inventory")):
+        prefix = f"result.inventory[{index}]"
+        util = _field(row, "utilization_30d", default=None)
+        if util is None:
+            util = row.get("utilization_7d")
+        days = row.get("days_to_expiry")
+        inventory.append(
+            [
+                _text(row.get("kind"), f"{prefix}.kind").replace("_", " "),
+                _text(row.get("name"), f"{prefix}.name"),
+                _text(row.get("sku"), f"{prefix}.sku"),
+                _text(row.get("term"), f"{prefix}.term"),
+                _text(row.get("applied_scope_type"), f"{prefix}.applied_scope_type"),
+                _percent(_decimal(util, f"{prefix}.utilization", optional=True)),
+                _text(row.get("expiry_date"), f"{prefix}.expiry_date") or "—",
+                "—" if days is None else f"{_integer(days, f'{prefix}.days_to_expiry')} days",
+                _yes_no(row.get("renew"), f"{prefix}.renew"),
+            ]
+        )
+    inventory.sort(key=lambda r: (r[0], r[1].casefold(), r[1], r[2], r[6]))
+
+    purchases = []
+    for index, row in enumerate(_objects(result.get("purchases"), "result.purchases")):
+        prefix = f"result.purchases[{index}]"
+        family = _text(row.get("family"), f"{prefix}.family")
+        row_currency = _text(row.get("currency"), f"{prefix}.currency", default=currency) or currency
+        alternatives = []
+        for alt_index, alt in enumerate(_objects(row.get("alternatives"), f"{prefix}.alternatives")):
+            alternatives.append(
+                f"{_text(alt.get('term'), f'{prefix}.alternatives[{alt_index}].term')} "
+                + _money(
+                    _decimal(
+                        alt.get("est_monthly_savings"),
+                        f"{prefix}.alternatives[{alt_index}].est_monthly_savings",
+                        optional=True,
+                    ),
+                    row_currency,
+                )
+            )
+        est = _decimal(row.get("est_monthly_savings"), f"{prefix}.est_monthly_savings", optional=True)
+        purchases.append(
+            {
+                "family": family,
+                "sku": _text(row.get("sku"), f"{prefix}.sku"),
+                "est": est,
+                "cells": [
+                    family.replace("_", " ") + (" (headline)" if family == best else " (alternative)"),
+                    _text(row.get("resource_type"), f"{prefix}.resource_type"),
+                    _text(row.get("sku"), f"{prefix}.sku"),
+                    _text(row.get("location"), f"{prefix}.location") or "—",
+                    _text(row.get("term"), f"{prefix}.term"),
+                    _text(row.get("lookback"), f"{prefix}.lookback"),
+                    _money(est, row_currency),
+                    _percent(_decimal(row.get("savings_pct"), f"{prefix}.savings_pct", optional=True)),
+                    ", ".join(sorted(alternatives)) or "—",
+                ],
+            }
+        )
+    purchases.sort(
+        key=lambda r: (-(r["est"] or Decimal(0)), r["family"], r["sku"].casefold(), r["cells"])
+    )
+
+    attention = []
+    for index, row in enumerate(_objects(result.get("underutilized"), "result.underutilized")):
+        prefix = f"result.underutilized[{index}]"
+        attention.append(
+            [
+                "underutilized",
+                _text(row.get("name"), f"{prefix}.name"),
+                _percent(_decimal(row.get("utilization"), f"{prefix}.utilization", optional=True)),
+                _text(row.get("action"), f"{prefix}.action"),
+            ]
+        )
+    for index, row in enumerate(_objects(result.get("expiring"), "result.expiring")):
+        prefix = f"result.expiring[{index}]"
+        attention.append(
+            [
+                "expiring, auto-renew off",
+                _text(row.get("name"), f"{prefix}.name"),
+                f"{_integer(row.get('days_to_expiry'), f'{prefix}.days_to_expiry')} days",
+                _text(row.get("action"), f"{prefix}.action"),
+            ]
+        )
+    attention.sort(key=lambda r: (r[0], r[1].casefold(), r[1], r[2]))
+
+    categories = []
+    for index, row in enumerate(_objects(coverage.get("by_meter_category"), "result.coverage.by_meter_category")):
+        prefix = f"result.coverage.by_meter_category[{index}]"
+        on_demand = _decimal(row.get("on_demand_cost"), f"{prefix}.on_demand_cost")
+        categories.append(
+            (
+                _text(row.get("meter_category"), f"{prefix}.meter_category"),
+                _decimal(row.get("covered_cost"), f"{prefix}.covered_cost"),
+                on_demand,
+                _decimal(row.get("coverage_pct"), f"{prefix}.coverage_pct", optional=True),
+            )
+        )
+    categories.sort(key=lambda r: (-r[2], r[0].casefold(), r[0]))
+
+    hub = []
+    for index, row in enumerate(_objects(result.get("hybrid_benefit"), "result.hybrid_benefit")):
+        prefix = f"result.hybrid_benefit[{index}]"
+        cost = _decimal(row.get("monthly_cost"), f"{prefix}.monthly_cost", optional=True)
+        rid = _text(row.get("resourceId"), f"{prefix}.resourceId")
+        hub.append(
+            (
+                cost is None,
+                -(cost or Decimal(0)),
+                rid.casefold(),
+                [
+                    rid,
+                    _text(row.get("license"), f"{prefix}.license"),
+                    _text(row.get("current_license_type"), f"{prefix}.current_license_type"),
+                    _money(cost, currency),
+                    _text(row.get("action"), f"{prefix}.action"),
+                ],
+            )
+        )
+    hub = [r[3] for r in sorted(hub, key=lambda r: (r[0], r[1], r[2], r[3]))]
+
+    if purchases:
+        chart_rows = [r for r in purchases if r["est"] is not None][:10]
+        chart = {
+            "type": "bar",
+            "title": "Purchase recommendations",
+            "label": f"Estimated monthly savings ({currency})",
+            "labels": [f"{r['family'].replace('_', ' ')} {r['sku']}".strip() for r in chart_rows],
+            "values": [_chart_number(r["est"]) for r in chart_rows],
+        }
+    else:
+        chart = {
+            "type": "bar",
+            "title": "On-demand cost by meter category",
+            "label": f"On-demand cost ({currency})",
+            "labels": [r[0] for r in categories],
+            "values": [_chart_number(r[2]) for r in categories],
+        }
+    context = _context(
+        result,
+        refreshed_at=refreshed_at,
+        scope_summary=scope_summary,
+        partial=partial,
+        warnings=warnings,
+        scope_coverage=scope_coverage,
+        extra_partial=bool(unavailable),
+    )
+    return _model(
+        "FinOps: Commitments",
+        "Weekly rate-optimization view: reservations and savings plans, coverage, and Hybrid Benefit. "
+        "Optimize usage before committing.",
+        context,
+        [
+            {
+                "label": "Potential monthly savings",
+                "value": _money(savings, currency),
+                "detail": (
+                    f"Headline family: {best.replace('_', ' ')}; alternatives not summed"
+                    if best
+                    else "No purchase above threshold"
+                ),
+                "tone": "good",
+            },
+            {
+                "label": "Commitment coverage",
+                "value": _percent(coverage_pct),
+                "detail": f"{_money(_decimal(coverage.get('covered_cost'), 'result.coverage.covered_cost', optional=True), currency)} covered of eligible usage",
+            },
+            {
+                "label": "Unused commitment",
+                "value": _money(unused, currency),
+                "detail": "Amortized unused reservation/plan cost",
+                "tone": "warning" if unused else "neutral",
+            },
+            {
+                "label": "Active commitments",
+                "value": "unknown" if unavailable else str(count),
+                "detail": (
+                    "Inventory unavailable: " + ", ".join(k.replace("_", " ") for k in unavailable)
+                    if unavailable
+                    else f"{len(attention)} need attention"
+                ),
+                "tone": "warning" if unavailable or attention else "neutral",
+            },
+            {
+                "label": "Hybrid Benefit candidates",
+                "value": str(len(hub)),
+                "detail": "Verify license entitlement first",
+            },
+        ],
+        chart,
+        [
+            {
+                "title": "Purchase recommendations",
+                "description": (
+                    "Reservations and savings plans cover the same usage, so they are alternatives; "
+                    "only the headline family counts toward savings."
+                ),
+                "columns": ["Family", "Resource type", "SKU", "Location", "Term", "Lookback", "Monthly savings", "Savings %", "Other terms"],
+                "rows": [r["cells"] for r in purchases],
+                "emptyMessage": "No purchase recommendation clears the savings threshold.",
+            },
+            {
+                "title": "Coverage by meter category",
+                "description": "Covered vs on-demand amortized usage cost; on-demand spend is the commitment opportunity.",
+                "columns": ["Meter category", "Covered", "On-demand", "Coverage"],
+                "rows": [[r[0], _money(r[1], currency), _money(r[2], currency), _percent(r[3])] for r in categories],
+                "emptyMessage": "No eligible usage rows were supplied for coverage.",
+            },
+            {
+                "title": "Existing commitments",
+                "description": "Active reservations and savings plans with utilization and expiry.",
+                "columns": ["Kind", "Name", "SKU", "Term", "Scope", "Utilization", "Expires", "Days left", "Auto-renew"],
+                "rows": inventory,
+                "emptyMessage": (
+                    "Commitment inventory was not readable; grant Reservations Reader and Savings plan Reader."
+                    if unavailable
+                    else "No active reservations or savings plans in scope."
+                ),
+            },
+            {
+                "title": "Needs attention",
+                "description": "Underutilized commitments and ones expiring without auto-renew.",
+                "columns": ["Issue", "Commitment", "Value", "Action"],
+                "rows": attention,
+                "emptyMessage": "No underutilized or expiring commitments.",
+            },
+            {
+                "title": "Azure Hybrid Benefit candidates",
+                "description": "Pay-as-you-go Windows/SQL licensing; enable only with eligible licenses.",
+                "columns": ["Resource", "License", "Current license type", "Monthly cost", "Action"],
+                "rows": hub,
+                "emptyMessage": "No Hybrid Benefit candidates were found.",
+            },
+        ],
+    )
+
+
 __all__ = [
     "build_ai_spend_model",
     "build_budget_status_model",
+    "build_commitment_model",
+    "build_cost_allocation_model",
+    "build_cost_anomaly_model",
+    "build_waste_model",
     "build_cost_optimization_model",
     "build_cost_overview_model",
     "build_cost_vs_reliability_model",

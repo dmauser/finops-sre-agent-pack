@@ -29,12 +29,16 @@ and `write_report`:
 from models import (
     build_ai_spend_model,
     build_budget_status_model,
+    build_commitment_model,
+    build_cost_allocation_model,
+    build_cost_anomaly_model,
     build_cost_optimization_model,
     build_cost_overview_model,
     build_cost_vs_reliability_model,
     build_monthly_review_model,
     build_rightsizing_savings_model,
     build_sre_agent_spend_model,
+    build_waste_model,
 )
 from render import write_report
 
@@ -58,7 +62,7 @@ model = build_budget_status_model(
 path = write_report(model, "finops-budget-status.html")
 ```
 
-All eight functions have the same keyword-only context arguments:
+All twelve functions have the same keyword-only context arguments:
 
 ```text
 (*, refreshed_at, scope_summary=None, partial=False,
@@ -87,6 +91,10 @@ All eight functions have the same keyword-only context arguments:
 | `build_sre_agent_spend_model(result, ...)` | The object returned by `analyze_sre_agent_costs`. |
 | `build_cost_vs_reliability_model(result, ...)` | The object returned by `analyze_cost_vs_reliability`. |
 | `build_monthly_review_model(review, ...)` | `{"month", "scorecard", "forecast", "month_over_month", "routing", "unit_economics", "sre_agents"}` holding `kpi_scorecard`, `forecast_spend`, `month_over_month`, `route_to_owners`, `unit_economics`, and `analyze_sre_agent_costs` outputs. Only `scorecard` is required; missing inputs become warnings. |
+| `build_cost_anomaly_model(result, ...)` | The list returned by `detect_anomalies`, or `{"date", "anomalies", "credits", "daily"}` where `credits` is `summarize_credits` output and `daily` is `[{date, cost_usd}]` for the trend chart. Anomalies may carry optional `cause` or `candidate_causes`. |
+| `build_cost_allocation_model(result, ...)` | The object returned by `allocate_costs`, optionally with `month_over_month` set to the `month_over_month` output. Unallocated and undistributed shared cost stay visible as their own rows. |
+| `build_waste_model(result, ...)` | The object returned by `find_waste`. |
+| `build_commitment_model(result, ...)` | The object returned by `analyze_commitments`. Pass `inventory_unavailable` to the helper on a 403 so the report shows "unknown" and is marked partial instead of "no commitments". |
 
 The adapters deterministically compute display metrics, charts, and tables from those structured
 outputs. They apply explicit stable tie-breakers, retain unknown/empty values, label unvalidated

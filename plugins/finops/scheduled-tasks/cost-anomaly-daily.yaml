@@ -8,11 +8,13 @@ metadata:
   tags:
     - finops
     - finops-cost-anomaly-detection
+    - finops-live-report
 spec:
   name: "FinOps: Cost Anomaly Detection (Daily)"
   description: >-
     Part of the FinOps pack — installed with the finops-cost-anomaly-detection skill.
-    Proactive daily cost-anomaly scan; reports only when a spike is detected.
+    Proactive daily cost-anomaly scan; always refreshes the Cost Anomalies Live Report and
+    emails only when a spike is detected.
   agent: "__AGENT_NAME__"
   cron: "__CRON__"
   modelTier: "ReasoningHeavy"
@@ -30,5 +32,11 @@ spec:
     Run `finops-cost-anomaly-detection` for every effective scope. Read its SKILL.md and execute the complete transport, filtering, detection, correlation, and reporting contract; do not restate or reimplement that logic. Run the bundled `detect.py` with its daily defaults and `assume_last_partial=True`.
 
     Correlate each anomaly only within its effective scope to deployments and Activity Log writes; when `__GITHUB_REPO__` is configured, also correlate commits and merged PRs from that repository.
+
+    Then always author and SAVE the static snapshot Live Report `FinOps: Cost Anomalies`, even when nothing is anomalous, reusing the same data pull:
+
+    1. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+    2. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_cost_anomaly_model({"date": <analyzed date>, "anomalies": <detect_anomalies output with each anomaly's `cause` or `candidate_causes`>, "credits": <summarize_credits output>, "daily": <[{"date", "cost_usd"}] daily usage totals>}, ...)`; do not generically construct a model or write/edit HTML. Run `write_report(model, "finops-cost-anomalies.html")`.
+    3. SaveReport the generated static file with `allowedTools: []`, name `FinOps: Cost Anomalies`, and the reused `reportId` when present. Make no view-time calls. A report failure must not suppress the anomaly result below.
 
     If no anomalies are found, return exactly `No cost anomalies detected for <date>.` and do not email. Otherwise return the skill's dollar-ranked anomaly table with candidate-cause evidence, then if `__ALERT_EMAIL__` is configured, email it with subject `Cost anomaly detected — <date>` and High importance; otherwise return it only in the scheduled-task result.

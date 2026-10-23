@@ -214,6 +214,14 @@ fully-loaded columns plus any undistributed amount. Recommend tagging actions on
 cost was partial (Step 1 truncation), say so at the top. If everything is allocated and there is no
 untagged spend, say so in one line.
 
+### Step 5 — Save the Live Report
+
+After reporting, refresh the shared Live Report `FinOps: Cost Allocation` so the result is visible in Operations Hub. A scheduled task that already has ListReports/SaveReport steps owns this; follow it and do not save twice.
+
+1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Cost Allocation (<scope>)`. Skip when the user asks not to save.
+2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_cost_allocation_model(allocate_costs_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Add `month_over_month(...)` output under the `month_over_month` key when you computed it. Run `write_report(model, "finops-cost-allocation.html")`.
+4. SaveReport the static file with `allowedTools: []`, name `FinOps: Cost Allocation`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 ## Microsoft allocation guidance
 
 Load [microsoft-allocation-guidance.md](microsoft-allocation-guidance.md) with

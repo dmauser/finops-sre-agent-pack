@@ -111,6 +111,14 @@ IP, or a retention-policy snapshot — say so. Report excluded resources and any
 Recommend only — do not delete, stop, or modify resources. Read-only only. Do not use any
 write/POST Azure operations.
 
+### Step 5 — Save the Live Report
+
+After reporting, refresh the shared Live Report `FinOps: Waste Cleanup` so the result is visible in Operations Hub. A scheduled task that already has ListReports/SaveReport steps owns this; follow it and do not save twice.
+
+1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Waste Cleanup (<scope>)`. Skip when the user asks not to save.
+2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_waste_model(find_waste_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, "finops-waste.html")`.
+4. SaveReport the static file with `allowedTools: []`, name `FinOps: Waste Cleanup`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 ## Notes
 
 - Add `finops-rightsizing-advisor` savings to this skill's savings for the total usage-optimization

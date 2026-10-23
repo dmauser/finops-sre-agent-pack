@@ -23,6 +23,9 @@ EXPECTED_IDS = {
     "ai-spend-report",
     "sre-agent-spend-report",
     "cost-vs-reliability-report",
+    "cost-allocation-report",
+    "waste-finder-report",
+    "commitment-report",
     "monthly-finops-review",
 }
 EXPECTED_RETIRED_IDS = {"rightsizing-review"}
@@ -42,7 +45,7 @@ def _load_manifest_data():
     ids = {task.get("id") for task in tasks}
     retired_ids = {task.get("id") for task in retired}
     if len(tasks) != len(EXPECTED_IDS) or ids != EXPECTED_IDS:
-        raise ValueError("Task manifest must define the canonical nine task IDs")
+        raise ValueError("Task manifest must define the canonical twelve task IDs")
     if len(retired) != 1 or retired_ids != EXPECTED_RETIRED_IDS:
         raise ValueError("Task manifest must define the retired rightsizing review task")
     if ids & retired_ids:
