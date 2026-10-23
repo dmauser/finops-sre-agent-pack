@@ -1,11 +1,17 @@
 """FinOps cost-optimization-report — pure, offline, deterministic (no Azure calls).
 
-Rolls the four existing read-only FinOps analyses up into ONE executive summary:
+Rolls the existing read-only FinOps analyses up into ONE executive summary:
 
   * cost anomalies        (finops-cost-anomaly-detection -> detect_anomalies -> list)
   * rightsizing savings   (finops-rightsizing-advisor    -> recommend_rightsizing -> list)
   * cost allocation       (finops-cost-allocation        -> allocate_costs -> dict)
   * budget status         (finops-budget-governance      -> evaluate_budgets -> dict)
+  * waste cleanup         (finops-waste-finder           -> find_waste -> dict, optional)
+  * rate optimization     (finops-commitment-advisor     -> analyze_commitments -> dict, optional)
+
+Usage optimization (rightsizing + waste, de-duplicated by resource id) and rate optimization
+(commitments) are reported separately and never summed: buying commitments for capacity that
+is about to be removed double-counts the same dollars.
 
 This module does no data pulling of its own — the skill runs each existing core (each of
 which pulls and shapes its own data), then hands their *already-computed* outputs here.
@@ -124,10 +130,118 @@ def _governance_rollup(allocation, budget_roll):
     }
 
 
-def _priorities(rightsizing, anomalies, budget_roll, governance):
+_WASTE_ACTIONABLE = ("orphan", "idle", "stale")
+
+
+def _waste_rollup(waste, rightsizing_findings):
+    """Waste findings not already reported by rightsizing (joined case-insensitively)."""
+    waste = waste or {}
+    taken = {str(f.get("resourceId") or "").rstrip("/").casefold()
+             for f in rightsizing_findings or []}
+    all_findings = waste.get("findings") or []
+    findings = [f for f in all_findings
+                if str(f.get("resourceId") or "").rstrip("/").casefold() not in taken]
+    total = 0.0
+    by_kind = {}
+    for f in findings:
+        by_kind[f.get("kind")] = by_kind.get(f.get("kind"), 0) + 1
+        savings = _num(f.get("estMonthlySavings"))
+        if f.get("kind") in _WASTE_ACTIONABLE and savings:
+            total += savings
+    return {
+        "potential_monthly_savings": round(total, 2),
+        "count": len(findings),
+        "deduplicated": len(all_findings) - len(findings),
+        "by_kind": dict(sorted((str(k), v) for k, v in by_kind.items())),
+        "currency": waste.get("currency"),
+        "top": findings[:_TOP_PER_SECTION],  # already sorted by savings desc by the core
+    }
+
+
+def _commitment_rollup(commitments):
+    """Rate-optimization headline and the top rows of each commitment list."""
+    c = commitments or {}
+    headline = c.get("headline") or {}
+    return {
+        "potential_monthly_savings": _num(headline.get("potential_monthly_savings")),
+        "best_family": headline.get("best_family"),
+        "currency": c.get("currency"),
+        "coverage_pct": _num(headline.get("coverage_pct")),
+        "unused_commitment_cost": _num(headline.get("unused_commitment_cost")),
+        "commitment_count": headline.get("commitment_count") or 0,
+        "purchases": (c.get("purchases") or [])[:_TOP_PER_SECTION],
+        "underutilized": (c.get("underutilized") or [])[:_TOP_PER_SECTION],
+        "expiring": (c.get("expiring") or [])[:_TOP_PER_SECTION],
+        "hybrid_benefit": (c.get("hybrid_benefit") or [])[:_TOP_PER_SECTION],
+        "warnings": list(c.get("warnings") or []),
+    }
+
+
+_FAMILY_LABEL = {"reservation": "reservation", "savings_plan": "savings plan"}
+
+
+def _waste_priorities(waste_roll):
+    items = []
+    for f in waste_roll["top"]:
+        if f.get("kind") not in _WASTE_ACTIONABLE:
+            continue
+        items.append({
+            "category": "waste",
+            "impact_type": "savings",
+            "impact_usd": _num(f.get("estMonthlySavings")),
+            "title": f"{f.get('reason') or 'Waste'} — {_short_id(f.get('resourceId'))}",
+            "detail": f.get("kind"),
+            "action": f.get("recommendedAction"),
+            "validated": None,
+        })
+    return items
+
+
+def _rate_priorities(rate_roll):
+    items = []
+    best = rate_roll["best_family"]
+    for p in rate_roll["purchases"]:
+        if p.get("family") != best:
+            continue  # alternatives cover the same usage; rank only the headline family
+        family = _FAMILY_LABEL.get(p.get("family"), p.get("family"))
+        items.append({
+            "category": "rate",
+            "impact_type": "savings",
+            "impact_usd": _num(p.get("est_monthly_savings")),
+            "title": f"Buy {p.get('term')} {family} — {p.get('sku')}",
+            "detail": f"{p.get('lookback') or 'look-back'} usage; "
+                      f"{len(p.get('alternatives') or [])} alternative term(s)",
+            "action": "Purchase after usage optimization; confirm the usage is steady",
+            "validated": None,
+        })
+    unused = rate_roll["unused_commitment_cost"]
+    if unused:
+        items.append({
+            "category": "rate",
+            "impact_type": "unused commitment",
+            "impact_usd": round(unused, 2),
+            "title": "Unused reservation / savings plan charges",
+            "detail": f"{len(rate_roll['underutilized'])} underutilized commitment(s)",
+            "action": "Exchange, re-scope (Shared/management group), or move eligible usage",
+            "validated": None,
+        })
+    for e in rate_roll["expiring"]:
+        items.append({
+            "category": "rate",
+            "impact_type": "risk",
+            "impact_usd": None,
+            "title": f"Commitment expires in {e.get('days_to_expiry')} days — {e.get('name')}",
+            "detail": "auto-renew off",
+            "action": "Decide renewal before expiry to avoid pay-as-you-go rates",
+            "validated": None,
+        })
+    return items
+
+
+def _priorities(rightsizing, anomalies, budget_roll, governance, extra=()):
     """One blended, dollar-ranked action list. Each item is labelled with an impact_type so
     savings, overruns, spikes, and governance exposure are comparable but never conflated."""
-    items = []
+    items = list(extra)
 
     for f in rightsizing["top"]:
         items.append({
@@ -193,16 +307,22 @@ def _priorities(rightsizing, anomalies, budget_roll, governance):
 
 
 def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
-                           budgets=None, as_of=None):
-    """Roll the four FinOps analyses up into one executive optimization summary.
+                           budgets=None, waste=None, commitments=None, as_of=None):
+    """Roll the FinOps analyses up into one executive optimization summary.
 
     anomalies    the list returned by detect_anomalies()          (or None)
     rightsizing  the list returned by recommend_rightsizing()     (or None)
     allocation   the dict returned by allocate_costs()            (or None)
     budgets      the dict returned by evaluate_budgets()          (or None)
+    waste        the dict returned by find_waste()                (or None)
+    commitments  the dict returned by analyze_commitments()       (or None)
     as_of        date the report is anchored to (defaults to today)
 
     Every input is optional; a missing analysis becomes an empty section rather than an error.
+    `waste` and `commitments` add their own sections and headline keys only when provided:
+    headline.waste_monthly_savings, usage_optimization_monthly_savings (rightsizing + waste),
+    rate_optimization_monthly_savings, commitment_coverage_pct, unused_commitment_cost.
+    headline.potential_monthly_savings stays rightsizing-only for backward compatibility.
 
     Returns a dict:
       {
@@ -225,7 +345,14 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
     anomaly_roll = _anomaly_rollup(anomalies)
     budget_roll = _budget_rollup(budgets)
     governance_roll = _governance_rollup(alloc, budget_roll)
-    priorities = _priorities(rightsizing_roll, anomaly_roll, budget_roll, governance_roll)
+    waste_roll = _waste_rollup(waste, rightsizing) if waste is not None else None
+    rate_roll = _commitment_rollup(commitments) if commitments is not None else None
+    extra = []
+    if waste_roll is not None:
+        extra += _waste_priorities(waste_roll)
+    if rate_roll is not None:
+        extra += _rate_priorities(rate_roll)
+    priorities = _priorities(rightsizing_roll, anomaly_roll, budget_roll, governance_roll, extra)
 
     summary = budget_roll["summary"]
     headline = {
@@ -239,8 +366,17 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
         "untagged_usd": round(governance_roll["untagged_usd"], 2),
         "unallocated_pct": governance_roll["unallocated_pct"],
     }
+    if waste_roll is not None:
+        headline["waste_monthly_savings"] = waste_roll["potential_monthly_savings"]
+        headline["usage_optimization_monthly_savings"] = round(
+            rightsizing_roll["potential_monthly_savings"]
+            + waste_roll["potential_monthly_savings"], 2)
+    if rate_roll is not None:
+        headline["rate_optimization_monthly_savings"] = rate_roll["potential_monthly_savings"]
+        headline["commitment_coverage_pct"] = rate_roll["coverage_pct"]
+        headline["unused_commitment_cost"] = rate_roll["unused_commitment_cost"]
 
-    return {
+    out = {
         "as_of": today.isoformat(),
         "headline": headline,
         "priorities": priorities,
@@ -249,3 +385,8 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
         "budgets": budget_roll,
         "governance": governance_roll,
     }
+    if waste_roll is not None:
+        out["waste"] = waste_roll
+    if rate_roll is not None:
+        out["commitments"] = rate_roll
+    return out

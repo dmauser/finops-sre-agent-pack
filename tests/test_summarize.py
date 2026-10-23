@@ -158,3 +158,57 @@ def test_priorities_capped_at_ten():
     assert len(out["priorities"]) == 10
     assert out["priorities"][0]["impact_usd"] == 1000.0
     assert out["priorities"][0]["impact_type"] == "savings"
+
+
+def test_waste_and_commitments_are_opt_in_and_never_summed():
+    rs_vm = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/publicIPAddresses/dup"
+    rightsizing = [{"resourceId": rs_vm, "kind": "idle", "recommendedAction": "Delete",
+                    "estMonthlySavingsUsd": 50.0, "validated": True}]
+    waste = {
+        "currency": "USD",
+        "findings": [
+            {"resourceId": rs_vm.upper(), "kind": "orphan", "reason": "dup",
+             "recommendedAction": "Delete", "estMonthlySavings": 50.0},
+            {"resourceId": "/x/natGateways/nat1", "kind": "orphan", "reason": "NAT idle",
+             "recommendedAction": "Delete", "estMonthlySavings": 32.85},
+            {"resourceId": "/x/networkInterfaces/nic1", "kind": "hygiene", "reason": "NIC",
+             "recommendedAction": "Delete", "estMonthlySavings": 0.0},
+        ],
+    }
+    commitments = {
+        "currency": "USD",
+        "headline": {"potential_monthly_savings": 400.0, "best_family": "reservation",
+                     "coverage_pct": 35.0, "unused_commitment_cost": 120.0},
+        "purchases": [
+            {"family": "reservation", "term": "P3Y", "sku": "D4s_v5",
+             "est_monthly_savings": 400.0, "alternatives": [{"term": "P1Y"}]},
+            {"family": "savings_plan", "term": "P3Y", "sku": "Compute_Savings_Plan",
+             "est_monthly_savings": 350.0, "alternatives": []},
+        ],
+        "underutilized": [{"name": "ri1", "utilization": 40.0}],
+        "expiring": [{"name": "ri2", "days_to_expiry": 12}],
+    }
+
+    base = summarize_optimization(rightsizing=rightsizing, as_of=AS_OF)
+    assert "waste" not in base and "commitments" not in base
+    assert "waste_monthly_savings" not in base["headline"]
+
+    out = summarize_optimization(rightsizing=rightsizing, waste=waste,
+                                 commitments=commitments, as_of=AS_OF)
+    h = out["headline"]
+    assert h["potential_monthly_savings"] == 50.0
+    assert h["waste_monthly_savings"] == 32.85
+    assert h["usage_optimization_monthly_savings"] == 82.85
+    assert h["rate_optimization_monthly_savings"] == 400.0
+    assert h["commitment_coverage_pct"] == 35.0
+    assert out["waste"]["deduplicated"] == 1
+    assert out["waste"]["count"] == 2
+
+    titles = [p["title"] for p in out["priorities"]]
+    assert titles[0] == "Buy P3Y reservation — D4s_v5"
+    assert not any(t.startswith("Buy") and "savings plan" in t for t in titles)
+    assert any(p["impact_type"] == "unused commitment" for p in out["priorities"])
+    assert any(p["impact_type"] == "risk" and "12 days" in p["title"]
+               for p in out["priorities"])
+    assert not any(p["category"] == "waste" and "NIC" in p["title"]
+                   for p in out["priorities"])

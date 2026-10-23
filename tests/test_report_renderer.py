@@ -791,3 +791,49 @@ def test_budget_status_does_not_sum_mixed_currencies():
     assert metrics["Portfolio budget"]["value"] == "—"
     assert metrics["Portfolio budget"]["detail"] == "Mixed currencies"
     assert any("more than one currency" in w for w in model["warnings"])
+
+
+def test_cost_optimization_adapter_adds_waste_and_commitment_sections_only_when_present():
+    base = models.build_cost_optimization_model(_optimization(), **_context())
+    result = copy.deepcopy(_optimization())
+    result["waste"] = {
+        "currency": "EUR",
+        "potential_monthly_savings": 32.85,
+        "top": [{"resourceId": EVIL, "kind": "orphan", "reason": "NAT gateway attached to no subnet",
+                 "monthlyCost": 32.85, "estMonthlySavings": 32.85,
+                 "recommendedAction": "Delete"}],
+    }
+    result["commitments"] = {
+        "currency": "USD",
+        "potential_monthly_savings": 400.0,
+        "best_family": "reservation",
+        "coverage_pct": 35.0,
+        "unused_commitment_cost": 120.0,
+        "purchases": [
+            {"family": "reservation", "term": "P3Y", "sku": "D4s_v5",
+             "est_monthly_savings": 400.0},
+            {"family": "savings_plan", "term": "P3Y", "sku": "Compute_Savings_Plan",
+             "est_monthly_savings": 350.0},
+        ],
+        "underutilized": [{"kind": "reservation", "name": "ri1", "utilization": 40.0,
+                           "action": "Exchange"}],
+        "expiring": [{"kind": "savings_plan", "name": "sp1", "days_to_expiry": 12}],
+        "hybrid_benefit": [{"resourceId": "/vm/win", "license": "Windows Server",
+                            "monthly_cost": None}],
+    }
+    model = models.build_cost_optimization_model(result, **_context())
+
+    assert model["metrics"][: len(base["metrics"])] == base["metrics"]
+    labels = [m["label"] for m in model["metrics"][len(base["metrics"]):]]
+    assert labels == ["Waste cleanup savings", "Rate optimization savings", "Commitment coverage"]
+    assert model["metrics"][len(base["metrics"])]["value"] == "32.85 EUR"
+    titles = [s["title"] for s in model["sections"]]
+    assert titles.index("Waste cleanup") < titles.index("Rate optimization (commitments)")
+    assert titles[-1] == base["sections"][-1]["title"]
+    rate = next(s for s in model["sections"] if s["title"].startswith("Rate optimization"))
+    assert [r[0] for r in rate["rows"]] == [
+        "buy (headline)", "buy (alternative)", "underutilized", "expiring", "hybrid benefit"]
+    assert rate["rows"][2][3] == "40.0%"
+    html = renderer.render_report(model)
+    assert EVIL not in html
+    assert "Rate optimization (commitments)" in html

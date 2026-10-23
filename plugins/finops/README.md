@@ -1,6 +1,6 @@
 # FinOps Plugin
 
-FinOps capabilities for Azure SRE Agent, delivered as **ten skills + one agent + seven scheduled tasks** —
+FinOps capabilities for Azure SRE Agent, delivered as **twelve skills + one agent + seven scheduled tasks** —
 no changes to the SRE Agent product. The agent and every scheduled task use read-only Azure tools.
 Budget planning can produce a governed shell script for a human to review, save, and run manually;
 the agent never executes it.
@@ -34,10 +34,12 @@ introduces no SRE Agent runtime changes.
 |-------|--------------|--------|
 | [`finops-cost-anomaly-detection`](skills/finops-cost-anomaly-detection/SKILL.md) | Detect cost spikes and correlate each to the deployment / change / PR that caused it | ✅ Wave 1 — validated live |
 | [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations (incl. idle Azure Container Apps environments, always-on apps, and warm session pools with no traffic, plus a cost-led sweep so no high-spend resource is missed), validated against real utilization and cost | ✅ Wave 1 — validated live |
+| [`finops-waste-finder`](skills/finops-waste-finder/SKILL.md) | Find orphaned and idle non-compute waste the rightsizing advisor does not cover — unattached public IPs, NAT gateways with no subnets, dead private endpoints, empty load balancers and application gateways, unconnected VPN/ExpressRoute gateways, snapshots older than 90 days, orphaned NICs, and Log Analytics commitment-tier review — priced from amortized UsageDetails. Read-only. | ✅ Wave 5 — offline-tested |
+| [`finops-commitment-advisor`](skills/finops-commitment-advisor/SKILL.md) | **Rate optimization** — reservation and savings-plan inventory with utilization, underutilized and expiring commitments, normalized monthly purchase recommendations (reservation **or** savings plan, never summed), on-demand vs committed coverage, and Azure Hybrid Benefit candidates for Windows VMs and SQL VMs. Read-only; recommends acting on usage optimization first. | ✅ Wave 5 — offline-tested |
 | [`finops-cost-allocation`](skills/finops-cost-allocation/SKILL.md) | Join cost line items with tags → showback by any dimension; **tag-generic** (inventories the tag keys you actually use and reports coverage against a recommended `team/env/service/costCenter/app/owner` set rather than hard-coding it); explicit unallocated bucket + ranked untagged spend (no tags at all) + tag-hygiene flags | ✅ Wave 2 — offline-tested |
 | [`finops-budget-governance`](skills/finops-budget-governance/SKILL.md) | Read native Azure budgets (`GET Microsoft.Consumption/budgets`) → evaluate each against amount + its own notification thresholds; Azure `forecastSpend` when present, else a client-side run-rate month-end forecast; ranks over / forecast-over / at-risk budgets and flags process gates. Handles the no-budgets-defined case. | ✅ Wave 2 — offline-tested |
 | [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | Advisory recommendations plus deterministic create/update plans for subscription, resource-group, and management-group budgets; Monthly/Quarterly/Annually; explicit or UsageDetails-derived amount; filter preservation and real-contact validation. Produces a governed human-run script with confirmation and read-back verification. | ✅ planning — offline-tested |
-| [`finops-cost-optimization-report`](skills/finops-cost-optimization-report/SKILL.md) | **Executive rollup** — bundles the four read-only analyses (anomalies, rightsizing, cost allocation, budgets) into one headline, a single dollar-ranked priorities list (each item labelled by `impact_type` so savings, overruns, spikes, and governance dollars are never summed together), and per-section detail. Reuses existing signals only — no new data source. Read-only. | ✅ Wave 3 — offline-tested |
+| [`finops-cost-optimization-report`](skills/finops-cost-optimization-report/SKILL.md) | **Executive rollup** — bundles the read-only analyses (anomalies, rightsizing, waste, commitments, cost allocation, budgets) into one headline, a single dollar-ranked priorities list (each item labelled by `impact_type` so savings, overruns, spikes, and governance dollars are never summed together), and per-section detail. Reuses existing signals only — no new data source. Read-only. | ✅ Wave 3 — offline-tested |
 | [`finops-for-ai`](skills/finops-for-ai/SKILL.md) | Attribute Azure AI spend per resource / model / service family from the existing UsageDetails pull. Scopes by **`ConsumedService == Microsoft.CognitiveServices`** (captures both classic Azure OpenAI `kind=OpenAI` **and** Azure AI Foundry `kind=AIServices` accounts — see the AI resource taxonomy note below) **plus `Microsoft.MachineLearningServices`** (Foundry hub/project compute, managed online endpoints, fine-tuning), splits token/model meters from compute meters, ranks top drivers, and emits light read-only hints. | ✅ Wave 3 — offline-tested |
 | [`finops-cost-vs-reliability`](skills/finops-cost-vs-reliability/SKILL.md) | Join monthly UsageDetails cost with alerts (primary reliability pain), Resource Health unavailable/degraded events, and Advisor HighAvailability recommendations → per-resource ranking, per-service rollup, high-pain/low-spend HA investment candidates, and high-spend/no-pain verify-before-cutting hints. Read-only weighted-count scoring. | ✅ Wave 4 — offline-tested |
 | [`finops-managed-scope`](skills/finops-managed-scope/SKILL.md) | Dynamically resolve the agent's subscription, resource-group, and management-group managed resources; enforce scheduled and interactive scope policy; filter UsageDetails; and report included/excluded/unattributed coverage | ✅ foundational guardrail — offline-tested |
@@ -74,7 +76,7 @@ Engineering wave order is complete: Wave 1 anomaly + rightsizing, Wave 2 allocat
 ## Agent
 
 The API installer also creates **`finops-investigator`**, a standalone autonomous, read-only agent
-configured with the ten FinOps skills and the built-in Live Report authoring skill. It is the
+configured with the twelve FinOps skills and the built-in Live Report authoring skill. It is the
 default execution target for all seven scheduled tasks. Budget planning may return a human-run
 script, but the agent and scheduled tasks never execute it. Existing agents are not modified.
 
@@ -134,9 +136,30 @@ read-only tool gate. The Cost Management **Query API is POST-based and stays blo
 required** — line items are aggregated / detected client-side in the sandbox. (Legacy
 `az consumption usage list` returns null under MCA modern billing and is not used.)
 
+## How to deploy with Azure SRE Agent
+
+Install this repository as a **plugin**, not as a code source. A plugin import loads the skills,
+the bundled Python cores, the agent, and the scheduled tasks into SRE Agent; a code source is a
+repository the agent reads to correlate incidents with changes.
+
+1. **Install the pack** — use `install-api.sh` below (recommended: it also creates the agent,
+   scheduled tasks, and RBAC), or in the portal open **Builder → Plugins**, add this repository as a
+   marketplace (or *Install from URL*), and install `finops`.
+2. **Set the managed scope** — add the subscriptions / resource groups the agent should analyze to
+   its managed resources. Every skill enforces this boundary; scheduled runs fail closed without it.
+3. **Grant read-only cost access** — Cost Management Reader (`MI_OBJECT_ID=...` lets the installer
+   do it). For commitment inventory also grant Reservations Reader and Savings plan Reader at the
+   billing / tenant level.
+4. **Connect your IaC repository as a code source** (optional, recommended) — the customer's own
+   Bicep/Terraform/app repository, not this one. It lets anomaly investigations cite the PR or
+   deployment that caused a spike and lets the agent point at the IaC line to change.
+5. **Adopt the FinOps cadence** — daily anomaly and budget checks (Inform), weekly cost-optimization
+   review (Optimize: usage first, then rate), and a monthly showback with tag-coverage follow-up
+   (Operate). Route each priority to its owner via the `team`/`owner` tags.
+
 ## Install everything (recommended)
 
-This plugin ships as a **package**: one command installs the ten skills, the standalone
+This plugin ships as a **package**: one command installs the twelve skills, the standalone
 `finops-investigator` agent, the eight proactive scheduled tasks (two email reviews + six Live
 Reports), and (optionally) the RBAC grant. The tasks are all prefixed **`FinOps:`** and target
 `finops-investigator` by default.
@@ -169,7 +192,7 @@ MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
 ```
 
 Configuration: required `AGENT_RESOURCE_ID`; optional `ENDPOINT` (consistency check only),
-`MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=nirmash/finops-sre-agent-pack`,
+`MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=dmauser/finops-sre-agent-pack`,
 `GITHUB_PAT`, `FINOPS_AGENT_NAME=finops-investigator`, `TASK_AGENT_NAME=finops-investigator`,
 `FINOPS_MCP_TOOLS`, `FINOPS_CONNECTORS`, `TASK_NAME`,
 `CRON="0 14 * * *"` (daily 14:00 UTC), `REPORT_TASK_NAME`, `REPORT_CRON="30 14 * * *"`
@@ -246,6 +269,8 @@ What the API installer sets up:
 | **Agent** `finops-investigator` | standalone autonomous read-only FinOps agent with an explicit skill/tool allowlist; default target for all bundled tasks |
 | **Skill** `finops-cost-anomaly-detection` | the whole skill dir `skills/finops-cost-anomaly-detection/` (SKILL.md + `detect.py`) |
 | **Skill** `finops-rightsizing-advisor` | the whole skill dir `skills/finops-rightsizing-advisor/` (SKILL.md + `rightsize.py`) |
+| **Skill** `finops-waste-finder` | the whole skill dir `skills/finops-waste-finder/` (SKILL.md + `waste.py`) |
+| **Skill** `finops-commitment-advisor` | the whole skill dir `skills/finops-commitment-advisor/` (SKILL.md + `commit.py`) |
 | **Skill** `finops-cost-allocation` | the whole skill dir `skills/finops-cost-allocation/` (SKILL.md + `allocate.py`) |
 | **Skill** `finops-budget-governance` | the whole skill dir `skills/finops-budget-governance/` (SKILL.md + `budget.py`) |
 | **Skill** `finops-budget-editor` | the whole skill dir `skills/finops-budget-editor/` (SKILL.md + `recommend.py`); deterministic recommendation/proposal builder and governed human-run application script generator |
@@ -258,7 +283,7 @@ What the API installer sets up:
 | **Live Report** `FinOps: Cost Overview` (daily) | driven by [`scheduled-tasks/cost-overview-report-daily.yaml`](scheduled-tasks/cost-overview-report-daily.yaml) — a snapshot cost dashboard (total, daily trend, top services, top resource groups) in Operations Hub, re-versioned daily |
 | **Live Report** `FinOps: Rightsizing Savings` (weekly) | driven by [`scheduled-tasks/rightsizing-savings-report-weekly.yaml`](scheduled-tasks/rightsizing-savings-report-weekly.yaml) — one shared rightsizing pull updates the snapshot dashboard and delivers the ranked review by email when configured |
 | **Live Report** `FinOps: Budget Status` (daily) | driven by [`scheduled-tasks/budget-status-report-daily.yaml`](scheduled-tasks/budget-status-report-daily.yaml) — a snapshot budget-governance dashboard (spend vs amount, forecast, status, and gated budgets from `finops-budget-governance`) in Operations Hub, re-versioned daily |
-| **Live Report** `FinOps: Cost Optimization` (weekly) | driven by [`scheduled-tasks/cost-optimization-report-weekly.yaml`](scheduled-tasks/cost-optimization-report-weekly.yaml) — the executive rollup dashboard (headline, a single dollar-ranked priorities list, and per-section detail across anomalies, rightsizing, allocation, and budgets from `finops-cost-optimization-report`) in Operations Hub, re-versioned weekly |
+| **Live Report** `FinOps: Cost Optimization` (weekly) | driven by [`scheduled-tasks/cost-optimization-report-weekly.yaml`](scheduled-tasks/cost-optimization-report-weekly.yaml) — the executive rollup dashboard (headline, a single dollar-ranked priorities list, and per-section detail across anomalies, rightsizing, waste, commitments, allocation, and budgets from `finops-cost-optimization-report`) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: AI Spend` (weekly) | driven by [`scheduled-tasks/ai-spend-report-weekly.yaml`](scheduled-tasks/ai-spend-report-weekly.yaml) — an Azure AI cost dashboard (total AI spend, per-model + per-resource breakdowns, token-vs-compute split, top drivers, and read-only hints from `finops-for-ai`; covers Azure OpenAI + AI Foundry + ML) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: Cost vs Reliability` (weekly) | driven by [`scheduled-tasks/cost-vs-reliability-report-weekly.yaml`](scheduled-tasks/cost-vs-reliability-report-weekly.yaml) — a cost-vs-reliability dashboard (spend + pain table, service rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from `finops-cost-vs-reliability`) in Operations Hub, re-versioned weekly |
 | **RBAC** | Reader on the exact agent ARM resource; optionally Cost Management Reader on each required UsageDetails transport scope when `MI_OBJECT_ID` is set |
@@ -294,7 +319,7 @@ The pack also installs six **Live Reports** — self-contained HTML dashboards t
   `finops-budget-governance` evaluation (budgets `GET` only — no cost pull).
 - **`FinOps: Cost Optimization`** (weekly) — the executive rollup: a headline row, one dollar-ranked
   priorities list (each item labelled by `impact_type` so different kinds of dollars are never
-  summed), and per-section detail across anomalies, rightsizing, allocation, and budgets, from the
+  summed), and per-section detail across anomalies, rightsizing, waste, commitments, allocation, and budgets, from the
   `finops-cost-optimization-report` skill.
 - **`FinOps: AI Spend`** (weekly) — Azure AI cost attributed per model, per resource, and per service
   family, with a token-vs-compute split, top cost drivers, and read-only optimization hints, from the
@@ -315,7 +340,7 @@ settles roughly daily, so daily/weekly refresh matches the data's freshness.
 > **Requires Live Reports enabled on the agent** (first-party + Operations Hub; feature flag
 > `EnableLiveReports`). Where it isn't enabled, report saves do not refresh dashboards. The merged
 > rightsizing task still completes its scheduled result/email delivery after a report-tool failure;
-> anomaly delivery and all ten skills are unaffected.
+> anomaly delivery and all twelve skills are unaffected.
 
 ### Runtime and API cost measurements
 

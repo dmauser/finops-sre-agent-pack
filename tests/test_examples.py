@@ -16,6 +16,8 @@ SKILL_NAMES = (
     "finops-cost-vs-reliability",
     "finops-for-ai",
     "finops-rightsizing-advisor",
+    "finops-waste-finder",
+    "finops-commitment-advisor",
 )
 
 
