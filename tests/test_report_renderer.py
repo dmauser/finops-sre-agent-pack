@@ -837,3 +837,25 @@ def test_cost_optimization_adapter_adds_waste_and_commitment_sections_only_when_
     html = renderer.render_report(model)
     assert EVIL not in html
     assert "Rate optimization (commitments)" in html
+
+def test_ai_spend_adapter_renders_optional_splits_and_new_verify_hints():
+    result = _ai_spend()
+    result["by_token_direction"] = [
+        {"token_direction": "input", "monthly_usd": 15, "pct": 75.6},
+    ]
+    result["by_deployment_type"] = [
+        {"deployment_type": "global", "monthly_usd": 19.83, "pct": 100},
+    ]
+    result["by_project"] = [{"project": "support-bot", "monthly_usd": 20.03, "pct": 100}]
+    result["hints"].append(
+        {"type": "prompt_caching_verify", "target": "input", "detail": "Check cache.", "monthly_usd": 15}
+    )
+    model = models.build_ai_spend_model(result, **_context())
+
+    split = model["sections"][0]["rows"]
+    assert ["token direction", "input", "$15.00", "75.6%"] in split
+    assert ["deployment type", "global", "$19.83", "100.0%"] in split
+    assert ["Foundry project", "support-bot", "$20.03", "100.0%"] in split
+    hint_rows = [row for section in model["sections"] for row in section["rows"]
+                 if row and row[0] == "prompt_caching_verify"]
+    assert hint_rows[0][-1] == "verify first"

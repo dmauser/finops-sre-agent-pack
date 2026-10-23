@@ -67,14 +67,15 @@ Follow the canonical Consumption UsageDetails transport contract in `finops-mana
 details are specific to this skill:
 
 1. **Project the extra fields** the classifier needs — add `consumedService`, `meterSubCategory`,
-   and `meterName` on top of the usual cost fields:
+   `meterName`, and the top-level `tags` on top of the usual cost fields:
 
    ```
-   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, consumedService: properties.consumedService, meterCategory: properties.meterCategory, meterSubCategory: properties.meterSubCategory, meterName: properties.meterName, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId}, nextLink: nextLink}"
+   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, consumedService: properties.consumedService, meterCategory: properties.meterCategory, meterSubCategory: properties.meterSubCategory, meterName: properties.meterName, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"
    ```
 
    In modern billing the full ARM resource id is in `properties.instanceName`; the projection falls
-   back to `properties.resourceId`.
+   back to `properties.resourceId`. `tags` carries the Foundry-applied `project` tag (preview) used
+   for per-project chargeback; it is optional — rows without it are reported as `(untagged)`.
 
 2. **Keep only the AI service families.** After flattening, retain rows whose `consumedService` is
    `Microsoft.CognitiveServices` or `Microsoft.MachineLearningServices` (case-insensitive). Do **not**
@@ -133,9 +134,24 @@ result = attribute_ai_costs(
   `top_model`.
 - **by_model** — per model (model_token lines only), with `resource_count`.
 - **top_drivers** — the top blended resource×model×meter-type lines by dollars.
-- **hints** — light cost-only advisories: `model_concentration` (one model dominates),
-  `commitment_opportunity` (high steady model spend → evaluate PTU), `compute_no_tokens_verify`
-  (compute with no tokens → verify it isn't idle), `resource_sprawl` (many tiny AI resources).
+- **by_token_direction** — model-token dollars split into `input`, `cached_input`, `cache_write`,
+  `output`, `unspecified`, parsed **best-effort** from meter names (Microsoft does not publish a
+  meter→token-type map; unrecognized meters stay `unspecified`).
+- **by_deployment_type** — model-token dollars by `batch`, `flex`, `provisioned`, `priority`,
+  `data_zone`, `global`, `regional`, `unspecified` (same best-effort parsing).
+- **by_project** — per Foundry `project` tag (case-insensitive key); empty when no row is tagged.
+  Covers models sold directly by Azure only; Marketplace/partner models may bill under the resource
+  group instead and be missed.
+- **hints** — light cost-only advisories: `model_concentration` (one model dominates → evaluate
+  model router or a smaller/fine-tuned model against an eval set), `commitment_opportunity` (high
+  steady model spend → evaluate PTU with pay-as-you-go spillover), `compute_no_tokens_verify`
+  (compute with no tokens → verify it isn't idle), `resource_sprawl` (many tiny AI resources),
+  `fine_tune_hosting_verify` (fine-tuned deployment hosting bills hourly regardless of traffic),
+  `prompt_caching_verify` (meaningful input spend with little cached-input spend → put static
+  instructions/tools first so prompts are cache-eligible), `context_heavy_input` (input tokens
+  dominate a model's spend → trim/summarize context, retrieve less, route to a cheaper model), and
+  `batch_candidate` (no Batch/Flex spend → move non-interactive work to Batch, ~50% cheaper than
+  Global Standard with a 24h target).
 
 ### Step 4 — Report
 
@@ -143,5 +159,19 @@ Produce: a **headline** (total AI spend, # resources, # models, the model-token 
 **by-model** table and a **by-resource** table (with kind + top model); the **top cost drivers**; and
 the **hints** as a "where to look" list. Never sum model-token and compute dollars into a single
 "savings" number — they are different cost drivers. Label PTU/commitment and compute-no-tokens hints
-as **estimates / verify first**. If cost was partial (Step 1 truncation), say so at the top. If there
-is no AI spend, say so in one line.
+as **estimates / verify first**; the same applies to the caching, context, batch, and fine-tune
+hosting hints and to the token-direction / deployment-type splits, which come from meter-name
+parsing. If cost was partial (Step 1 truncation), say so at the top. If there is no AI spend, say so
+in one line.
+
+When relevant, close with a short **governance** note (advice only — this skill changes nothing):
+
+- **Budgets and anomaly alerts are smoke detectors** — they fire on billing data after spend has
+  happened and do not cap it.
+- **Token limits are the circuit breaker** — enforce them in the request path with Foundry Control
+  Plane / AI Gateway or the APIM `llm-token-limit` policy keyed per team or app (429 on rate limit,
+  403 on exhausted quota).
+- **Chargeback** — use `by_project` (Foundry `project` tag) when present; otherwise fall back to
+  `finops-cost-allocation` tags.
+- **Unit economics** — cost per successful outcome, cache-hit rate, and ROI need Foundry
+  traces/evaluations and token metrics, not billing data. Say this rather than estimating them.

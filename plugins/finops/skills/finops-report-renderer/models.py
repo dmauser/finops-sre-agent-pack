@@ -13,7 +13,13 @@ _STATUS_ORDER = {
     "at_risk": 2,
     "on_track": 3,
 }
-_VERIFY_HINTS = {"commitment_opportunity", "compute_no_tokens_verify"}
+_VERIFY_HINTS = {
+    "commitment_opportunity",
+    "compute_no_tokens_verify",
+    "fine_tune_hosting_verify",
+    "prompt_caching_verify",
+    "batch_candidate",
+}
 
 
 def _field(obj, *names, default=None):
@@ -1386,6 +1392,26 @@ def build_ai_spend_model(
         key=lambda row: (-row[1], row[0].casefold(), row[0], _decimal_key(row[2]))
     )
 
+    split_rows = []
+    for field, key, label in (
+        ("by_token_direction", "token_direction", "token direction"),
+        ("by_deployment_type", "deployment_type", "deployment type"),
+        ("by_project", "project", "Foundry project"),
+    ):
+        rows = []
+        for index, row in enumerate(_objects(result.get(field), f"result.{field}")):
+            prefix = f"result.{field}[{index}]"
+            name = _text(row.get(key), f"{prefix}.{key}")
+            cost = _decimal(row.get("monthly_usd"), f"{prefix}.monthly_usd")
+            pct = _decimal(row.get("pct"), f"{prefix}.pct", optional=True)
+            rows.append((name, cost, pct))
+        rows.sort(
+            key=lambda row: (-row[1], row[0].casefold(), row[0], _decimal_key(row[2]))
+        )
+        split_rows.extend(
+            [label, name, _money(cost), _percent(pct)] for name, cost, pct in rows
+        )
+
     models = []
     for index, row in enumerate(_objects(result.get("by_model"), "result.by_model")):
         prefix = f"result.by_model[{index}]"
@@ -1509,11 +1535,17 @@ def build_ai_spend_model(
         [
             {
                 "title": "Service and meter split",
-                "description": "AI service families and meter types remain separate.",
+                "description": (
+                    "AI service families, meter types, and (when billed meters encode them) token "
+                    "direction, deployment type, and Foundry project remain separate."
+                    if split_rows
+                    else "AI service families and meter types remain separate."
+                ),
                 "columns": ["Breakdown", "Type", "Cost", "Share"],
                 "rows": (
                     [["service family", name, _money(cost), _percent(pct)] for name, cost, pct in family_rows]
                     + [["meter type", name, _money(cost), _percent(pct)] for name, cost, pct in meter_rows]
+                    + split_rows
                 ),
                 "emptyMessage": "No AI service or meter breakdown was produced.",
             },

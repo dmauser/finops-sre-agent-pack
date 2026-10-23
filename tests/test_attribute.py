@@ -174,3 +174,70 @@ def test_as_of_is_max_date():
         _line(1.0, name="gpt-4o Tokens", date="2026-07-15"),
     ])
     assert out["as_of"] == "2026-07-15"
+
+
+def test_token_direction_and_deployment_type_split():
+    out = attribute_ai_costs([
+        _line(100.0, sub="gpt-4o", name="gpt-4o-0513 Inp glbl Tokens"),
+        _line(20.0, sub="gpt-4o", name="gpt-4o-0513 cached Inp glbl Tokens"),
+        _line(5.0, sub="gpt-5.6", name="gpt-5.6 cache write Inp DZ Tokens"),
+        _line(50.0, sub="gpt-4o", name="gpt-4o-0513 Outp Data Zone Tokens"),
+        _line(10.0, sub="gpt-4o", name="gpt-4o-0513 Batch Inp glbl Tokens"),
+    ])
+    by_dir = {r["token_direction"]: r["monthly_usd"] for r in out["by_token_direction"]}
+    assert by_dir == {"input": 110.0, "cached_input": 20.0, "cache_write": 5.0, "output": 50.0}
+    by_dep = {r["deployment_type"]: r["monthly_usd"] for r in out["by_deployment_type"]}
+    assert by_dep == {"global": 120.0, "data_zone": 55.0, "batch": 10.0}
+
+
+def test_unknown_meters_stay_unspecified_and_suppress_meter_based_hints():
+    out = attribute_ai_costs([_line(5000.0, sub="gpt-4o", name="gpt-4o Tokens")])
+    assert out["by_token_direction"] == [
+        {"token_direction": "unspecified", "monthly_usd": 5000.0, "pct": 100.0}
+    ]
+    types = {h["type"] for h in out["hints"]}
+    assert not types & {"prompt_caching_verify", "context_heavy_input", "batch_candidate"}
+
+
+def test_prompt_caching_and_context_heavy_hints():
+    out = attribute_ai_costs([
+        _line(900.0, sub="gpt-4o", name="gpt-4o Inp glbl Tokens"),
+        _line(100.0, sub="gpt-4o", name="gpt-4o Outp glbl Tokens"),
+    ])
+    hints = {h["type"]: h for h in out["hints"]}
+    assert hints["prompt_caching_verify"]["monthly_usd"] == 900.0
+    assert hints["context_heavy_input"]["target"] == "gpt-4o"
+    assert hints["batch_candidate"]["monthly_usd"] == 1000.0
+
+
+def test_healthy_cache_share_and_batch_usage_suppress_hints():
+    out = attribute_ai_costs([
+        _line(300.0, sub="gpt-4o", name="gpt-4o Inp glbl Tokens"),
+        _line(200.0, sub="gpt-4o", name="gpt-4o cached Inp glbl Tokens"),
+        _line(400.0, sub="gpt-4o", name="gpt-4o Outp glbl Tokens"),
+        _line(100.0, sub="gpt-4o", name="gpt-4o Batch Inp glbl Tokens"),
+    ])
+    types = {h["type"] for h in out["hints"]}
+    assert not types & {"prompt_caching_verify", "context_heavy_input", "batch_candidate"}
+
+
+def test_fine_tune_hosting_is_compute_with_specific_hint():
+    out = attribute_ai_costs([
+        _line(250.0, cat="Azure OpenAI", sub="gpt-4o-mini-ft",
+              name="gpt-4o-mini-2024-07-18 FT Hosting Hours", rid=FOUNDRY_ID),
+    ])
+    assert out["by_meter_type"][0]["meter_type"] == "compute"
+    types = [h["type"] for h in out["hints"]]
+    assert "fine_tune_hosting_verify" in types
+    assert "compute_no_tokens_verify" not in types
+
+
+def test_project_tag_attribution_only_when_tag_present():
+    untagged = attribute_ai_costs([_line(10.0, name="gpt-4o Tokens")])
+    assert untagged["by_project"] == []
+
+    tagged = _line(30.0, name="gpt-4o Tokens")
+    tagged["tags"] = {"Project": "support-bot"}
+    out = attribute_ai_costs([tagged, _line(10.0, name="gpt-4o Tokens")])
+    by_project = {r["project"]: r["monthly_usd"] for r in out["by_project"]}
+    assert by_project == {"support-bot": 30.0, "(untagged)": 10.0}

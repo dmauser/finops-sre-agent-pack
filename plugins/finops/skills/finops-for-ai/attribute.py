@@ -31,12 +31,22 @@ usual cost projection):
 
 Optional `resource_kinds {resourceId: kind}` (from a Resource Graph GET) lets the rollup label
 each resource OpenAI vs AIServices vs the ML kind; omit it and the label is just left off.
+An optional per-row `tags` object (top-level UsageDetail `tags`) enables Foundry project
+chargeback: Foundry automatically applies a `project` tag to project usage (preview, models sold
+by Azure only).
+
+Microsoft does not publish a meter-name -> token-type mapping, so the token-direction
+(input / cached input / cache write / output) and deployment-type (Global / Data Zone /
+Regional / Batch / Flex / Provisioned / Priority) splits are best-effort meter-name parsing.
+Unrecognised meters stay "unspecified", and hints built on them are labelled verify-first.
 
 Output: a single dict (see attribute_ai_costs) — total AI spend, breakdowns by service family,
-meter type (model-token vs compute vs other-cognitive), resource, and model, the top blended
-cost drivers, and light read-only optimization hints. Feed it to a table / Live Report.
+meter type (model-token vs compute vs other-cognitive), resource, model, token direction,
+deployment type, and Foundry project, the top blended cost drivers, and light read-only
+optimization hints. Feed it to a table / Live Report.
 """
 
+import re
 from collections import defaultdict
 
 # consumedService -> the service family we report under. Keys matched case-insensitively.
@@ -52,10 +62,37 @@ _OTHER_COGNITIVE = "other_cognitive"  # Speech/Vision/Language/etc. transaction 
 
 # substrings (lower-cased) that mark a line as token/model usage
 _TOKEN_HINTS = ("token", "tokens")
-# substrings that mark a line as compute
-_COMPUTE_HINTS = ("compute", "vcpu", "vm ", "instance", "endpoint", "training", "inference hour", "core hour")
+# substrings that mark a line as compute (fine-tuned model hosting bills hourly like compute)
+_COMPUTE_HINTS = ("compute", "vcpu", "vm ", "instance", "endpoint", "training", "inference hour",
+                  "core hour", "hosting")
 # meter-name suffixes that trail the model name, stripped when parsing the model
-_MODEL_SUFFIX_MARKERS = (" inp", " outp", " input", " output", " cached", " token", " glbl", " regional", " data zone")
+_MODEL_SUFFIX_MARKERS = (" inp", " outp", " input", " output", " cached", " cchd", " token", " glbl",
+                         " regional", " data zone", " dz", " batch", " flex")
+
+# token-direction buckets (model_token lines only)
+_INPUT = "input"
+_CACHED_INPUT = "cached_input"
+_CACHE_WRITE = "cache_write"
+_OUTPUT = "output"
+_UNSPECIFIED = "unspecified"
+
+# meter-name words (lower-cased, split on non-alphanumerics) for token direction
+_CACHE_WORDS = {"cached", "cache", "cchd", "cch"}
+_WRITE_WORDS = {"write", "writes", "wr", "wrt"}
+_INPUT_WORDS = {"inp", "input", "inpt", "prompt"}
+_OUTPUT_WORDS = {"outp", "output", "outpt", "completion"}
+
+# deployment-type words, checked in this order (Global Batch meters can also carry "glbl")
+_DEPLOYMENT_WORDS = (
+    ("batch", {"batch"}),
+    ("flex", {"flex"}),
+    ("provisioned", {"ptu", "provisioned", "prvsnd"}),
+    ("priority", {"priority"}),
+    ("data_zone", {"dz", "datazone"}),
+    ("global", {"glbl", "global"}),
+    ("regional", {"regional", "regnl", "rgnl"}),
+)
+_ASYNC_DEPLOYMENTS = {"batch", "flex"}
 
 _TOP_DRIVERS = 10
 _TOP_RESOURCES = 25
@@ -68,6 +105,17 @@ _COMMITMENT_USD = 1000.0
 # more than this many distinct AI resources each under _SPRAWL_EACH_USD is flagged as sprawl
 _SPRAWL_COUNT = 8
 _SPRAWL_EACH_USD = 25.0
+# input-side model-token spend at/above this monthly $ is worth a prompt-caching / context look
+_CONTEXT_MIN_USD = 100.0
+# cached-input under this % of input-side spend suggests the stable prompt prefix isn't reused
+_CACHE_LOW_PCT = 10.0
+# input-side (input + cached + cache write) at/above this % of a model's token $ means context dominates
+_INPUT_HEAVY_PCT = 70.0
+# model-token spend at/above this monthly $ with no Batch/Flex usage is worth an async-tier look
+_BATCH_MIN_USD = 500.0
+# Foundry automatically tags project usage with this tag key (preview)
+_PROJECT_TAG = "project"
+_UNTAGGED = "(untagged)"
 
 
 def _norm(text) -> str:
@@ -105,6 +153,49 @@ def _meter_type(family, item) -> str:
     if family == "Machine Learning":
         return _COMPUTE
     return _OTHER_COGNITIVE
+
+
+def _meter_words(item) -> set:
+    text = " ".join((_norm(item.get("meterName")), _norm(item.get("meterSubCategory"))))
+    return {w for w in re.split(r"[^a-z0-9]+", text) if w}
+
+
+def _token_direction(words) -> str:
+    """Best-effort input / cached-input / cache-write / output split from meter words."""
+    if words & _CACHE_WORDS:
+        return _CACHE_WRITE if words & _WRITE_WORDS else _CACHED_INPUT
+    if words & _INPUT_WORDS:
+        return _INPUT
+    if words & _OUTPUT_WORDS:
+        return _OUTPUT
+    return _UNSPECIFIED
+
+
+def _deployment_type(item, words) -> str:
+    """Best-effort deployment type from meter words; "unspecified" when not encoded."""
+    if "data zone" in _norm(item.get("meterName")):
+        words = words | {"dz"}
+    for label, markers in _DEPLOYMENT_WORDS:
+        if words & markers:
+            return label
+    return _UNSPECIFIED
+
+
+def _is_fine_tune_hosting(item, words) -> bool:
+    if "hosting" in _norm(item.get("meterName")):
+        return True
+    return bool(words & {"ft", "finetuned", "finetune"}) and bool(words & {"hour", "hours", "hr"})
+
+
+def _project_tag(item) -> str:
+    """Value of the Foundry `project` tag (case-insensitive key), or "" when absent."""
+    tags = item.get("tags")
+    if not isinstance(tags, dict):
+        return ""
+    for key, value in tags.items():
+        if _norm(key) == _PROJECT_TAG and str(value or "").strip():
+            return str(value).strip()
+    return ""
 
 
 def _parse_model(item) -> str:
@@ -167,6 +258,9 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
         "by_resource":       [{"resourceId","resourceName","kind","service_family","monthly_usd","pct","top_model"}...],
         "by_model":          [{"model","monthly_usd","pct","resource_count"}...],   # model_token only
         "top_drivers":       [{"resourceName","service_family","model","meter_type","monthly_usd"}...],
+        "by_token_direction":  [{"token_direction","monthly_usd","pct"}...],  # model_token only
+        "by_deployment_type":  [{"deployment_type","monthly_usd","pct"}...],  # model_token only
+        "by_project":          [{"project","monthly_usd","pct"}...],  # [] unless a `project` tag is seen
         "hints":             [{"type","target","detail","monthly_usd"}...],
       }
     """
@@ -183,6 +277,12 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
     res_meta = {}                                   # resourceId -> {name, family}
     res_model_cost = defaultdict(lambda: defaultdict(float))  # resourceId -> {model: usd}
     driver_cost = defaultdict(float)                # (resourceId, model, meter_type) -> usd
+    direction_cost = defaultdict(float)             # token direction -> usd (model_token only)
+    model_direction_cost = defaultdict(lambda: defaultdict(float))  # model -> {direction: usd}
+    deployment_cost = defaultdict(float)            # deployment type -> usd (model_token only)
+    project_cost = defaultdict(float)               # project tag -> usd
+    tagged_project_seen = False
+    ft_hosting_cost = defaultdict(float)            # resourceId -> fine-tuned hosting usd
 
     for item in line_items:
         cost = item.get("cost")
@@ -198,19 +298,31 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
             as_of = str(date)
 
         mtype = _meter_type(family, item)
+        words = _meter_words(item)
         rid = item.get("resourceId") or ""
         fam_cost[family] += cost
         type_cost[mtype] += cost
         res_cost[rid] += cost
         res_meta.setdefault(rid, {"name": _resource_name(rid), "family": family})
 
+        project = _project_tag(item)
+        tagged_project_seen = tagged_project_seen or bool(project)
+        project_cost[project or _UNTAGGED] += cost
+
+        if mtype == _COMPUTE and _is_fine_tune_hosting(item, words):
+            ft_hosting_cost[rid] += cost
+
         model = ""
         if mtype == _MODEL_TOKEN:
+            direction = _token_direction(words)
+            direction_cost[direction] += cost
+            deployment_cost[_deployment_type(item, words)] += cost
             model = _parse_model(item)
             if model:
                 model_cost[model] += cost
                 model_resources[model].add(rid)
                 res_model_cost[rid][model] += cost
+                model_direction_cost[model][direction] += cost
         driver_cost[(rid, model, mtype)] += cost
 
     by_service_family = _ranked(fam_cost, label="service_family")
@@ -252,6 +364,10 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
         res_cost=res_cost,
         res_meta=res_meta,
         res_model_cost=res_model_cost,
+        direction_cost=direction_cost,
+        model_direction_cost=model_direction_cost,
+        deployment_cost=deployment_cost,
+        ft_hosting_cost=ft_hosting_cost,
     )
 
     return {
@@ -264,14 +380,22 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
         "by_resource": by_resource,
         "by_model": by_model,
         "top_drivers": top_drivers,
+        "by_token_direction": _ranked(direction_cost, label="token_direction"),
+        "by_deployment_type": _ranked(deployment_cost, label="deployment_type"),
+        "by_project": _ranked(project_cost, label="project") if tagged_project_seen else [],
         "hints": hints,
     }
 
 
-def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost):
+def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost, direction_cost=None,
+                 model_direction_cost=None, deployment_cost=None, ft_hosting_cost=None):
     """Light, read-only, COST-ONLY advisory hints. Never claims idle without utilization —
     true idle/under-use detection needs Azure Monitor token metrics (deferred to v2)."""
     hints = []
+    direction_cost = direction_cost or {}
+    model_direction_cost = model_direction_cost or {}
+    deployment_cost = deployment_cost or {}
+    ft_hosting_cost = ft_hosting_cost or {}
 
     # 1. Model concentration — one model dominates model-token spend.
     model_total = sum(model_cost.values())
@@ -282,8 +406,9 @@ def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost):
             hints.append({
                 "type": "model_concentration",
                 "target": top_model,
-                "detail": (f"{top_model} is {share}% of model-token spend — review whether a "
-                           f"cheaper model/tier, batch API, or prompt-size reduction fits this workload."),
+                "detail": (f"{top_model} is {share}% of model-token spend — most workloads mix simple and "
+                           f"complex requests; evaluate model router (cost or balanced mode) or a smaller/"
+                           f"fine-tuned model for routine requests, gated on your evaluation set."),
                 "monthly_usd": round(top_usd, 2),
             })
 
@@ -295,17 +420,19 @@ def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost):
             hints.append({
                 "type": "commitment_opportunity",
                 "target": name,
-                "detail": (f"{name} has ~${round(usd, 2)}/mo of model-token spend — evaluate "
-                           f"Provisioned Throughput (PTU) vs pay-as-you-go if the traffic is steady (estimate)."),
+                "detail": (f"{name} has ~${round(usd, 2)}/mo of model-token spend — if traffic is steady and "
+                           f"predictable, evaluate Provisioned Throughput (PTU) with spillover to pay-as-you-go "
+                           f"vs Standard (estimate; confirm with token-usage metrics)."),
                 "monthly_usd": round(usd, 2),
             })
 
     # 3. Compute with no model tokens — a Cognitive/ML resource billing compute but no token
     #    usage may be an unused deployment/endpoint. Flag to VERIFY (needs metrics to confirm).
+    #    Fine-tuned hosting gets its own, more specific hint (5) instead.
     for rid, usd in res_cost.items():
         if usd <= 0:
             continue
-        if not res_model_cost.get(rid):  # no model-token spend recorded for this resource
+        if not res_model_cost.get(rid) and not ft_hosting_cost.get(rid):
             meta = res_meta.get(rid, {})
             name = meta.get("name", _resource_name(rid))
             hints.append({
@@ -325,6 +452,65 @@ def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost):
             "detail": (f"{len(small)} AI resources each under ${_SPRAWL_EACH_USD}/mo — consider "
                        f"consolidating into fewer accounts to simplify governance and quota."),
             "monthly_usd": round(sum(res_cost[rid] for rid in small), 2),
+        })
+
+    # 5. Fine-tuned model hosting bills hourly whether or not the deployment serves traffic.
+    for rid, usd in ft_hosting_cost.items():
+        if usd <= 0:
+            continue
+        name = res_meta.get(rid, {}).get("name", _resource_name(rid))
+        hints.append({
+            "type": "fine_tune_hosting_verify",
+            "target": name,
+            "detail": (f"{name} bills ~${round(usd, 2)}/mo of fine-tuned model hosting, charged hourly "
+                       f"regardless of traffic — verify each deployment is used; an undeployed fine-tuned "
+                       f"model stays stored and can be redeployed later."),
+            "monthly_usd": round(usd, 2),
+        })
+
+    # 6. Prompt caching — input-side spend with little or no cached-input billing.
+    input_side = sum(direction_cost.get(d, 0.0) for d in (_INPUT, _CACHED_INPUT, _CACHE_WRITE))
+    cached = direction_cost.get(_CACHED_INPUT, 0.0)
+    if input_side >= _CONTEXT_MIN_USD and _pct(cached, input_side) < _CACHE_LOW_PCT:
+        hints.append({
+            "type": "prompt_caching_verify",
+            "target": "model-token input",
+            "detail": (f"Cached input is {_pct(cached, input_side)}% of ~${round(input_side, 2)}/mo input-side "
+                       f"spend — verify cache hits (cached_tokens); put stable instructions, tool schemas, and "
+                       f"examples first and per-request content (timestamps, user data, history) last. "
+                       f"Meters may not split cached tokens."),
+            "monthly_usd": round(direction_cost.get(_INPUT, 0.0), 2),
+        })
+
+    # 7. Context-heavy models — input-side dollars dominate (context window paid every turn).
+    for model, dirs in model_direction_cost.items():
+        model_usd = sum(dirs.values())
+        side = sum(dirs.get(d, 0.0) for d in (_INPUT, _CACHED_INPUT, _CACHE_WRITE))
+        if side < _CONTEXT_MIN_USD or not dirs.get(_OUTPUT):
+            continue
+        share = _pct(side, model_usd)
+        if share >= _INPUT_HEAVY_PCT:
+            hints.append({
+                "type": "context_heavy_input",
+                "target": model,
+                "detail": (f"{model}: {share}% of token spend is input — the context window is re-sent every "
+                           f"turn; review retrieved content, tool definitions (tool search/toolboxes), and "
+                           f"replayed history (summaries/memory) before changing models."),
+                "monthly_usd": round(side, 2),
+            })
+
+    # 8. No Batch/Flex usage on material spend — async work may be on interactive pricing.
+    token_total = sum(deployment_cost.values())
+    classified = token_total - deployment_cost.get(_UNSPECIFIED, 0.0)
+    async_usd = sum(deployment_cost.get(d, 0.0) for d in _ASYNC_DEPLOYMENTS)
+    if token_total >= _BATCH_MIN_USD and classified > 0 and async_usd == 0:
+        hints.append({
+            "type": "batch_candidate",
+            "target": "model-token spend",
+            "detail": (f"~${round(token_total, 2)}/mo of model-token spend with no Batch/Flex meters — move "
+                       f"delay-tolerant work (classification, extraction, evaluation runs) to Batch (50% less "
+                       f"than Global Standard, 24-hour target) or Flex if eligible (estimate)."),
+            "monthly_usd": round(token_total, 2),
         })
 
     hints.sort(key=lambda h: h["monthly_usd"], reverse=True)
