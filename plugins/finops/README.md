@@ -384,27 +384,79 @@ settles roughly daily, so daily/weekly refresh matches the data's freshness.
 > [Manual scheduled tasks](#manual-scheduled-tasks). Check them with
 > `srectl scheduledtask list`, or under **Scheduled tasks** in the portal.
 
-### Manual scheduled tasks
-
-If you can't run `install-api.sh`, render the ready-to-use task definitions and create each one in
-the portal (**Scheduled tasks → Create**) with the rendered name, cron, agent, and prompt:
-
-```bash
-TASK_AGENT_NAME=finops-investigator \
-AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<agent> \
-ALERT_EMAIL=you@contoso.com \
-python3 plugins/finops/scheduled-tasks/render_tasks.py api > finops-tasks.json
-```
-
-`ALERT_EMAIL` and `GITHUB_REPO` are optional, and each `*_CRON` variable overrides a default
-schedule. Copy each prompt exactly; it carries the fail-closed managed-scope preamble. The agent's
-managed identity still needs Cost Management Reader (and Reservations/Savings plan Reader for
-commitments) on the managed scope.
-
 > **Requires Live Reports enabled on the agent** (first-party + Operations Hub; feature flag
 > `EnableLiveReports`). Where it isn't enabled, report saves do not refresh dashboards. The merged
 > rightsizing task still completes its scheduled result/email delivery after a report-tool failure;
 > anomaly delivery and all twelve skills are unaffected.
+
+### Manual scheduled tasks
+
+Use this when you installed the pack as a plugin (or created `finops-investigator` by hand) and
+can't run `install-api.sh`. A plugin install never creates scheduled tasks, so without these steps
+no Live Report or email review refreshes.
+
+1. **Render the task definitions** with your values filled in (no placeholders remain):
+
+   ```bash
+   TASK_AGENT_NAME=finops-investigator \
+   AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<agent> \
+   ALERT_EMAIL=you@contoso.com \
+   python3 plugins/finops/scheduled-tasks/render_tasks.py api > finops-tasks.json
+   ```
+
+   `ALERT_EMAIL` and `GITHUB_REPO` are optional, and each `*_CRON` variable overrides a default
+   schedule (see [API installer](#api-installer)). If your
+   runtime can't use custom agents as a scheduled home agent (see the V2 note above), set
+   `TASK_AGENT_NAME` to the base agent's name instead.
+
+2. **Create one task per entry** in the portal (**Scheduled tasks → Create scheduled task**),
+   copying each field:
+
+   | Rendered field | Portal field | Value |
+   |---|---|---|
+   | `name` | **Task name** | e.g. `FinOps: Cost Optimization (Live Report, Weekly)` |
+   | `agentPrompt` | **Instructions** | paste exactly, unedited |
+   | `cronExpression` | **Schedule** → custom cron (UTC) | e.g. `0 17 * * 1` |
+   | `agent` | **Response custom agent** | `finops-investigator` |
+   | `agentMode` | **Agent autonomy level** | **Autonomous** (the portal defaults to Review) |
+   | `description`, `modelTier` | description / model, where the form offers them | as rendered |
+
+   Leave **Date range** open-ended and **Run limit** unset, or the report stops refreshing when
+   either ends. Create all seven tasks, or at least the reports you use. Copy the instructions
+   exactly: they carry the fail-closed managed-scope preamble, the report name that `SaveReport`
+   versions, and the delivery rules. Keep the rendered task names too.
+
+   > **Use Autonomous, not Review.** In Review mode the agent proposes actions and waits for a
+   > person to approve them, so an unattended run can stop before `SaveReport` and the report goes
+   > stale. These tasks are safe to run autonomously: the agent's tools allow Azure reads plus report
+   > saves only.
+
+   > **Created the task by asking the agent in chat?** That works (SRE Agent creates it for you), but
+   > check the result under **Scheduled tasks** and edit it:
+   > - Set **Agent autonomy level** to **Autonomous**; chat-created tasks default to Review.
+   > - Set **Response custom agent** to `finops-investigator` so the run is limited to read-only tools.
+   > - Replace free-form **Instructions** with the rendered `agentPrompt`. Hand-written prompts usually
+   >   omit the strict managed-scope preamble, so a run could query outside the agent's scope instead
+   >   of failing closed.
+   > - Pinning a `reportId` is fine. The rendered prompts find the report by name instead, so they
+   >   keep working if the report is recreated.
+   >
+   > To have the agent create it correctly, give it every value: *"Create a scheduled task named
+   > `<name>`, cron `<cron>`, Autonomous, response custom agent `finops-investigator`, with exactly
+   > these instructions: `<agentPrompt>`."*
+
+3. **Grant RBAC.** The agent's **user-assigned** managed identity (shown in the agent's Identity
+   blade, not the system-assigned one) needs Cost Management Reader on every managed scope, plus
+   Reservations Reader and Savings plan Reader for the commitments section. Without these, reports
+   save with warnings or empty sections.
+
+4. **Verify the refresh.** Run each task once, or wait for its cron. Then open the report in
+   Operations Hub and confirm the **Refreshed** timestamp advanced and a new version exists. A task's
+   execution history shows the run: a scope error means `AGENT_RESOURCE_ID` or `managedResources` is
+   wrong, and a pending approval means the task is still in Review mode.
+
+When you upgrade the pack, re-render and update each task's prompt; stale prompts keep running the
+old instructions.
 
 ### Runtime and API cost measurements
 
