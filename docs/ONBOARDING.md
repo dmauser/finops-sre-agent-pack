@@ -270,3 +270,4 @@ list (existing tasks with the same name are updated in place):
 | Report never refreshes | The task is missing, paused, in **Review** mode, or has a run limit or end date. See step 5. |
 | *Commitment inventory unavailable* | Grant Reservations Reader and Savings plan Reader (step 2, optional). |
 | Cost sections empty | The user-assigned identity lacks Cost Management Reader, or managed resources are empty. |
+| `finops-investigator` missing from `/agent` in chat | The chat loads the agent list only once, when it opens, and caches it. Hard-refresh the page (Ctrl+F5) and start a **New chat**. Type `/agent`, choose **Agent**, and then pick `finops-investigator`. The `/agent` command is hidden in threads that are locked to an agent, such as scheduled-task, incident, or handler threads. To confirm the agent exists, check **Builder > Agent Canvas**. |
