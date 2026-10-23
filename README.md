@@ -37,6 +37,7 @@ the [Microsoft FinOps Framework](https://learn.microsoft.com/en-us/cloud-computi
 - [Test](#test)
 - [Contributing another plugin](#contributing-another-plugin)
 - [Background](#background)
+- [Acknowledgments](#acknowledgments)
 
 ## Why this pack
 
@@ -333,3 +334,10 @@ The feature catalog, live data-source validation, and customer-requirement mappi
 are in the product-research document (`finops-sre-agent-product-research.md`, §5A and §10). All 13
 FinOps data sources were validated against a deployed SRE Agent before any skill was written. See
 [CHANGELOG.md](CHANGELOG.md) for release history and [SECURITY.md](SECURITY.md) to report issues.
+
+## Acknowledgments
+
+This project started from [nirmash/finops-sre-agent-pack](https://github.com/nirmash/finops-sre-agent-pack)
+by [Nir Mashkowski](https://github.com/nirmash), which introduced the idea of packaging FinOps skills and
+agents for Azure SRE Agent. This repository has since been developed independently. The original MIT
+copyright notice is retained in [LICENSE](LICENSE).
