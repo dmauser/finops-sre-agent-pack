@@ -1253,3 +1253,9 @@ def test_scope_coverage_accepts_filter_result_and_waste_shows_short_names():
     findings = model["sections"][0]
     assert findings["columns"][:2] == ["Resource", "Resource group"]
     assert all("/" not in row[0] for row in findings["rows"])
+
+
+def test_display_resource_shortens_arm_ids_only():
+    rid = "/subscriptions/s/resourceGroups/rg-a/providers/Microsoft.App/agents/agent-1"
+    assert models._display_resource(rid) == "agent-1 (rg-a)"
+    assert models._display_resource("Virtual WAN") == "Virtual WAN"

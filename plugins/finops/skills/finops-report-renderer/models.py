@@ -149,6 +149,14 @@ def _resource_group_of(resource_id):
     return "—"
 
 
+def _display_resource(value):
+    if value.casefold().startswith("/subscriptions/") and "/providers/" in value.casefold():
+        group = _resource_group_of(value)
+        name = _short_resource(value)
+        return name if group == "—" else f"{name} ({group})"
+    return value
+
+
 def _validated(value, field):
     if value is None:
         return "verify first"
@@ -1223,7 +1231,7 @@ def build_cost_optimization_model(
                     [
                         row["kind"],
                         row["dimension"],
-                        row["value"],
+                        _display_resource(row["value"]),
                         _money(row["current"]),
                         _money(row["baseline"]),
                         _money(row["impact"]),
@@ -3017,7 +3025,7 @@ def build_cost_anomaly_model(
                     [
                         row["kind"],
                         row["dimension"],
-                        row["value"],
+                        _display_resource(row["value"]),
                         _money(row["current"]),
                         _money(row["baseline"]),
                         _signed_money(row["dod"]),
