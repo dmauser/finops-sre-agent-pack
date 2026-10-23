@@ -9,7 +9,7 @@ the [Microsoft FinOps Framework](https://learn.microsoft.com/en-us/cloud-computi
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Azure SRE Agent](https://img.shields.io/badge/Azure-SRE%20Agent-0078D4)
 ![Read-only](https://img.shields.io/badge/Azure%20access-read--only-2EA043)
-![Tests](https://img.shields.io/badge/tests-549%20passing-2EA043)
+![Tests](https://img.shields.io/badge/tests-offline%20pytest-2EA043)
 
 > **Note:** These skills are built for Azure SRE Agent and may not work with other coding agents.
 > They are packaged as **skills + agents**; they make no changes to the SRE Agent product.
@@ -239,8 +239,16 @@ run; you do not need to reinstall the plugin.
 
 ## Install
 
-There are three onboarding paths. All produce the same agent, plugin, subagent, scheduled tasks, and
-RBAC. See **[docs/ONBOARDING.md](docs/ONBOARDING.md)** for the full guide.
+Choose one path. Every path installs the same plugin, skills, and `finops-investigator`; they differ in
+whether they create the agent and how many scheduled tasks they add by default. See
+**[docs/ONBOARDING.md](docs/ONBOARDING.md)** for the full guide.
+
+| Path | Creates the agent | Default scheduled tasks |
+|---|---|---|
+| [Install with GitHub Copilot](#install-with-github-copilot) | Optional (runs `deploy.sh`) | You choose |
+| [Automated deployment](#automated-deployment) (`deploy.sh`) | Yes, or reuses an existing one | Cost Optimization only (`--tasks all` for 12) |
+| [Manual (portal)](#manual-portal) | Yes, by hand | The ones you create |
+| [Installer for an existing agent](#installer-for-an-existing-agent) (`install-api.sh`) | No | All 12 (`TASK_IDS` to limit) |
 
 ### Install with GitHub Copilot
 
@@ -347,7 +355,7 @@ AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.A
 ```
 
 See the [FinOps plugin documentation](plugins/finops/README.md#install-everything-recommended) for
-all configuration options. `SUB_ID` is deprecated and ignored for scheduled scope.
+all configuration options.
 
 ### Permissions
 
@@ -363,7 +371,7 @@ your user account.
 | SRE Agent Administrator | The agent (assigned to **you**) | deploy.sh | Data-plane access to configure the agent |
 | Reader | Managed scopes | You (existing agents) | Resource Graph, Advisor, Monitor, Resource Health |
 | Reservations Reader, Savings plan Reader | Tenant (`/providers/Microsoft.Capacity`, `/providers/Microsoft.BillingBenefits`) | You, or `GRANT_COMMITMENT_READERS=1` | Existing commitment inventory and utilization |
-| Carbon Optimization Reader | Managed subscriptions | You | Carbon emissions reports |
+| Carbon Optimization Reader | Managed subscriptions | You | Carbon emissions analysis (`finops-carbon-optimization`) |
 
 Grant the optional roles to the managed identity's principal ID (shown in the portal under the
 identity, or with `az identity show --query principalId`):
@@ -402,7 +410,7 @@ The structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-age
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 549 offline tests: scope guard, usage pipeline, renderer, every skill helper
+pytest tests/          # offline: scope guard, usage pipeline, renderer, installers, every skill helper
 ```
 
 ## Contributing another plugin
@@ -416,9 +424,9 @@ This section is for repository contributors, not an extra installation step:
 
 ## Background
 
-The feature catalog, live data-source validation, and customer-requirement mapping behind this pack
-are in the product-research document (`finops-sre-agent-product-research.md`, §5A and §10). All 13
-FinOps data sources were validated against a deployed SRE Agent before any skill was written. See
+Every Azure data source the skills use was validated against a deployed SRE Agent, and the Live
+Reports were reconciled with Azure Cost Management. Guidance is aligned with the
+[Microsoft FinOps documentation](https://learn.microsoft.com/en-us/cloud-computing/finops/). See
 [CHANGELOG.md](CHANGELOG.md) for release history and [SECURITY.md](SECURITY.md) to report issues.
 
 ## Acknowledgments
