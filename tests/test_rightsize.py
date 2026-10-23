@@ -317,3 +317,16 @@ def test_review_does_not_duplicate_flagged_resource():
     assert len(out) == 1
     assert out[0]["kind"] == "idle"
 
+
+
+def test_advisor_rate_recommendations_are_not_rightsizing():
+    sub = "/subscriptions/78216abe-8139-4b45-8715-6bab2010101e"
+    vm = sub + "/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
+    advisor = [
+        {"resourceId": sub, "problem": "Consider Compute savings plan", "targetSku": "Compute_Savings_Plan", "savingsUsd": 52},
+        {"resourceId": vm, "problem": "Buy virtual machine reserved instances to save money", "savingsUsd": 30},
+        {"resourceId": vm, "problem": "Right-size or shutdown underutilized virtual machines", "targetSku": "Standard_D2s_v5", "savingsUsd": 20},
+    ]
+    out = rightsize.recommend_rightsizing(advisor=advisor)
+    assert [f["resourceId"] for f in out] == [vm]
+    assert out[0]["recommendedAction"] == "Resize to Standard_D2s_v5."

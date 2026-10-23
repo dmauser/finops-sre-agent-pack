@@ -265,7 +265,7 @@ def recommend_rightsizing(
     types_by_id = {_key(r.get("resourceId")): str(r.get("type") or "").lower() or None for r in resources}
     for rec in advisor:
         rid = rec.get("resourceId")
-        if not rid:
+        if not rid or _is_rate_recommendation(rec):
             continue
         f = finding_for(rid, types_by_id.get(_key(rid)))
         f.add_source("advisor")
@@ -474,6 +474,24 @@ def _validate_advisor(metrics, cpu_underutil_pct, min_sample_days):
     if cpu_p95 < cpu_underutil_pct:
         return (True, f"Utilization confirms: p95 CPU {cpu_p95:.1f}% (< {cpu_underutil_pct:.0f}%).")
     return (False, f"Utilization contradicts Advisor: p95 CPU {cpu_p95:.1f}% (>= {cpu_underutil_pct:.0f}%) — verify before acting.")
+
+
+_RATE_TERMS = ("savings plan", "savings_plan", "savingsplan", "reserved instance", "reservation",
+               "reserved capacity")
+
+
+def _is_rate_recommendation(rec):
+    """True for Advisor reservation / savings plan purchases: rate optimization, not waste.
+
+    They belong to finops-commitment-advisor; counting them here would mislabel a purchase as
+    a resize and add it to addressable waste.
+    """
+    text = " ".join(str(rec.get(k) or "") for k in
+                    ("problem", "recommendation", "targetSku", "impactedField")).lower()
+    if any(term in text for term in _RATE_TERMS):
+        return True
+    rid = str(rec.get("resourceId") or "").strip().strip("/").split("/")
+    return len(rid) <= 2 and (not rid[0] or rid[0].lower() == "subscriptions")
 
 
 def _advisor_savings_estimate(advisor_savings, monthly, fraction):

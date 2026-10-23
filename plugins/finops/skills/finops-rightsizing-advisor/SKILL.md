@@ -77,6 +77,8 @@ az advisor recommendation list \
 Run once per unique effective subscription, or once per unique effective RG when the subscription is
 not fully managed. After either command, retain only recommendations whose normalized
 `resourceMetadata.resourceId`/`impactedValue` is inside the corresponding effective scope.
+`recommend_rightsizing` skips reservation and savings plan purchase recommendations (rate
+optimization, handled by `finops-commitment-advisor`) so they never count as resize or waste.
 
 Flatten each recommendation to the shape `rightsize.py` expects:
 `{resourceId, problem, recommendation, targetSku, savingsUsd}` — `resourceId` from
