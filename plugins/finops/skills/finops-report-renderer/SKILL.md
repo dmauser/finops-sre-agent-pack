@@ -14,6 +14,11 @@ warnings, and stable layout. Do not ask the model to regenerate or rewrite the r
 Adapters do no I/O, make no clock or network calls, and do not mutate their input. Supply
 `refreshed_at` explicitly.
 
+Every saved report is a **static snapshot**; nothing re-runs it when someone opens the dashboard.
+It only refreshes when a scheduled task (or a user) runs the analysis again and saves a new version.
+When a user asks for a report from chat, say so and point them to the pack's scheduled tasks
+(installed by `install-api.sh`) to keep it current.
+
 ## Adapter API
 
 Load the exact `models.py` and `render.py` files into the same sandbox. Each adapter consumes an

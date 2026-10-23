@@ -105,7 +105,8 @@ script, but the agent and scheduled tasks never execute it. Existing agents are 
 > 5. Save, refresh the chat, then type `/agent` and select `finops-investigator`.
 >
 > A manually created agent does not get the scheduled tasks (Live Reports, email reviews) or RBAC;
-> those still come from `install-api.sh`.
+> those still come from `install-api.sh`. **Without the scheduled tasks, Live Reports never
+> refresh.** See [Manual scheduled tasks](#manual-scheduled-tasks) if you can't run the installer.
 >
 > Skills themselves never appear under `/`; the agent loads them automatically when a question
 > matches, or when you name one ("Use finops-waste-finder on my subscription").
@@ -374,6 +375,31 @@ to `SaveReport` with `allowedTools=[]`. The prompts do not construct HTML, CSP, 
 markup. Each run finds the report by name and saves a **new version**, so the dashboard refreshes on
 the task's cron (daily / weekly) rather than on every view. Azure cost data (`UsageDetails`) only
 settles roughly daily, so daily/weekly refresh matches the data's freshness.
+
+> **A Live Report only refreshes while its scheduled task exists and is Active.** Opening the
+> dashboard does not re-run anything. A report generated once from chat, or one whose task is
+> paused, deleted, or never installed (for example, a plugin-only install or a manually created
+> agent), stays frozen at its **Refreshed** timestamp. To keep reports current, install the tasks
+> with `install-api.sh`, or create them manually as described in
+> [Manual scheduled tasks](#manual-scheduled-tasks). Check them with
+> `srectl scheduledtask list`, or under **Scheduled tasks** in the portal.
+
+### Manual scheduled tasks
+
+If you can't run `install-api.sh`, render the ready-to-use task definitions and create each one in
+the portal (**Scheduled tasks → Create**) with the rendered name, cron, agent, and prompt:
+
+```bash
+TASK_AGENT_NAME=finops-investigator \
+AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<agent> \
+ALERT_EMAIL=you@contoso.com \
+python3 plugins/finops/scheduled-tasks/render_tasks.py api > finops-tasks.json
+```
+
+`ALERT_EMAIL` and `GITHUB_REPO` are optional, and each `*_CRON` variable overrides a default
+schedule. Copy each prompt exactly; it carries the fail-closed managed-scope preamble. The agent's
+managed identity still needs Cost Management Reader (and Reservations/Savings plan Reader for
+commitments) on the managed scope.
 
 > **Requires Live Reports enabled on the agent** (first-party + Operations Hub; feature flag
 > `EnableLiveReports`). Where it isn't enabled, report saves do not refresh dashboards. The merged
