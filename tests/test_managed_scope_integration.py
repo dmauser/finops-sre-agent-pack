@@ -106,7 +106,8 @@ def test_usage_details_docs_share_canonical_transport_projection_contract():
     managed_normalized = re.sub(r"\s+", " ", managed).lower()
 
     assert "canonical usagedetails transport contract" in managed_normalized
-    assert "properties.instancename || properties.resourceid" in managed_normalized
+    assert "instancename: properties.instancename, resourceid: properties.resourceid" in managed_normalized
+    assert "%24top" in managed_normalized
     assert "alias `cost` once" in managed_normalized
     assert "subscriptionid" in managed_normalized
     assert "resourcegroup" in managed_normalized
@@ -126,7 +127,10 @@ def test_usage_details_docs_share_canonical_transport_projection_contract():
             " ",
             (skills / name / "SKILL.md").read_text(),
         )
-        assert "properties.instanceName || properties.resourceId" in normalized, name
+        assert re.search(r"instanceName:\s*properties\.instanceName", normalized), name
+        assert re.search(r"resourceId:\s*properties\.resourceId", normalized), name
+        assert "properties.instanceName || properties.resourceId" not in normalized, name
+        assert "\\$top" not in normalized and "\\$filter" not in normalized, name
         assert re.search(
             r"subscriptionId:\s*properties\.subscriptionId",
             normalized,

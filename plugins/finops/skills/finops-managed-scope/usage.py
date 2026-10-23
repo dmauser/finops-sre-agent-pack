@@ -29,6 +29,82 @@ def _present(value):
     return value not in (None, "")
 
 
+def resolve_resource_id(row):
+    """Return the analysis resource id for one UsageDetails row.
+
+    Modern billing puts the full ARM id in `instanceName` (resourceId is often null); legacy rows
+    use `resourceId`. Prefer an ARM-shaped instanceName, then an ARM-shaped resourceId, then any
+    non-empty value. Accepts flat projected rows or raw rows with a `properties` object.
+    """
+
+    if not isinstance(row, dict):
+        return None
+    top = _lower_keys(row)
+    props = top.get("properties")
+    sources = [top] + ([_lower_keys(props)] if isinstance(props, dict) else [])
+    candidates = []
+    for source in sources:
+        for name in ("instancename", "resourceid"):
+            value = _text(source.get(name))
+            if value:
+                candidates.append(value)
+    for value in candidates:
+        if value.casefold().startswith("/subscriptions/"):
+            return value
+    return candidates[0] if candidates else None
+
+
+def costs_by_resource(rows):
+    """Sum normalized `cost` per resolved resource id -> {resourceId: float}.
+
+    Use on prepare_usage_details(...)["included_rows"] for a ~30-day window to build the
+    `costs=` map that rightsize.py, waste.py, allocate.py, and commit.py expect.
+    """
+
+    totals = {}
+    for row in rows or ():
+        rid = resolve_resource_id(row)
+        cost = _decimal_or_none(row.get("cost")) if isinstance(row, dict) else None
+        if not rid or cost is None:
+            continue
+        totals[rid] = totals.get(rid, Decimal("0")) + cost
+    return {rid: float(round(total, 2)) for rid, total in totals.items()}
+
+
+def ingestion_gb_per_day(rows, days):
+    """Average billable Log Analytics GB/day per workspace id -> {workspaceId: float}.
+
+    Sums `quantity` for rows whose meterCategory is "Log Analytics" and whose unitOfMeasure
+    mentions GB (e.g. "1 GB"), keyed by resolved resource id, divided by `days`. Requires the
+    shared pull to project `meterCategory`, `quantity`, and `unitOfMeasure`.
+    """
+
+    if not days or days <= 0:
+        raise ValueError("days must be a positive number of days in the window")
+    totals = {}
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        r = _lower_keys(row)
+        if _text(r.get("metercategory")).casefold() != "log analytics":
+            continue
+        unit = _text(r.get("unitofmeasure")).casefold()
+        # Ingestion is billed per GB; retention is per "GB/Month" and is not ingestion.
+        if "gb" not in unit or "month" in unit:
+            continue
+        quantity = _decimal_or_none(r.get("quantity"))
+        rid = resolve_resource_id(row)
+        if quantity is None or not rid:
+            continue
+        # A unit like "100 GB" means quantity is in blocks of 100 GB.
+        factor = Decimal("1")
+        head = unit.split("gb")[0].strip()
+        if head:
+            factor = _decimal_or_none(head) or Decimal("1")
+        totals[rid] = totals.get(rid, Decimal("0")) + quantity * factor
+    return {rid: float(round(total / Decimal(str(days)), 3)) for rid, total in totals.items()}
+
+
 def _first(mapping, *names):
     for name in names:
         value = mapping.get(name.casefold())
@@ -56,8 +132,8 @@ def _cost_fields(row):
         charge_type = _first(top, "chargeType") or _first(props, "chargeType")
     else:
         usd = _first(top, "cost", "costInUSD")
-        billing = _first(top, "billingCost", "costInBillingCurrency")
-        currency = _first(top, "billingCurrency", "billingCurrencyCode")
+        billing = _first(top, "costInBillingCurrency", "billingCost")
+        currency = _first(top, "billingCurrencyCode", "billingCurrency")
         charge_type = _first(top, "chargeType")
     return usd, billing, _text(currency).upper() or None, _text(charge_type).casefold()
 
@@ -131,6 +207,9 @@ def normalize_usage_costs(rows):
         out = dict(row)
         out["cost"] = value
         out["currency"] = currency
+        resolved_id = resolve_resource_id(out)
+        if resolved_id:
+            out["resourceId"] = resolved_id
         normalized.append(out)
         if charge_type in _UNUSED_COMMITMENT_CHARGE_TYPES:
             unused_count += 1

@@ -61,16 +61,16 @@ are detected. Pass the raw rows (`data` arrays) to the analyzer unchanged.
 ### Step 2 — Pull per-resource monthly cost (recommended)
 
 Use the canonical UsageDetails pull from `finops-managed-scope` (`metric=AmortizedCost`, trailing
-~30 days, `--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType, meterCategory: properties.meterCategory, quantity: properties.quantity, unitOfMeasure: properties.unitOfMeasure,
+~30 days, `--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, meterCategory: properties.meterCategory, quantity: properties.quantity, unitOfMeasure: properties.unitOfMeasure,
 subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup,
-resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"`), persist the
-page envelopes, and run `prepare_usage_details(...)`. Aggregate `cost` from `included_rows` by
-resource id into `costs`; do not merge or scope-filter UsageDetails in model reasoning. If the pull
-is partial, label savings "partial — cost pull truncated".
+instanceName: properties.instanceName, resourceId: properties.resourceId}, nextLink: nextLink}"`), persist the
+page envelopes, and run `prepare_usage_details(...)`. Build `costs = costs_by_resource(included_rows)`
+(from `usage.py`; it resolves `instanceName` → `resourceId`); do not merge or scope-filter
+UsageDetails in model reasoning. If the pull is partial, label savings "partial — cost pull truncated".
 
-For Log Analytics workspaces, sum `quantity` of `included_rows` whose `meterCategory` is
-`Log Analytics` and whose unit is GB, per workspace id, and divide by the number of days in the
-window to get `ingestion_gb_per_day`.
+For Log Analytics workspaces, use `ingestion = ingestion_gb_per_day(included_rows, days=<window>)`:
+it sums `quantity` of rows whose `meterCategory` is `Log Analytics` and whose unit is GB (retention
+`GB/Month` excluded), per workspace id, divided by the window length.
 
 ### Step 3 — Classify (bundled waste.py, in-sandbox)
 

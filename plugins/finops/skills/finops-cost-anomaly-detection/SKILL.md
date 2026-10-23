@@ -43,15 +43,15 @@ blocked by the read-only gate and is **not needed** — detection happens client
 trailing window large enough for a baseline plus the current period (default: 35 days).
 
 **Start with a bounded page size, minimal field projection, and full pagination.** Request the
-trailing window directly with `\$top=1000`, project only the fields the detector needs with
+trailing window directly with `%24top=1000`, project only the fields the detector needs with
 `--query`, and follow every `nextLink`. Do not lead with `usageStart` slicing: live runs showed that
 the service does not reliably apply that filter, so slicing is a fallback rather than the primary
 retrieval strategy.
 
 The controls solve different problems:
 
-1. **Bounded `\$top` limits each server page.** A `413 Request Too Large` is a server-side response
-   size failure. Start at `\$top=1000`; if the initial request or a `nextLink` returns 413, retry the
+1. **Bounded `%24top` limits each server page.** A `413 Request Too Large` is a server-side response
+   size failure. Start at `%24top=1000`; if the initial request or a `nextLink` returns 413, retry the
    same request with a smaller page size (`100`, then `20`).
 2. **`--query` keeps retained data small.** It is applied client-side after download, so it cannot by
    itself prevent a server 413. It does keep the JSON stored, concatenated, and passed to the sandbox
@@ -60,18 +60,18 @@ The controls solve different problems:
    short half-open `usageStart` slices, paginate each slice, and de-duplicate the combined rows.
 
 ```bash
-az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&\$top=1000" \
-  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"
+az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&%24top=1000" \
+  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
-- **Primary anti-413 sequence:** bounded `\$top=1000`; on 413 retry with `100`, then `20`.
+- **Primary anti-413 sequence:** bounded `%24top=1000`; on 413 retry with `100`, then `20`.
 - **`--query` projection (retained-payload hygiene):** keeps only `{date, cost, meterCategory,
   resourceGroup, resourceId, tags}` plus `nextLink`, so the concatenated dataset stays small.
 - **Paginate the complete result:** follow `nextLink` until absent. `nextLink` already carries the
   skip token — GET it as-is (don't re-add parameters). Note the
   `nextLink` in the raw body is HTML-escaped (`&amp;`) — decode `&amp;`→`&` before following it.
 - **Date-slice fallback:** only if smaller pages still 413, retry with short
-  `\$filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'`
+  `%24filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'`
   windows. Because the filter is not reliably applied, verify returned dates and de-duplicate by
   `(resourceId, date, meterId)` when concatenating.
 - **Never proceed on silently-partial cost.** If the pull cannot complete after all fallbacks,

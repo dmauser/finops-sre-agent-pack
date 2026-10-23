@@ -55,6 +55,7 @@ MODEL_TIER="${MODEL_TIER:-ReasoningHeavy}"         # canonical default for task-
 ALERT_EMAIL="${ALERT_EMAIL:-}"                    # optional; unset keeps results in the task run only
 GITHUB_REPO="${GITHUB_REPO:-}"                    # optional owner/repo for change correlation
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent MI objectId; set to auto-grant Cost Management Reader
+GRANT_COMMITMENT_READERS="${GRANT_COMMITMENT_READERS:-0}" # 1 = also grant tenant-level Reservations Reader + Savings plan Reader to MI_OBJECT_ID
 TASK_RENDERER="$SCRIPT_DIR/scheduled-tasks/render_tasks.py"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
@@ -363,6 +364,38 @@ if [ -n "$MI_OBJECT_ID" ]; then
 else
   warn "MI_OBJECT_ID not set — skipping Cost Management Reader grants on transport scopes."
   warn "The required Reader grant on the agent resource was still enforced."
+fi
+
+# Commitment inventory (reservations / savings plans) is tenant-scoped, not subscription-scoped.
+# Assigning these roles requires User Access Administrator at the tenant root (elevated access), so
+# a failure here is a warning, not fatal: the commitment advisor still reports coverage from
+# AmortizedCost rows and purchase recommendations without inventory.
+try_tenant_role_assignment() {
+  local principal_id="$1" role_name="$2" scope_id="$3"
+  if has_exact_role_assignment "$principal_id" "$role_name" "$scope_id"; then
+    ok "$role_name already assigned at $scope_id"
+    return
+  fi
+  if az role assignment create \
+      --assignee-object-id "$principal_id" \
+      --assignee-principal-type ServicePrincipal \
+      --role "$role_name" \
+      --scope "$scope_id" >/dev/null 2>&1; then
+    ok "Granted $role_name at $scope_id"
+  else
+    warn "Could not grant $role_name at $scope_id (needs tenant-root User Access Administrator)."
+    warn "Ask a Global Administrator with elevated access to run:"
+    warn "  az role assignment create --assignee-object-id $principal_id --assignee-principal-type ServicePrincipal --role \"$role_name\" --scope $scope_id"
+  fi
+}
+
+say "Commitment inventory Reader RBAC (optional)"
+if [ "$GRANT_COMMITMENT_READERS" = "1" ] && [ -n "$MI_OBJECT_ID" ]; then
+  try_tenant_role_assignment "$MI_OBJECT_ID" "Reservations Reader" "/providers/Microsoft.Capacity"
+  try_tenant_role_assignment "$MI_OBJECT_ID" "Savings plan Reader" "/providers/Microsoft.BillingBenefits"
+else
+  warn "GRANT_COMMITMENT_READERS!=1 or MI_OBJECT_ID unset — skipping Reservations Reader / Savings plan Reader."
+  warn "Without them the commitment report shows 'Commitment inventory unavailable' (coverage still computed)."
 fi
 
 # ---- 2. Register the marketplace -------------------------------------------

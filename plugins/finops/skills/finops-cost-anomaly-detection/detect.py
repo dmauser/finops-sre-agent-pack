@@ -34,6 +34,11 @@ def _dimension_value(item: dict, dimension: str):
     """Resolve a dimension value. `tag:<key>` reads from the item's tags bag."""
     if dimension.startswith("tag:"):
         return (item.get("tags") or {}).get(dimension[len("tag:"):])
+    if dimension == "resourceId":
+        # Modern billing carries the full ARM id in instanceName; prefer it when projected.
+        instance = str(item.get("instanceName") or "").strip()
+        if instance.lower().startswith("/subscriptions/"):
+            return instance
     return item.get(dimension)
 
 

@@ -169,6 +169,7 @@ def _commitment_rollup(commitments):
         "coverage_pct": _num(headline.get("coverage_pct")),
         "unused_commitment_cost": _num(headline.get("unused_commitment_cost")),
         "commitment_count": headline.get("commitment_count") or 0,
+        "inventory_unavailable": list(headline.get("inventory_unavailable") or []),
         "purchases": (c.get("purchases") or [])[:_TOP_PER_SECTION],
         "underutilized": (c.get("underutilized") or [])[:_TOP_PER_SECTION],
         "expiring": (c.get("expiring") or [])[:_TOP_PER_SECTION],

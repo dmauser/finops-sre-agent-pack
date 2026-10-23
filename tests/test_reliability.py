@@ -209,3 +209,11 @@ def test_inputs_are_not_mutated():
     analyze_cost_vs_reliability(items, alerts=alerts)
     assert items == before_items
     assert alerts == before_alert
+
+
+def test_cost_resource_id_prefers_arm_instance_name():
+    arm = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Web/sites/app"
+    assert reliability._cost_resource_id({"instanceName": arm, "resourceId": "legacy"}) == arm
+    assert reliability._cost_resource_id({"instanceName": "app", "resourceId": arm}) == arm
+    assert reliability._cost_resource_id({"properties": {"instanceName": arm}}) == arm
+    assert reliability._cost_resource_id({"instanceName": "app"}) == "app"

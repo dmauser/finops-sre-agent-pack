@@ -127,7 +127,12 @@ Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSite
 ### Step 3 — Pull utilization (Azure Monitor) for VM candidates
 
 For each VM candidate (from Advisor or inventory), pull trailing CPU so the recommendation can be
-**validated against reality**:
+**validated against reality**. Metrics are not optional: do the Step 4 cost pull first when cost
+access exists, then pull metrics in **descending monthly-cost order** and cover at least the
+**top 15** VM / Container App / session-pool candidates (all of them if fewer) before ranking. Only
+candidates beyond that bound may be left unvalidated, and the output must say how many. Metrics
+need only **Reader** or **Monitoring Reader** on the resource; a 403 here is an RBAC gap to report,
+not a reason to skip the remaining resources.
 
 ```bash
 az monitor metrics list --resource <vm-resource-id> --metric "Percentage CPU" --interval PT1H --start-time <UTC-14d> --aggregation Average Maximum -o json
@@ -170,15 +175,17 @@ the trailing ~30 days (`metric=AmortizedCost`, so reserved/savings-plan-covered 
 effective cost instead of $0) and aggregate the normalized `cost` from `prepare_usage_details`
 `included_rows` by resource id into `{resourceId: monthly_cost}`.
 In **modern billing the full ARM resource id is in `properties.instanceName`** (the `resourceId`
-field is null) — key on `instanceName` and fall back to `resourceId`. Ids are matched
+field is null) — project both fields separately and let the helpers resolve them:
+`costs_by_resource(included_rows)` (from `finops-managed-scope/usage.py`) prefers `instanceName` and
+falls back to `resourceId`. Ids are matched
 case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
-Start with the complete trailing window using `\$top=1000`, project only the needed fields with
-`--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType,
+Start with the complete trailing window using `%24top=1000`, project only the needed fields with
+`--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType,
 subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup,
-resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"`,
-and paginate every `nextLink`. If a request returns `413 Request Too Large`, retry with `\$top=100`,
+instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"`,
+and paginate every `nextLink`. If a request returns `413 Request Too Large`, retry with `%24top=100`,
 then `20`. Only if bounded pages still fail, use short half-open `usageStart` date slices as a
 fallback; live runs showed that filter is not reliably applied, so verify returned dates and
 de-duplicate the combined rows. `--query` is client-side and does not itself prevent a server 413,

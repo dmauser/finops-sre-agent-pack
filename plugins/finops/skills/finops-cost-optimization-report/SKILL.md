@@ -67,10 +67,79 @@ pull and call — do **not** re-implement their logic here:
 6. **finops-budget-governance** → `evaluate_budgets(budgets)` → a budget-status dict.
 
 The heavy/`413`-prone step is the shared **cost line-item pull** used by anomaly, allocation,
-rightsizing, waste, and commitment coverage — pull it **once** (AmortizedCost, projected with
-`pricingModel` and `meterCategory`) and feed every core. If any one analysis fails or is out of
+rightsizing, waste, and commitment coverage — pull it **once** (AmortizedCost, trailing 30 days,
+projected with the union of fields every core needs: `pricingModel`, `meterCategory`, `quantity`,
+`unitOfMeasure`, `tags`) and
+feed every core. If any one analysis fails or is out of
 scope, keep going with the rest; `summarize.py` treats a missing input as an empty section. Do
 **not** use `az rest --method post` or the Cost Management Query API — POST is blocked as a write.
+
+**Execution order (avoids the three common data-quality gaps).** A weekly rollup makes many calls;
+run them in this order so the expensive evidence is never the part that gets cut:
+
+1. **Cost pull to completion.** Follow every UsageDetails `nextLink` until null and run
+   `prepare_usage_details` **before** any other analysis call (see `finops-managed-scope`, "Finish
+   the chain first"). Do not echo pages into chat. A `partial` result is acceptable only after the
+   413 fallbacks fail — never because the run moved on.
+2. **Utilization metrics for the top candidates.** Rank rightsizing/waste compute candidates
+   (VMs, Container Apps, session pools) by monthly cost from step 1 and pull Azure Monitor metrics
+   (`Percentage CPU`; `Requests`; `SessionApiRequestCount`) for at least the **top 15 by cost**
+   before ranking. Only the remainder beyond that bound may be left unvalidated; say how many.
+   Metrics need only **Reader** (or Monitoring Reader) on the managed scope.
+3. **Commitment inventory.** Try both tenant-level GETs; on 403 pass
+   `inventory_unavailable=[...]` to `analyze_commitments` and keep coverage/unused cost from step 1.
+4. Advisor, Resource Graph, budgets, then the cores and `summarize.py`.
+
+In the report's data-quality notes, state each gap with its fix: partial cost → pages retrieved and
+`remaining_next_link`; unvalidated rightsizing → count beyond the metric bound or metric errors;
+commitment inventory → the Reservations Reader / Savings plan Reader grant.
+
+**Shared cost pull — exact shape.** One `az rest` GET per effective subscription (URL-encode `$` as
+`%24`; never use `||` in `--query`, project candidate fields separately):
+
+```bash
+az rest --method get \
+  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&%24top=1000" \
+  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, pricingModel: properties.pricingModel, meterCategory: properties.meterCategory, quantity: properties.quantity, unitOfMeasure: properties.unitOfMeasure, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}" \
+  -o json
+```
+
+Then derive every core's input in the sandbox from the same `prepared = prepare_usage_details(...)`
+(the helpers resolve `instanceName` → `resourceId` and the billing-currency fallbacks):
+
+```python
+from usage import costs_by_resource, ingestion_gb_per_day
+rows = prepared["included_rows"]
+costs = costs_by_resource(rows)                    # {resourceId: cost} for rightsizing/waste/allocation/AHB
+ingestion = ingestion_gb_per_day(rows, days=30)    # {workspaceId: GB/day}; Log Analytics + GB units only
+```
+
+`ingestion_gb_per_day` sums `quantity` for rows with `meterCategory == "Log Analytics"` whose
+`unitOfMeasure` contains `GB` (retention `GB/Month` excluded; `100 GB` units scaled), keyed by
+workspace id, divided by the window length. Pass it to `find_waste(..., ingestion_gb_per_day=ingestion)`.
+
+**Allocation dimension.** Run `allocate_costs(costs, tags, dimension="team")` first. Then pick the
+`recommended_coverage` entry with `present == True` and the highest `pct` (cost share); if it is not
+`team`, rerun `allocate_costs` with that key. Name the chosen dimension and its coverage in the
+report. If no recommended key is present, keep `team` (the report then shows 100% unallocated,
+which is the correct governance finding).
+
+**Commitment inventory 403.** Never fail the report. Prefer calling
+`analyze_commitments(..., inventory_unavailable=[...])` so coverage, unused-commitment cost, and
+purchase recommendations still populate. If the commitment skill cannot run at all, pass this
+empty-but-explicit result to `summarize_optimization(commitments=...)` and continue:
+
+```python
+commitments_result = {
+    "headline": {"potential_monthly_savings": None, "best_family": None,
+                 "coverage_pct": None, "unused_commitment_cost": None,
+                 "commitment_count": 0,
+                 "inventory_unavailable": ["reservation", "savings_plan"]},
+    "purchases": [], "underutilized": [], "expiring": [], "hybrid_benefit": [],
+    "currency": prepared["currency"],
+    "warnings": ["Commitment inventory unavailable — grant Reservations Reader / Savings plan Reader."],
+}
+```
 
 ### Step 2 — Roll up (bundled summarize.py, in-sandbox)
 

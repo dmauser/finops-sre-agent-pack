@@ -229,3 +229,21 @@ def test_empty_input_is_stable():
     assert result["headline"]["potential_monthly_savings"] is None
     assert result["coverage"] is None
     assert result["warnings"] == []
+    assert result["headline"]["inventory_unavailable"] == []
+
+
+def test_inventory_unavailable_is_a_gap_not_zero_commitments():
+    rows = [
+        {"cost": 60.0, "chargeType": "Usage", "pricingModel": "SavingsPlan",
+         "meterCategory": "Virtual Machines"},
+        {"cost": 40.0, "chargeType": "Usage", "pricingModel": "OnDemand",
+         "meterCategory": "Virtual Machines"},
+        {"cost": 8.0, "chargeType": "UnusedSavingsPlan", "pricingModel": "SavingsPlan"},
+    ]
+    result = analyze(usage_rows=rows, as_of=TODAY,
+                     inventory_unavailable=["savings_plan", "reservation", "bogus"])
+    assert result["headline"]["inventory_unavailable"] == ["reservation", "savings_plan"]
+    gap = next(w for w in result["warnings"] if w.startswith("Commitment inventory unavailable"))
+    assert "Reservations Reader" in gap and "Savings plan Reader" in gap
+    assert result["headline"]["coverage_pct"] == 60.0
+    assert result["headline"]["unused_commitment_cost"] == 8.0

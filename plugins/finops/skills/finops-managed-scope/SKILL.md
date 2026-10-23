@@ -116,26 +116,46 @@ Use this canonical UsageDetails transport contract in every consuming FinOps ski
   `metric=AmortizedCost` for analysis (showback, anomaly, rightsizing, AI, reliability, cost
   overview) so reservation/savings plan purchases are spread across the resources that used them
   instead of appearing as one-time spikes with $0 covered usage. Use `metric=ActualCost` only when
-  matching invoice/budget cash flow (for example `finops-budget-editor`). Start at `\$top=1000`;
+  matching invoice/budget cash flow (for example `finops-budget-editor`). Start at `%24top=1000`;
   never use the POST Cost Management Query API.
+  Note: `$` must be URL-encoded as `%24` in `az rest` URLs to avoid shell escaping issues with the
+  agent's read-only CLI tool (e.g. `%24top=1000`, `%24filter=...`, `%24skiptoken=...`). Never write
+  `\$top` or a bare `$top`.
 - Project the response envelope as `{value: value[].{...}, nextLink: nextLink}`. Keep only the
   fields needed by scope enforcement and the analysis, alias `cost` once from
-  `properties.costInUSD`, and always add `billingCost: properties.costInBillingCurrency ||
-  properties.cost`, `billingCurrency: properties.billingCurrencyCode || properties.billingCurrency`,
-  and `chargeType: properties.chargeType`. Resolve the analysis `resourceId` from
-  `properties.instanceName || properties.resourceId`. Include `subscriptionId` and
+  `properties.costInUSD`, and always add `costInBillingCurrency: properties.costInBillingCurrency,
+  billingCost: properties.cost`, `billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency`,
+  and `chargeType: properties.chargeType`. Project both `instanceName: properties.instanceName,
+  resourceId: properties.resourceId`. Include `subscriptionId` and
   `resourceGroup` whenever rows may need metadata-based attribution.
+- **Never use `||` (or any other shell-like operator) in `--query`.** The read-only CLI tool rejects
+  it with an uninformative `ValidationError`. Project the candidate fields separately, as above; the
+  Python helpers resolve the fallbacks: `prepare_usage_details` prefers `costInBillingCurrency` over
+  the legacy `billingCost` and `billingCurrencyCode` over `billingCurrency`, and sets each included
+  row's `resourceId` to `instanceName` when that is a full ARM id (modern billing), falling back to
+  `resourceId`.
 - Legacy Enterprise Agreement rows have no `costInUSD`; their cost is `properties.cost` in the
   billing currency. `prepare_usage_details` normalizes every row's `cost` deterministically: USD
   when all rows carry `costInUSD`, otherwise billing currency for all rows (rejecting mixed billing
   currencies). Report its `currency`, `cost_source`, `cost_metric`, and `warnings`. A null
   `costInUSD` alone is **not** evidence of missing Cost Management Reader access — only
   `missing_cost_count` (rows with no cost value at all) is.
-- If any request returns 413, retry that request with `\$top=100`, then `20`. Use verified,
+- If any request returns 413, retry that request with `%24top=100`, then `20`. Use verified,
   half-open `usageStart` date slices only if bounded pages still fail, and de-duplicate the
   combined rows.
 - If retrieval remains incomplete, retain the available rows only with an explicit partial-cost
   warning on every downstream total.
+- **Finish the chain first.** In live runs, "partial" was almost always caused by the agent
+  stopping pagination early (spending its tool-call/context budget on other API calls or on
+  echoing page contents), not by an API failure. So: pull UsageDetails **once per run** and
+  follow every `nextLink` until it is null **before** any other analysis call; persist each page
+  straight into the sandbox without summarizing it in chat; project the **union** of fields every
+  consumer needs in that single pull (add `pricingModel`, `meterCategory`, `quantity`,
+  `unitOfMeasure`, `tags` up front) so no
+  skill re-pulls; and bound the window to what the analysis needs (trailing 30 days, or
+  month-to-date for daily status). "Enough rows" is never a reason to stop — `partial` is allowed
+  only after the 413 fallbacks above fail. When partial, report the pages retrieved and the
+  `remaining_next_link` so an immediate follow-up in the same conversation can resume that chain.
 
 Do not add a `properties/resourceGroup eq ...` filter to the subscription UsageDetails request.
 The service may silently ignore that filter. Fetch the initial page once, persist it, and follow

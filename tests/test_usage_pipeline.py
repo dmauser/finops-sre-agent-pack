@@ -191,3 +191,51 @@ def test_unused_commitment_and_actual_cost_purchases_are_disclosed():
 
     amortized = usage.prepare_usage_details(_page(rows), [RG])
     assert not any("metric=AmortizedCost" in w for w in amortized["warnings"])
+
+
+ARM = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
+LAW = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/law1"
+
+
+def test_resolve_resource_id_prefers_arm_instance_name_over_resource_id():
+    assert usage.resolve_resource_id({"instanceName": ARM, "resourceId": "/other"}) == ARM
+    assert usage.resolve_resource_id({"instanceName": None, "resourceId": ARM}) == ARM
+    assert usage.resolve_resource_id({"instanceName": "vm1", "resourceId": ARM}) == ARM
+    assert usage.resolve_resource_id({"properties": {"instanceName": ARM}}) == ARM
+    assert usage.resolve_resource_id({"instanceName": "vm1"}) == "vm1"
+    assert usage.resolve_resource_id({}) is None
+
+
+def test_costs_by_resource_sums_by_resolved_id():
+    rows = [
+        {"instanceName": ARM, "resourceId": None, "cost": 1.25},
+        {"instanceName": None, "resourceId": ARM, "cost": "2.75"},
+        {"instanceName": LAW, "cost": 3},
+        {"instanceName": None, "resourceId": None, "cost": 9},
+    ]
+    assert usage.costs_by_resource(rows) == {ARM: 4.0, LAW: 3.0}
+
+
+def test_ingestion_gb_per_day_counts_only_log_analytics_gb_ingestion():
+    rows = [
+        {"instanceName": LAW, "meterCategory": "Log Analytics", "unitOfMeasure": "1 GB", "quantity": 30},
+        {"instanceName": LAW, "meterCategory": "Log Analytics", "unitOfMeasure": "100 GB", "quantity": 0.3},
+        {"instanceName": LAW, "meterCategory": "Log Analytics", "unitOfMeasure": "1 GB/Month", "quantity": 500},
+        {"instanceName": LAW, "meterCategory": "Storage", "unitOfMeasure": "1 GB", "quantity": 500},
+    ]
+    assert usage.ingestion_gb_per_day(rows, days=30) == {LAW: 2.0}
+    with pytest.raises(ValueError):
+        usage.ingestion_gb_per_day(rows, days=0)
+
+
+def test_projected_billing_cost_fields_without_or_operator():
+    # EA-style projected row: no USD, both billing-cost candidates projected separately.
+    rows = [{"id": "r1", "date": "2024-01-01", "cost": None,
+             "costInBillingCurrency": 2.7, "billingCost": 9,
+             "billingCurrencyCode": "EUR", "billingCurrency": "GBP",
+             "instanceName": ARM, "resourceId": None}]
+    normalized, meta = usage.normalize_usage_costs(rows)
+    assert normalized[0]["resourceId"] == ARM
+    assert float(normalized[0]["cost"]) == 2.7
+    assert meta["currency"] == "EUR"
+    assert meta["cost_source"] == "billing_currency"

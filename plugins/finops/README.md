@@ -137,6 +137,8 @@ and can optionally apply the second to the SRE Agent's managed identity.
 | **Cost Management Reader on each UsageDetails transport scope** *(optional installer grant)* | Cost skills (UsageDetails returns no cost values without suitable access) | Set `MI_OBJECT_ID=<AGENT_MI_OBJECT_ID>` during installation. Subscription scopes remain subscription-scoped; RG scopes require the containing subscription because Consumption UsageDetails has no RG endpoint; management-group scopes remain management-group-scoped. |
 | **Cost Management Contributor** *(write)* | Needed only by a human who chooses to run a generated budget application script. The pack, agent, and installer do not use or grant this role. | Grant out-of-band at the exact budget scope according to your governance process. |
 | **Log Analytics Reader** + `api.loganalytics.io` scope | Pod/namespace-level AKS rightsizing (Container Insights KQL) | Grant the role on the workspace and allowlist the scope for the MI |
+| **Reservations Reader** at `/providers/Microsoft.Capacity` + **Savings plan Reader** at `/providers/Microsoft.BillingBenefits` *(optional, tenant-level)* | Commitment inventory: utilization and expiry of existing reservations/savings plans. Without them reports show *"Commitment inventory unavailable"*; coverage %, unused-commitment cost and purchase recommendations still work. | `GRANT_COMMITMENT_READERS=1 MI_OBJECT_ID=<id> ./install-api.sh` (needs tenant-root User Access Administrator, i.e. a Global Admin with [elevated access](https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin); otherwise the installer prints the exact commands for an admin) |
+| **Reader** (or Monitoring Reader) on managed resources | Azure Monitor utilization metrics that validate rightsizing/idle findings. Missing metrics leave findings *"verify first"*. | Usually already present via the managed-scope Reader assignment |
 
 For an RG-managed boundary, the subscription-level Cost Management Reader grant is transport access
 only. Every row is still filtered against the exact managed RG boundary, and included, excluded,
@@ -167,7 +169,7 @@ repository the agent reads to correlate incidents with changes.
    its managed resources. Every skill enforces this boundary; scheduled runs fail closed without it.
 3. **Grant read-only cost access** — Cost Management Reader (`MI_OBJECT_ID=...` lets the installer
    do it). For commitment inventory also grant Reservations Reader and Savings plan Reader at the
-   billing / tenant level.
+   tenant level (`GRANT_COMMITMENT_READERS=1`; see [RBAC](#rbac) — needs elevated access).
 4. **Connect your IaC repository as a code source** (optional, recommended) — the customer's own
    Bicep/Terraform/app repository, not this one. It lets anomaly investigations cite the PR or
    deployment that caused a spike and lets the agent point at the IaC line to change.
@@ -207,6 +209,10 @@ GITHUB_PAT=$(gh auth token) AGENT_RESOURCE_ID=<id> ./install-api.sh
 
 # Also grant Cost Management Reader at every required UsageDetails transport scope:
 MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
+
+# Also grant tenant-level Reservations Reader + Savings plan Reader (commitment inventory).
+# Requires a Global Admin with elevated access; non-fatal if it fails.
+GRANT_COMMITMENT_READERS=1 MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
 ```
 
 Configuration: required `AGENT_RESOURCE_ID`; optional `ENDPOINT` (consistency check only),
@@ -226,7 +232,7 @@ Configuration: required `AGENT_RESOURCE_ID`; optional `ENDPOINT` (consistency ch
 `RIGHTSIZE_REPORT_MODEL_TIER`, `BUDGET_REPORT_MODEL_TIER`,
 `COST_OPT_MODEL_TIER`, `AI_REPORT_MODEL_TIER`, and `RELIABILITY_REPORT_MODEL_TIER`,
 `AGENT_NAME` (legacy alias for `TASK_AGENT_NAME`), `ALERT_EMAIL`, `GITHUB_REPO`, and
-`MI_OBJECT_ID`. `RIGHTSIZE_TASK_NAME` remains accepted only to identify and retire a previously
+`MI_OBJECT_ID`, and `GRANT_COMMITMENT_READERS=0`. `RIGHTSIZE_TASK_NAME` remains accepted only to identify and retire a previously
 installed standalone rightsizing-review task during migration.
 
 All task tiers default to `ReasoningHeavy`. Keep that default for anomaly correlation, rightsizing,

@@ -33,6 +33,10 @@ _LOOKBACK_DAYS = {"last7days": 7, "last30days": 30, "last60days": 60}
 _COMMITMENT_PRICING = {"reservation", "savingsplan"}
 _UNUSED_CHARGE_TYPES = {"unusedreservation", "unusedsavingsplan"}
 _WINDOWS_LICENSED = {"windows_server", "windows_client"}
+_INVENTORY_ROLES = {
+    "reservation": "Reservations Reader (/providers/Microsoft.Capacity)",
+    "savings_plan": "Savings plan Reader (/providers/Microsoft.BillingBenefits)",
+}
 
 
 def _lower_keys(mapping):
@@ -326,7 +330,7 @@ def analyze_commitments(*, reservations=None, savings_plans=None,
                         usage_rows=None, vms=None, sql_vms=None, costs=None,
                         managed_scopes=None, currency=None, as_of=None,
                         low_utilization_pct=80.0, expiry_window_days=60,
-                        min_monthly_savings=10.0):
+                        min_monthly_savings=10.0, inventory_unavailable=None):
     """Build the rate-optimization view from raw, read-only API responses.
 
     reservations                 `value` items from GET /providers/Microsoft.Capacity/reservations
@@ -339,10 +343,22 @@ def analyze_commitments(*, reservations=None, savings_plans=None,
     costs                        {resourceId: monthly cost} to rank Hybrid Benefit candidates
     managed_scopes               effective ARM scopes; Single/RG-scoped commitments outside are dropped
     currency                     billing currency for amounts that do not carry one
+    inventory_unavailable        kinds whose inventory GET failed (403/error), e.g.
+                                 ["reservation", "savings_plan"]; reported as a coverage gap,
+                                 never as "no commitments"
     """
 
     today = as_of or date.today()
     warnings = []
+    unavailable = sorted({str(k) for k in (inventory_unavailable or [])
+                          if str(k) in _INVENTORY_ROLES})
+    if unavailable:
+        roles = " / ".join(_INVENTORY_ROLES[k] for k in unavailable)
+        warnings.append(
+            f"Commitment inventory unavailable ({', '.join(k.replace('_', ' ') for k in unavailable)})"
+            f" - grant {roles}; utilization and expiry were not evaluated for those commitments. "
+            "Coverage and unused-commitment cost below come from amortized cost and remain valid."
+        )
 
     inventory = []
     excluded = 0
@@ -436,6 +452,7 @@ def analyze_commitments(*, reservations=None, savings_plans=None,
         "currency": out_currency,
         "headline": {
             "commitment_count": len(inventory),
+            "inventory_unavailable": unavailable,
             "underutilized_count": len(underutilized),
             "expiring_count": len(expiring),
             "purchase_recommendation_count": len(purchases),

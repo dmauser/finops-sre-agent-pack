@@ -167,3 +167,9 @@ def test_partial_last_day_not_flagged_end_to_end():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_resource_id_dimension_prefers_arm_instance_name():
+    arm = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
+    assert detect._dimension_value({"instanceName": arm, "resourceId": None}, "resourceId") == arm
+    assert detect._dimension_value({"instanceName": "vm1", "resourceId": arm}, "resourceId") == arm

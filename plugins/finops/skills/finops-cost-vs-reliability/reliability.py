@@ -97,7 +97,14 @@ def _cost(item):
 
 
 def _cost_resource_id(item) -> str:
-    return str(_first(item, "resourceId", "instanceName", "properties.resourceId", "properties.instanceName") or "").strip()
+    candidates = [
+        str(_first(item, path) or "").strip()
+        for path in ("instanceName", "resourceId", "properties.instanceName", "properties.resourceId")
+    ]
+    for value in candidates:
+        if value.lower().startswith("/subscriptions/"):
+            return value
+    return next((value for value in candidates if value), "")
 
 
 def _signal_resource_id(item) -> str:

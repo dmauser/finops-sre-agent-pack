@@ -26,9 +26,11 @@ open rightsizing or waste findings exist for the same resources.
 
 - **Reader** on the managed subscriptions (purchase recommendations, Resource Graph).
 - **Cost Management Reader** for `benefitRecommendations` and amortized UsageDetails.
-- **Reservations Reader** (tenant-level role) to list reservations, and **Savings plan Reader**
-  (or Reader on the savings plan order) to list savings plans. Without them the inventory calls
-  return empty/403; report that as a coverage gap instead of "no commitments".
+- **Reservations Reader** (tenant-level role at `/providers/Microsoft.Capacity`) to list
+  reservations, and **Savings plan Reader** (tenant-level at `/providers/Microsoft.BillingBenefits`,
+  or Reader on the savings plan order) to list savings plans. Subscription RBAC does **not** grant
+  these. Without them the inventory calls return empty/403; report that as a coverage gap instead
+  of "no commitments" (see Step 1).
 - Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
   available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
 
@@ -65,8 +67,21 @@ az rest --method get \
 
 Follow every `nextLink` and concatenate the `value` arrays. Each item carries
 `properties.utilization.aggregates` (1/7/30-day percentages), `expiryDateTime`, `renew`, `term`,
-and the applied scope. If either call returns 403, record "commitment inventory unavailable —
-grant Reservations Reader / Savings plan Reader" and continue.
+and the applied scope. If a call returns 403 (or fails after one retry), add its kind
+(`"reservation"` / `"savings_plan"`) to `inventory_unavailable` and continue — never report that as
+"no commitments". `analyze_commitments` turns it into an explicit coverage-gap warning, while
+coverage % and unused-commitment cost (Step 3, amortized cost — needs only Cost Management Reader)
+and purchase recommendations (Step 2) are still produced. To close the gap, a tenant admin with
+elevated access grants the agent identity (once, tenant-wide):
+
+```bash
+az role assignment create --assignee-object-id <AGENT_MI_OBJECT_ID> --assignee-principal-type ServicePrincipal \
+  --role "Reservations Reader" --scope /providers/Microsoft.Capacity
+az role assignment create --assignee-object-id <AGENT_MI_OBJECT_ID> --assignee-principal-type ServicePrincipal \
+  --role "Savings plan Reader" --scope /providers/Microsoft.BillingBenefits
+```
+
+(`install-api.sh` does this when run with `GRANT_COMMITMENT_READERS=1 MI_OBJECT_ID=<id>`.)
 
 ### Step 2 — Pull purchase recommendations
 
@@ -77,7 +92,7 @@ appear in the cost data):
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<EFFECTIVE_SUBSCRIPTION_ID>/providers/Microsoft.Consumption/reservationRecommendations?api-version=2023-05-01&\$filter=properties/scope eq 'Single' AND properties/lookBackPeriod eq 'Last30Days' AND properties/resourceType eq 'VirtualMachines'" \
+  --url "https://management.azure.com/subscriptions/<EFFECTIVE_SUBSCRIPTION_ID>/providers/Microsoft.Consumption/reservationRecommendations?api-version=2023-05-01&%24filter=properties/scope eq 'Single' AND properties/lookBackPeriod eq 'Last30Days' AND properties/resourceType eq 'VirtualMachines'" \
   -o json
 ```
 
@@ -86,7 +101,7 @@ group for an RG-only scope, by using that resource group id as the scope prefix)
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<EFFECTIVE_SUBSCRIPTION_ID>/providers/Microsoft.CostManagement/benefitRecommendations?api-version=2023-11-01&\$filter=properties/lookBackPeriod eq 'Last30Days' AND properties/term eq 'P3Y'&\$expand=properties/allRecommendationDetails" \
+  --url "https://management.azure.com/subscriptions/<EFFECTIVE_SUBSCRIPTION_ID>/providers/Microsoft.CostManagement/benefitRecommendations?api-version=2023-11-01&%24filter=properties/lookBackPeriod eq 'Last30Days' AND properties/term eq 'P3Y'&%24expand=properties/allRecommendationDetails" \
   -o json
 ```
 
@@ -98,9 +113,9 @@ scope) is inside the effective scope.
 
 Use the canonical UsageDetails pull from `finops-managed-scope` with `metric=AmortizedCost`
 over the trailing ~30 days and add the fields this skill needs:
-`--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, billingCost: properties.costInBillingCurrency || properties.cost, billingCurrency: properties.billingCurrencyCode || properties.billingCurrency, chargeType: properties.chargeType, pricingModel: properties.pricingModel, meterCategory: properties.meterCategory,
+`--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, pricingModel: properties.pricingModel, meterCategory: properties.meterCategory,
 subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup,
-resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"`.
+instanceName: properties.instanceName, resourceId: properties.resourceId}, nextLink: nextLink}"`.
 Persist the page envelopes and run `prepare_usage_details(...)`; pass its `included_rows` as
 `usage_rows` and its `currency` as `currency`. Do not merge or scope-filter UsageDetails in
 model reasoning. Amortized cost is required: in actual cost, commitment purchases appear as
@@ -137,6 +152,7 @@ result = analyze_commitments(
     currency=prepared["currency"],
     vms=vms, sql_vms=sql_vms, costs=costs,     # Step 4 (+ per-resource monthly cost)
     managed_scopes=effective_scopes,
+    inventory_unavailable=inventory_unavailable,  # Step 1 kinds that returned 403/error
 )
 ```
 
