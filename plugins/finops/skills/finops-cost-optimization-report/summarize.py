@@ -118,6 +118,7 @@ def _governance_rollup(allocation, budget_roll):
     alloc = allocation or {}
     gates = list(budget_roll["over"]) + list(budget_roll["forecast_over"])
     return {
+        "dimension": alloc.get("dimension"),
         "untagged_usd": _num(alloc.get("untagged_usd")) or 0.0,
         "unallocated_usd": _num(alloc.get("unallocated_usd")) or 0.0,
         "unallocated_pct": alloc.get("unallocated_pct"),
@@ -340,13 +341,17 @@ def _priorities(rightsizing, anomalies, budget_roll, governance, extra=()):
         })
 
     for a in anomalies["top"]:
+        kind = str(a.get("kind") or "spike")
+        direction = str(a.get("direction") or "").strip().lower()
+        is_drop = direction == "down" or (not direction and kind.lower() == "drop")
         items.append({
             "category": "anomaly",
-            "impact_type": "spike",
+            "impact_type": "drop" if is_drop else "spike",
             "impact_usd": _num(a.get("impact_usd")),
-            "title": f"{a.get('kind') or 'spike'}: {a.get('dimension')}={a.get('value')}",
+            "title": f"{kind}: {a.get('dimension')}={a.get('value')}",
             "detail": f"current {a.get('current_usd')} vs baseline {a.get('baseline_mean_usd')}",
-            "action": "Investigate the spike and correlate to a change",
+            "action": ("Confirm the drop is expected (decommission, outage, or data lag)"
+                       if is_drop else "Investigate the spike and correlate to a change"),
             "validated": None,
         })
 
@@ -356,8 +361,9 @@ def _priorities(rightsizing, anomalies, budget_roll, governance, extra=()):
             "impact_type": "governance",
             "impact_usd": round(governance["untagged_usd"], 2),
             "title": f"Untagged spend — {len(governance['untagged_top'])}+ resources",
-            "detail": f"{governance['unallocated_pct']}% of spend unallocated"
-                      if governance["unallocated_pct"] is not None else "ownership tags missing",
+            "detail": (f"no tags at all; separately {governance['unallocated_pct']}% of spend "
+                       f"lacks the '{governance.get('dimension') or 'owner'}' tag")
+                      if governance["unallocated_pct"] is not None else "no tags at all",
             "action": "Tag resources so spend is attributable",
             "validated": None,
         })
@@ -381,7 +387,7 @@ def _priorities(rightsizing, anomalies, budget_roll, governance, extra=()):
 
 def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
                            budgets=None, waste=None, commitments=None, sre_agents=None,
-                           as_of=None):
+                           as_of=None, spend_period=None):
     """Roll the FinOps analyses up into one executive optimization summary.
 
     anomalies    the list returned by detect_anomalies()          (or None)
@@ -392,6 +398,8 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
     commitments  the dict returned by analyze_commitments()       (or None)
     sre_agents   the dict returned by analyze_sre_agent_costs()   (or None)
     as_of        date the report is anchored to (defaults to today)
+    spend_period optional (first_date, last_date) or {"from", "to"} of the usage rows behind
+                 total_monthly_spend; emitted as headline.spend_period so the report states it
 
     Every input is optional; a missing analysis becomes an empty section rather than an error.
     `waste` and `commitments` add their own sections and headline keys only when provided:
@@ -447,6 +455,10 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
         "untagged_usd": round(governance_roll["untagged_usd"], 2),
         "unallocated_pct": governance_roll["unallocated_pct"],
     }
+    if spend_period:
+        start, end = ((spend_period.get("from"), spend_period.get("to"))
+                      if isinstance(spend_period, dict) else tuple(spend_period))
+        headline["spend_period"] = {"from": str(start)[:10], "to": str(end)[:10]}
     if waste_roll is not None:
         headline["waste_monthly_savings"] = waste_roll["potential_monthly_savings"]
         headline["usage_optimization_monthly_savings"] = round(

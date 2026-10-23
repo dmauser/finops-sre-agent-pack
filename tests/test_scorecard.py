@@ -276,3 +276,28 @@ def test_scorecard_benchmarks_and_next_iteration_focus():
     assert len(card["next_iteration_focus"]) <= 3
     healthy = sc.kpi_scorecard(**_healthy_inputs())
     assert healthy["next_iteration_focus"] == []
+
+def test_anomaly_kpi_infers_drop_direction_from_kind():
+    anomalies = [
+        {"kind": "drop", "impact_usd": 50.0},
+        {"kind": "spike", "impact_usd": 10.0},
+        {"kind": "spike", "direction": "down", "impact_usd": 99.0},
+    ]
+    result = sc.kpi_scorecard(allocation={"total_usd": 3000.0}, anomalies=anomalies)
+    kpi = next(k for k in result["kpis"] if k["id"] == "anomaly_impact_pct")
+    assert kpi["value"] == 10.0  # only the 10 USD spike counts against 100 USD/day
+    counts = {b["id"]: b["value"] for b in result["benchmarks"]}
+    assert counts["anomaly_count"] == 1
+
+
+def test_route_to_owners_never_leaves_action_blank():
+    findings = [
+        {"resourceId": "/r/a", "kind": "review", "estMonthlySavingsUsd": 5.0},
+        {"resourceId": "/r/b", "recommendedAction": "Resize to D2s_v5", "estMonthlySavingsUsd": 9.0},
+        {"value": "rg-x", "kind": "drop", "impact_usd": 3.0},
+    ]
+    routed = sc.route_to_owners(findings)
+    actions = {i["resourceId"]: i["action"] for i in routed["unrouted"]}
+    assert actions["/r/b"] == "Resize to D2s_v5"
+    assert actions["/r/a"].startswith("Review the finding")
+    assert actions["rg-x"].startswith("Confirm the cost drop")

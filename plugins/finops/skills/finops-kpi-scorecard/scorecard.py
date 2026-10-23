@@ -420,6 +420,18 @@ def _finding_amount(finding):
     return None
 
 
+def _default_action(finding):
+    """Fallback action text so routed findings never show an empty Action cell."""
+    kind = str(finding.get("kind") or "").strip().lower()
+    if kind == "drop" or str(finding.get("direction") or "").strip().lower() == "down":
+        return "Confirm the cost drop is expected (decommission, outage, or data lag)"
+    if kind in ("spike", "new_spend"):
+        return "Investigate the cost increase and correlate it to a change"
+    if kind in ("orphan", "orphaned", "idle", "stale"):
+        return f"Confirm the {kind} resource is unused, then delete or deallocate it"
+    return "Review the finding with the owner and decide: act, accept, or dismiss"
+
+
 def route_to_owners(findings, *, tags=None, owner_keys=OWNER_TAG_KEYS, source=None):
     """Group findings by accountable owner so each team gets one action list.
 
@@ -444,7 +456,9 @@ def route_to_owners(findings, *, tags=None, owner_keys=OWNER_TAG_KEYS, source=No
             "resourceId": rid,
             "source": source or finding.get("source") or finding.get("kind") or finding.get("category"),
             "amount_usd": _finding_amount(finding),
-            "action": finding.get("action") or finding.get("recommendation") or finding.get("reason"),
+            "action": (finding.get("action") or finding.get("recommendedAction")
+                       or finding.get("recommendation") or finding.get("reason")
+                       or _default_action(finding)),
         }
         if owner is None:
             unrouted.append(item)
@@ -492,6 +506,14 @@ def _status(value, rule):
     if value <= target:
         return "pass"
     return "warn" if value <= warn else "fail"
+
+
+def _is_increase(anomaly):
+    """True for cost increases; a missing direction is inferred from kind ("drop" is a decrease)."""
+    direction = str(anomaly.get("direction") or "").strip().lower()
+    if direction:
+        return direction == "up"
+    return str(anomaly.get("kind") or "").strip().lower() != "drop"
 
 
 def _scope_covered(scope, budget_scopes):
@@ -674,7 +696,7 @@ def kpi_scorecard(
     impact = None
     if anomalies is not None:
         impact = sum(_num(a.get("impact_usd")) or 0.0 for a in anomalies
-                     if a.get("direction", "up") == "up")
+                     if _is_increase(a))
     daily_spend = (total / 30.0) if total else None
     add("anomaly_impact_pct", "Unexplained spike impact as % of daily spend", "Anomaly management",
         _pct(impact, daily_spend) if (impact is not None and daily_spend) else None, "%",
@@ -711,7 +733,7 @@ def kpi_scorecard(
             focus.append(capability)
     benchmarks = []
     if anomalies is not None:
-        ups = [a for a in anomalies if a.get("direction", "up") == "up"]
+        ups = [a for a in anomalies if _is_increase(a)]
         benchmarks.append({"id": "anomaly_count", "name": "Cost anomalies detected (increases)",
                            "value": len(ups), "unit": "count"})
         benchmarks.append({"id": "anomaly_impact_usd", "name": "Cost impact of anomalies",

@@ -170,7 +170,8 @@ def _notifications(props):
 def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
     """Evaluate read-only Azure budgets against amount, forecast, and their own thresholds.
 
-    budgets    the `value[]` list from GET Microsoft.Consumption/budgets
+    budgets    the `value[]` list from GET Microsoft.Consumption/budgets (the full
+               {"value": [...]} response or a single budget object is also accepted)
     as_of      date the evaluation is anchored to (defaults to today) — drives run-rate forecast
     mtd_spend  optional {budgetName: actual_month_to_date_usd} from an independent UsageDetails
                pull, used only to cross-check Azure's currentSpend and flag large discrepancies
@@ -189,6 +190,8 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
         "no_budgets": bool,                          # True + guidance when nothing is defined
       }
     """
+    if isinstance(budgets, dict):
+        budgets = budgets.get("value") if "value" in budgets else [budgets]
     budgets = budgets or []
     mtd_spend = mtd_spend or {}
     today = as_of or date.today()

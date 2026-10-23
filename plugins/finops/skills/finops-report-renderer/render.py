@@ -2,6 +2,7 @@
 
 import html
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -115,8 +116,12 @@ def _chart(model):
     values = _list(chart.get("values"), "chart.values")
     if len(labels) != len(values):
         raise ValueError("chart labels and values must have equal length")
+    heading = _escape(str(chart.get("title") or label))
     if not labels:
-        return '<p class="empty">No chart data was produced.</p>', ""
+        return (
+            f'<section><h2>{heading}</h2><p class="empty">No data points for this period.</p></section>',
+            "",
+        )
     data = {
         "type": chart_type,
         "label": label,
@@ -126,7 +131,7 @@ def _chart(model):
     payload = json.dumps(data, ensure_ascii=True, separators=(",", ":")).replace(
         "</", "<\\/"
     )
-    markup = '<section><h2>Trend</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>'
+    markup = f'<section><h2>{heading}</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>'
     script = f"""
 <script nonce="{{REPORT_NONCE}}">
 const chartData = {payload};
@@ -150,6 +155,17 @@ if (chartCanvas && window.Chart) {{
 }}
 </script>"""
     return markup, script
+
+
+def _display_time(value):
+    """Format an ISO timestamp as 'YYYY-MM-DD HH:MM UTC'; other text is returned unchanged."""
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def render_report(model):
@@ -205,13 +221,19 @@ h1,h2,p {{ margin-top:0; }}
 .table-wrap {{ overflow-x:auto; }} table {{ width:100%; border-collapse:collapse; }}
 th,td {{ padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; }} th {{ color:#44516a; font-size:.84rem; text-transform:uppercase; }}
 .chart-wrap {{ height:320px; }} .empty {{ color:#718096; font-style:italic; }}
-code {{ overflow-wrap:anywhere; }}
+code,td {{ overflow-wrap:anywhere; }}
+@media (max-width:640px) {{
+  body {{ padding:12px; }} header,section {{ padding:14px; }} h1 {{ font-size:1.5rem; }}
+  .metrics {{ grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }}
+  .metric-value {{ font-size:1.35rem; }} th,td {{ padding:8px 6px; font-size:.86rem; }}
+  .chart-wrap {{ height:240px; }}
+}}
 </style>
 {_CHART_JS if chart_script else ""}
 </head>
 <body>
 <main>
-<header><h1>{_escape(title)}</h1><p class="subtitle">{_escape(description)}</p><p class="refreshed">Last refreshed: {_escape(refreshed_at)}</p></header>
+<header><h1>{_escape(title)}</h1><p class="subtitle">{_escape(description)}</p><p class="refreshed">Last refreshed: {_escape(_display_time(refreshed_at))}</p></header>
 {warning_html}
 {_metrics(model)}
 {chart_markup}

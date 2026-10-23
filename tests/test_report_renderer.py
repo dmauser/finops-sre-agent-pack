@@ -738,7 +738,7 @@ def test_all_adapters_render_empty_states(builder, empty):
     output = renderer.render_report(model)
 
     assert output.startswith("<!doctype html>")
-    assert "No chart data was produced." in output
+    assert "No data points for this period." in output
     assert "class=\"empty\"" in output
 
 
@@ -749,43 +749,43 @@ def test_all_adapters_render_empty_states(builder, empty):
             models.build_cost_overview_model,
             _overview,
             "b50527d4e68a9c69e6cac6b590f1530754d2f4026de5e92dbc8928b65dd5d2a9",
-            "af87b075e4e4a3a44edaa50b8506deaaeb39f8ae1664afc2934fd21f62edb4ac",
+            "af75b18066a58f8d8e833305fd9522cf3412668973edeb324454a1b4a86dd31d",
         ),
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
             "582d55595fb372e18e87690e04380614a2ba67cc84a3535f0441674e5095801f",
-            "ba693c1029bc43b11eac5d6a18a0af4859a55dd3d44062ea1ea928410a01245e",
+            "ef9cc2e13ea72ccdad9bf4050c58ed249a5b91ecb7d316ddb79996632d27f96c",
         ),
         (
             models.build_budget_status_model,
             _budgets,
             "07f8af03e2ff258a9252aa7ef8697235ec6379ddf6ad10bf6ab031ef929c4732",
-            "b766edf21d5b96db14785fd5aee857c42a4d1a83234f3af7396b7aee29c81d8f",
+            "b08cb075f0f899798584e49c823a54c6a3734f4954101da4f5f28d1a290b855e",
         ),
         (
             models.build_cost_optimization_model,
             _optimization,
-            "b042471933ac40875fa4f538021bd9bf9ab111e4908d53ee06047e53ecdd3146",
-            "47bcbea0ab72243a9ff27c5d54d8af5460103073bd3064c3503ae2cdbb249b78",
+            "c631687b3dc79165ba738e8bf5d484acdd98c337ead990dfbd4e3caf69225b95",
+            "058b4cb0ef682972968de8185794e789f9f5c111712a5f41f554e0e39dfa901d",
         ),
         (
             models.build_ai_spend_model,
             _ai_spend,
             "ec0c391f9b5454c1f86bcf5db3c5c2489d7a5a32c0ccda2681afb827045142ff",
-            "05feddb26916b458454324ae8779f0d68b812cd9a7c4b3983ff5221aeed1a4b4",
+            "df08b0615103c836d52cdb21f375aa88127a2d12c49d2ffc2a2ea088ad5b692b",
         ),
         (
             models.build_cost_vs_reliability_model,
             _reliability,
             "71af9517bf5436e8b8f7d23045995cac37f18cb2d6a9bd83cbc13d03c24a8111",
-            "71176fb06191a382547b35f47863f2963c425dbf7b214cb25b440f594a96be3d",
+            "3a9710ae9d9dfa79397b017bc72d7231a4f4847575458b6268038668a890b994",
         ),
         (
             models.build_monthly_review_model,
             _monthly,
             "85657923896814482a757fc3a3f78f7b66a858fb59a6bb9594ef5c958b5b1d65",
-            "a3e7ed4bca09c13f31646229edf564b7d925ece9975551a62a68c95d37bfcffb",
+            "324b37959a8acbec29ec3a14944dd9987313e134457ea8730d00bceaa0fcd6be",
         ),
     ],
 )
@@ -1004,3 +1004,16 @@ def test_monthly_review_forecast_record_round_trips_through_scorecard_parser():
     review["forecast"]["as_of"] = "not-a-date"
     bad = models.build_monthly_review_model(review, **_context())
     assert "Forecast record" not in [s["title"] for s in bad["sections"]]
+
+
+def test_refreshed_time_is_human_readable_and_chart_titled():
+    model = _model()
+    model["refreshedAt"] = "2026-10-23T03:47:30.919138+00:00"
+    model["chart"] = {"type": "line", "label": "Daily cost (USD)", "labels": [], "values": []}
+    output = renderer.render_report(model)
+    assert "Last refreshed: 2026-10-23 03:47 UTC" in output
+    assert "<h2>Daily cost (USD)</h2>" in output
+    assert "No data points for this period." in output
+    assert "@media (max-width:640px)" in output
+    model["refreshedAt"] = "today"
+    assert "Last refreshed: today" in renderer.render_report(model)

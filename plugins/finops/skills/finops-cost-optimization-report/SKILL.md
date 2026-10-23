@@ -164,6 +164,7 @@ report = summarize_optimization(
     waste=waste_dict,               # from find_waste (or None)
     commitments=commitments_dict,   # from analyze_commitments (or None)
     sre_agents=sre_agent_dict,      # from analyze_sre_agent_costs (or None)
+    spend_period=(first_date, last_date),  # dates of the usage rows analyzed (or None)
 )
 ```
 
@@ -171,7 +172,10 @@ report = summarize_optimization(
 
 - **headline**: `total_monthly_spend`, `potential_monthly_savings` (rightsizing only),
   `anomaly_count`, `top_anomaly_impact_usd`, budgets `over` / `forecast_over` / `at_risk` counts,
-  `untagged_usd`, `unallocated_pct`. When waste is supplied: `waste_monthly_savings` and
+  `untagged_usd`, `unallocated_pct`, and `spend_period` `{from, to}` when supplied (the report
+  shows it under "Spend analyzed", because Consumption can return only the current billing
+  period). Anomalies keep their direction: a `drop` gets impact type `drop` and a "confirm it is
+  expected" action, not the spike action. When waste is supplied: `waste_monthly_savings` and
   `usage_optimization_monthly_savings` (rightsizing + waste, de-duplicated by resource id). When
   commitments are supplied: `rate_optimization_monthly_savings`, `commitment_coverage_pct`,
   `unused_commitment_cost`. When SRE Agent spend is supplied: `sre_agent_spend_usd`,

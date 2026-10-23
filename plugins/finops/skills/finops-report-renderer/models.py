@@ -1056,6 +1056,13 @@ def build_cost_optimization_model(
     untagged = _decimal(
         headline.get("untagged_usd"), "result.headline.untagged_usd"
     )
+    spend_period = headline.get("spend_period") if isinstance(headline.get("spend_period"), dict) else {}
+    spend_detail = (
+        f"{_text(spend_period.get('from'), 'result.headline.spend_period.from')} to "
+        f"{_text(spend_period.get('to'), 'result.headline.spend_period.to')}"
+        if spend_period.get("from") and spend_period.get("to")
+        else "Usage window analyzed"
+    )
     extra_metrics = []
     extra_sections = []
     if "waste" in result:
@@ -1076,14 +1083,14 @@ def build_cost_optimization_model(
         "Weekly executive rollup; cost data can lag by roughly one day.",
         context,
         [
-            {"label": "Monthly spend", "value": _money(monthly_spend), "detail": "Allocation total"},
+            {"label": "Spend analyzed", "value": _money(monthly_spend), "detail": spend_detail},
             {
                 "label": "Potential monthly savings",
                 "value": _money(potential_savings),
                 "detail": "Rightsizing only",
                 "tone": "good",
             },
-            {"label": "Anomalies", "value": str(anomaly_count), "detail": "Cost spikes/new spend"},
+            {"label": "Anomalies", "value": str(anomaly_count), "detail": "Spikes, drops, and new spend"},
             {
                 "label": "Budget gates",
                 "value": str(budgets_over + budgets_forecast),

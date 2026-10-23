@@ -108,6 +108,7 @@ model = {
     "chart": {
         "type": "line",
         "label": "Daily cost",
+        "title": "Daily cost trend",  # optional section heading; defaults to label
         "labels": ["Aug 1", "Aug 2"],
         "values": [12.3, 14.8],
     },

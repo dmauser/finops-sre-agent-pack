@@ -212,3 +212,25 @@ def test_waste_and_commitments_are_opt_in_and_never_summed():
                for p in out["priorities"])
     assert not any(p["category"] == "waste" and "NIC" in p["title"]
                    for p in out["priorities"])
+
+def test_drop_anomalies_are_labelled_as_drops():
+    drop = _anomaly("resourceGroup", "rg-old", 28.0, kind="drop", current=0.0, baseline=10.0)
+    out = summarize_optimization(anomalies=[drop], as_of=AS_OF)
+    item = next(p for p in out["priorities"] if p["category"] == "anomaly")
+    assert item["impact_type"] == "drop"
+    assert item["action"].startswith("Confirm the drop is expected")
+
+
+def test_governance_detail_distinguishes_untagged_from_unallocated():
+    alloc = {"dimension": "team", "total_usd": 100.0, "untagged_usd": 35.0,
+             "unallocated_usd": 100.0, "unallocated_pct": 100.0}
+    out = summarize_optimization(allocation=alloc, as_of=AS_OF)
+    item = next(p for p in out["priorities"] if p["category"] == "governance")
+    assert item["detail"] == "no tags at all; separately 100.0% of spend lacks the 'team' tag"
+
+
+def test_spend_period_is_reported_in_headline():
+    out = summarize_optimization(allocation={"total_usd": 10.0},
+                                 spend_period=("2026-10-01", "2026-10-22T00:00:00"), as_of=AS_OF)
+    assert out["headline"]["spend_period"] == {"from": "2026-10-01", "to": "2026-10-22"}
+    assert "spend_period" not in summarize_optimization(as_of=AS_OF)["headline"]

@@ -225,3 +225,13 @@ def test_resource_group_scope_extracted():
 
 def out_gate_names(out):
     return [g["name"] for g in out["gates"]]
+
+def test_evaluate_budgets_accepts_full_list_response():
+    one = {"name": "sub-budget", "id": "/subscriptions/s/providers/Microsoft.Consumption/budgets/sub-budget",
+           "properties": {"amount": 100, "timeGrain": "Monthly", "currentSpend": {"amount": 20, "unit": "USD"}}}
+    from_list = evaluate_budgets([one], as_of=AS_OF)
+    from_response = evaluate_budgets({"value": [one]}, as_of=AS_OF)
+    assert from_response == from_list
+    assert from_response["budget_count"] == 1
+    assert evaluate_budgets(one, as_of=AS_OF)["budget_count"] == 1
+    assert evaluate_budgets({"value": []}, as_of=AS_OF)["no_budgets"] is True
