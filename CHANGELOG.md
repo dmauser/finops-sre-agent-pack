@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Documentation
+
+- **README refresh**: table of contents, architecture diagram, skill capability table, FinOps
+  Framework coverage, Live Report catalog with schedules, a screenshot gallery of 11 live reports
+  (identifiers masked) in `docs/images/reports/`, example prompts, safety model, and permissions.
+
 ### Fixed
 
 - **UsageDetails chain isolation**: `find_usage_tool_output_chains` gains `after_timestamp` (ignore
