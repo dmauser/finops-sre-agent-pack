@@ -15,6 +15,12 @@
   troubleshooting notes, and `az` commands that grant optional roles to the agent's managed
   identity. The GitHub Copilot install prompt now retries a failed clone, targets the managed
   identity, and restores the default `az` subscription.
+- **Cost estimates**: new [`docs/COST.md`](docs/COST.md) estimates active flow AAU and USD per run
+  and per month for each Live Report and for all 12, measured on a lab agent. It explains the always-on
+  versus active flow split, states clearly that figures are estimates and your consumption will differ,
+  and shows how to enable only the reports you need. Linked from the README and onboarding guide.
+- **Sub-page review**: skill counts updated to 15, a broken `#rbac` anchor fixed, the Carbon
+  Optimization Reader role and a clone-failure troubleshooting row added, stale counts removed.
 
 ### Fixed
 

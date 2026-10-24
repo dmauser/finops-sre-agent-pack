@@ -26,7 +26,7 @@ against it: the script detects the existing agent and adds only what is missing.
 | Agent identity RBAC (subscription) | Reader, Monitoring Contributor, Log Analytics Reader, **Cost Management Reader** |
 | Agent identity RBAC (agent resource) | Reader, so every run can read the managed scope |
 | Your RBAC | **SRE Agent Administrator** on the agent (data-plane access) |
-| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 14 skills |
+| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 15 skills |
 | Subagent `finops-investigator` | Instructions, exactly five read-only tools, the FinOps skills plus `live_report_authoring` |
 | Scheduled task | `FinOps: Cost Optimization (Live Report, Weekly)`, Mondays 17:00 UTC, **Autonomous**, response agent `finops-investigator` |
 | Live Report | `FinOps: Cost Optimization` in Operations Hub. Created on the task's first run and refreshed on every run after that |
@@ -88,6 +88,9 @@ kept, and phase 2 only upserts.
 | `REPO_SLUG` | `dmauser/finops-sre-agent-pack` | Install the plugin from your fork |
 | `GITHUB_PAT` | unset | Token for a private fork |
 | `FORCE_INFRA=1` | off | Re-run Bicep even though the agent exists |
+
+Each task adds active flow AAU cost to the agent. Enable only the reports you need; see
+[Estimated cost of running the FinOps reports](COST.md) for estimates and disclaimers.
 | `-y` | prompt | Accept defaults without prompting (CI) |
 | `--dry-run` | | Validate inputs and the template; change nothing |
 
@@ -152,7 +155,7 @@ In sre.azure.com, go to **Builder → Plugins → Install from URL**:
 | Authentication | Host default for the public repo, or a PAT for a private fork |
 | Auto-update | **On**, so skills follow `main` |
 
-Wait for the success message, which reports 14 skills.
+Wait for the success message, which reports 15 skills.
 
 > A plugin carries **only skills**. It does not create the subagent or the scheduled task, so
 > continue with steps 4 and 5.
@@ -266,6 +269,7 @@ list (existing tasks with the same name are updated in place):
 | Symptom | Fix |
 |---|---|
 | `deploy.sh`: *data plane still returns HTTP 403* | SRE Agent Administrator can take a few minutes to propagate. Re-run the script, or check the role on the agent's IAM blade. |
+| `deploy.sh` or `install-api.sh` fails because the service cannot clone the repository | Usually transient on the first attempt. Re-run the same command; it does not re-provision the agent and only upserts configuration. For a private fork, set `REPO_SLUG` and `GITHUB_PAT`. |
 | Cannot get an `https://azuresre.dev` token | In Cloud Shell, run `az login --scope https://azuresre.dev/.default`, or use WSL or a local shell. |
 | Region rejected | Pick a region that supports SRE Agent: `az provider show -n Microsoft.App --query "resourceTypes[?resourceType=='agents'].locations"`. |
 | Report never refreshes | The task is missing, paused, in **Review** mode, or has a run limit or end date. See step 5. |

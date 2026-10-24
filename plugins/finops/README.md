@@ -103,9 +103,9 @@ skill:
 |------|------|--------|
 | **Usage examples per analysis skill** | Each of the eight analysis/planning skills has sample input, an offline invocation, and representative output under its `examples/` directory. The examples use placeholder resource IDs; live retrieval is always governed by `finops-managed-scope`. | ✅ complete |
 | **Cost-pull recipe simplification** | Lead with bounded `$top`, minimal `--query` field projection, and complete `nextLink` pagination; lower `$top` on `413`, then use verified date-windowing only as a fallback because the `usageStart` filter is not reliably applied. | ✅ complete |
-| **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
+| **Make repo public** | The repository is public, so installs need no PAT (only private forks do). | ✅ complete |
 
-Engineering wave order is complete: Wave 1 anomaly + rightsizing, Wave 2 allocation + budgets, Wave 3 executive/AI reports, and Wave 4 `finops-cost-vs-reliability` + Live Report are now built.
+All engineering waves (1–8) listed in the Skills table are built.
 
 ## Agent
 
@@ -187,6 +187,7 @@ and can optionally apply the second to the SRE Agent's managed identity.
 | **Cost Management Contributor** *(write)* | Needed only by a human who chooses to run a generated budget application script. The pack, agent, and installer do not use or grant this role. | Grant out-of-band at the exact budget scope according to your governance process. |
 | **Log Analytics Reader** + `api.loganalytics.io` scope | Pod/namespace-level AKS rightsizing (Container Insights KQL) | Grant the role on the workspace and allowlist the scope for the MI |
 | **Reservations Reader** at `/providers/Microsoft.Capacity` + **Savings plan Reader** at `/providers/Microsoft.BillingBenefits` *(optional, tenant-level)* | Commitment inventory: utilization and expiry of existing reservations/savings plans. Without them reports show *"Commitment inventory unavailable"*; coverage %, unused-commitment cost and purchase recommendations still work. | `GRANT_COMMITMENT_READERS=1 MI_OBJECT_ID=<id> ./install-api.sh` (needs tenant-root User Access Administrator, i.e. a Global Admin with [elevated access](https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin); otherwise the installer prints the exact commands for an admin) |
+| **Carbon Optimization Reader** on each managed subscription *(optional)* | `finops-carbon-optimization` emissions data. Without it the skill reports the subscription as an access gap. | `az role assignment create --assignee-object-id <AGENT_MI_OBJECT_ID> --assignee-principal-type ServicePrincipal --role "Carbon Optimization Reader" --scope /subscriptions/<sub-id>` |
 | **Reader** (or Monitoring Reader) on managed resources | Azure Monitor utilization metrics that validate rightsizing/idle findings. Missing metrics leave findings *"verify first"*. | Usually already present via the managed-scope Reader assignment |
 
 For an RG-managed boundary, the subscription-level Cost Management Reader grant is transport access
@@ -222,7 +223,7 @@ repository the agent reads to correlate incidents with changes.
    its managed resources. Every skill enforces this boundary; scheduled runs fail closed without it.
 3. **Grant read-only cost access** — Cost Management Reader (`MI_OBJECT_ID=...` lets the installer
    do it). For commitment inventory also grant Reservations Reader and Savings plan Reader at the
-   tenant level (`GRANT_COMMITMENT_READERS=1`; see [RBAC](#rbac) — needs elevated access).
+   tenant level (`GRANT_COMMITMENT_READERS=1`; see [Prerequisites](#prerequisites) — needs elevated access).
 4. **Connect your IaC repository as a code source** (optional, recommended) — the customer's own
    Bicep/Terraform/app repository, not this one. It lets anomaly investigations cite the PR or
    deployment that caused a spike and lets the agent point at the IaC line to change.
@@ -274,7 +275,7 @@ to create the Reader role assignment on the agent ARM resource.
 AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<agent> \
   ./install-api.sh
 
-# While this repo is private, pass a GitHub PAT so the server can clone it:
+# Installing from a private fork (REPO_SLUG=<owner>/<repo>)? Pass a GitHub PAT so the server can clone it:
 GITHUB_PAT=$(gh auth token) AGENT_RESOURCE_ID=<id> ./install-api.sh
 
 # Also grant Cost Management Reader at every required UsageDetails transport scope:
@@ -559,21 +560,16 @@ old instructions.
 
 ### Runtime and API cost measurements
 
-The canonical schedule now has zero same-minute collision pairs, down from two: Cost Overview moved
-from 14:00 to 14:30 UTC, and the standalone Monday 15:00 rightsizing review was merged into the
-Monday 15:00 Rightsizing Savings report. That merge reduces concurrent full weekly rightsizing
-analyses from two to one while preserving the exact no-findings result and conditional Normal
-importance email semantics. The merged prompt runs analysis before report operations and explicitly
-continues result/email delivery if a report tool is unavailable or fails. The broader Cost
-Optimization rollup remains deliberately separate at 17:00 because it correlates four domains.
+The canonical schedule staggers every task so no two daily or weekly tasks start in the same minute
+(see `task-manifest.json`). The standalone Monday 15:00 rightsizing review was merged into the
+Rightsizing Savings report, so one weekly rightsizing analysis serves both the Live Report and the
+conditional review email; result and email delivery continue if a report tool fails. The Cost
+Optimization rollup stays separate at 17:00 because it correlates several domains.
 
-For the scheduled-task installer path, steady-state scheduled-task API calls drop from 10 to 9
-(one list, seven upserts, one verification list). The first migration run adds one deliberate
-DELETE for the retired duplicate, returning that run to 10 calls. Static code-path measurement
-reduces Python subprocesses for task rendering/planning/upsert lookup/final verification from 43 to
-3 on an update, or from 51 to 10 on a fresh install where each POST response must still be parsed.
-Generated scheduled-task YAML is 21,230 bytes (59.5% below the recorded 52,449-byte baseline), with
-15,811 runtime agent-prompt bytes across the seven tasks.
+On the installer's scheduled-task path, one task list is reused for planning and verification
+instead of one lookup per task. Static code-path measurement reduces Python subprocesses for task
+rendering, planning, upsert lookup and final verification from 43 to
+3 on an update.
 
 ## Install a skill only (manual)
 
@@ -611,7 +607,7 @@ otherwise scope discovery fails or UsageDetails rows carry no cost values. (Ente
 
 ## Validation status
 
-`finops-cost-anomaly-detection` was validated **end-to-end on a live subscription** (`93cba93f…`):
+`finops-cost-anomaly-detection` was validated **end-to-end on a live subscription**:
 
 - Pulled 3,217 real Consumption UsageDetails line items (4 pages paginated, 13 days).
 - Detector imported and ran clean on real data (0 anomalies — stable sub, expected).
@@ -624,7 +620,7 @@ on the live agent (`FinOps: Cost Anomaly Detection (Daily)`, cron `0 14 * * *`),
 has been installed end-to-end via [`install-api.sh`](install-api.sh) against a live agent.
 
 `finops-rightsizing-advisor` was validated to the **same level** — 30 offline unit tests plus a live
-end-to-end run on the same subscription (`93cba93f…`):
+end-to-end run on the same subscription:
 
 - Pulled **8 real Azure Advisor cost recs** (unattached disk, 3 empty App Service plans, 4 AKS).
 - Pulled **live Resource Graph inventory** and **30 days of Consumption cost** (4 pages), aggregating
@@ -651,11 +647,11 @@ now reuses that one analysis for both the Live Report and conditional ranked-rev
 
 ## Test
 
-The skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.py`, `allocate.py`,
-`budget.py`, `recommend.py`, `summarize.py`, `attribute.py`, `reliability.py`, `scope.py`,
-`render.py`):
+The skills' logic is pure Python and offline-testable (for example `scope.py`, `usage.py`, `detect.py`,
+`rightsize.py`, `waste.py`, `commit.py`, `allocate.py`, `budget.py`, `scorecard.py`, `sreagent.py`,
+`carbon.py`, `reliability.py`, `render.py`):
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 281 offline tests, including managed-scope and budget-script coverage
+pytest tests/          # offline tests, including managed-scope and budget-script coverage
 ```

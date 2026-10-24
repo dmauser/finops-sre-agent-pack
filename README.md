@@ -25,6 +25,7 @@ the [Microsoft FinOps Framework](https://learn.microsoft.com/en-us/cloud-computi
 - [Live Reports](#live-reports)
   - [Report catalog](#report-catalog)
   - [Report gallery](#report-gallery)
+  - [Estimated cost](#estimated-cost)
 - [Example prompts](#example-prompts)
 - [Managed scope](#managed-scope)
 - [Safety model](#safety-model)
@@ -157,6 +158,15 @@ ranked tables. They render on desktop and mobile.
 Schedules, names, and model tiers can be overridden at install time; see
 [`task-manifest.json`](plugins/finops/scheduled-tasks/task-manifest.json).
 
+### Estimated cost
+
+Each report run uses SRE Agent active flow AAUs. In our lab measurements, a run used about 24–75 AAUs
+(about $2.40–$7.50 at $0.10 per AAU). The default install (Cost Optimization only) was about $26 a month
+of active flow. All 12 reports came to about $495 a month, on top of the agent's always-on cost. **These are
+estimates only: your consumption will differ with your environment size, data volume, and model.** Enable
+only the reports you need. See **[docs/COST.md](docs/COST.md)** for per-report estimates, the method,
+and how to keep costs predictable.
+
 ### Report gallery
 
 These reports use **fictional sample data** for a made-up "Contoso" estate; no customer data is shown.
@@ -241,7 +251,8 @@ run; you do not need to reinstall the plugin.
 
 Choose one path. Every path installs the same plugin, skills, and `finops-investigator`; they differ in
 whether they create the agent and how many scheduled tasks they add by default. See
-**[docs/ONBOARDING.md](docs/ONBOARDING.md)** for the full guide.
+**[docs/ONBOARDING.md](docs/ONBOARDING.md)** for the full guide. Each report adds active flow AAU cost, so enable
+only the ones you need; see [Estimated cost](docs/COST.md).
 
 | Path | Creates the agent | Default scheduled tasks |
 |---|---|---|

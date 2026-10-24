@@ -6,7 +6,7 @@
 #            Application Insights, the Microsoft.App/agents resource, SRE Agent Administrator
 #            for you, and read-only subscription RBAC for the agent identity
 #            (Reader, Monitoring Contributor, Log Analytics Reader, Cost Management Reader).
-#   Phase 2 (agent data plane, ../install-api.sh): the `finops` plugin (14 skills, installed
+#   Phase 2 (agent data plane, ../install-api.sh): the `finops` plugin (15 skills, installed
 #            from the GitHub URL with auto-update), the finops-investigator subagent, and the
 #            scheduled task(s) that keep the Live Report(s) refreshed.
 #
