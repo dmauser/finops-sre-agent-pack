@@ -139,6 +139,9 @@ Each scheduled task saves or refreshes a **Live Report** in the SRE Agent Operat
 include a refresh timestamp, the managed scope, a data-quality panel, headline metrics, charts, and
 ranked tables. They render on desktop and mobile.
 
+> **New to the reports?** Start with **[How to read the FinOps reports](docs/REPORTS.md)**: a plain-language
+> guide to what each report answers, how its scores and thresholds are calculated, and why it matters for FinOps.
+
 ### Report catalog
 
 | Live Report | Schedule (UTC) | What you get |
@@ -179,6 +182,7 @@ These reports use **fictional sample data** for a made-up "Contoso" estate; no c
 [`docs/samples/generate_samples.py`](docs/samples/generate_samples.py) passes the sample data through the
 same skill helpers and renderer that the scheduled tasks use, so each report looks exactly like a live one.
 Click an image to view it full size, or **View as HTML** to open the interactive report. Source files are in [`docs/samples/`](docs/samples/).
+For what each number means, see [How to read the FinOps reports](docs/REPORTS.md).
 
 <table>
   <tr>
@@ -416,7 +420,7 @@ plugins/finops/
 ├── scheduled-tasks/     # 12 task YAMLs, prompts, and task-manifest.json
 ├── deploy/              # deploy.sh + Bicep for the automated onboarding path
 └── install-api.sh       # package installer for an existing agent
-docs/                    # onboarding guide, sample reports, and report screenshots
+docs/                    # onboarding, report guide (REPORTS.md), cost estimates, samples, screenshots
 evals/                   # evaluation scenarios
 tests/                   # offline pytest suite
 ```
