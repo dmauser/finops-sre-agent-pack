@@ -231,11 +231,14 @@ SUPPORTED_TYPES = tuple(sorted(_RULES))
 
 def find_waste(resources, *, costs=None, ingestion_gb_per_day=None, managed_scopes=None,
                currency=None, as_of=None, snapshot_age_days=90,
-               la_commitment_gb_per_day=_LA_COMMITMENT_TIER_GB, min_monthly_savings=0.0):
+               la_commitment_gb_per_day=_LA_COMMITMENT_TIER_GB, min_monthly_savings=0.0,
+               connections_queried=False):
     """Classify raw Resource Graph rows into waste findings.
 
     resources            ARG rows with id, type, sku, properties (include
                          microsoft.network/connections rows so gateways can be checked)
+    connections_queried  True when the Resource Graph query included microsoft.network/connections,
+                         so zero connection rows means no gateway has a connection
     costs                {resourceId: monthly cost} from prepared UsageDetails (case-insensitive)
     ingestion_gb_per_day {workspaceId: average billable GB/day} for Log Analytics workspaces
     managed_scopes       effective ARM scopes; rows outside are dropped defensively
@@ -247,7 +250,7 @@ def find_waste(resources, *, costs=None, ingestion_gb_per_day=None, managed_scop
     cost_map = {_norm_id(k): _num(v) for k, v in (costs or {}).items()}
     rows = [r for r in resources or [] if isinstance(r, dict) and _text(r.get("id"))]
 
-    connected, connections_seen = set(), False
+    connected, connections_seen = set(), bool(connections_queried)
     for r in rows:
         if _text(r.get("type")).casefold() == "microsoft.network/connections":
             connections_seen = True

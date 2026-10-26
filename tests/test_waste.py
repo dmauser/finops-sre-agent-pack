@@ -117,6 +117,10 @@ def test_gateway_rule_needs_connections_inventory():
     assert _kinds(result) == {"gw-dead": "idle"}
     assert "ExpressRoute" in result["findings"][0]["reason"]
 
+    queried = find([gw_live, gw_dead], as_of=TODAY, connections_queried=True)
+    assert _kinds(queried) == {"gw-live": "idle", "gw-dead": "idle"}
+    assert not any("Gateway rule skipped" in w for w in queried["warnings"])
+
 
 def test_snapshot_age_threshold():
     rows = [

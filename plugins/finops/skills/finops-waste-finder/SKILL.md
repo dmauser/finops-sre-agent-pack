@@ -86,8 +86,13 @@ result = find_waste(
     ingestion_gb_per_day=ingestion,          # Step 2 {workspaceId: GB/day}
     managed_scopes=effective_scopes,
     currency=prepared["currency"],
+    connections_queried=True,                # Step 1 query includes microsoft.network/connections
 )
 ```
+
+Pass `connections_queried=True` whenever the Step 1 query included `microsoft.network/connections`,
+even if it returned zero connection rows; otherwise a subscription with gateways but no connections
+skips the gateway rule.
 
 | Kind | Rule | Savings counted |
 | --- | --- | --- |
