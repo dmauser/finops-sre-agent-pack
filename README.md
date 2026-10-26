@@ -26,6 +26,7 @@ the [Microsoft FinOps Framework](https://learn.microsoft.com/en-us/cloud-computi
   - [Report catalog](#report-catalog)
   - [Report gallery](#report-gallery)
   - [Estimated cost](#estimated-cost)
+  - [How to read the reports](docs/REPORTS.md)
 - [Example prompts](#example-prompts)
 - [Managed scope](#managed-scope)
 - [Safety model](#safety-model)
@@ -157,6 +158,11 @@ ranked tables. They render on desktop and mobile.
 
 Schedules, names, and model tiers can be overridden at install time; see
 [`task-manifest.json`](plugins/finops/scheduled-tasks/task-manifest.json).
+
+**What do the numbers mean?** [How to read the FinOps reports](docs/REPORTS.md) explains, in plain
+language, what question each report answers, how its scores and thresholds are calculated (for
+example the Cost vs Reliability score and the Monthly Review maturity level), and why it matters
+for FinOps.
 
 ### Estimated cost
 

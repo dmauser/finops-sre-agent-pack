@@ -15,6 +15,12 @@
   troubleshooting notes, and `az` commands that grant optional roles to the agent's managed
   identity. The GitHub Copilot install prompt now retries a failed clone, targets the managed
   identity, and restores the default `az` subscription.
+- **How to read the reports**: new [`docs/REPORTS.md`](docs/REPORTS.md) explains each Live Report in
+  plain language: the question it answers, how scores and thresholds are calculated (reliability
+  score weights and risk bands, anomaly rules, rightsizing and commitment thresholds, KPI targets,
+  maturity levels), and why it matters for FinOps, with public references. A new drift test,
+  `tests/test_reports_doc.py`, keeps the documented numbers in sync with the skill code. Linked from
+  the README and onboarding guide.
 - **Cost estimates**: new [`docs/COST.md`](docs/COST.md) estimates active flow AAU and USD per run
   and per month for each Live Report and for all 12, measured on a lab agent. It explains the always-on
   versus active flow split, states clearly that figures are estimates and your consumption will differ,

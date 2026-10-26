@@ -88,11 +88,12 @@ kept, and phase 2 only upserts.
 | `REPO_SLUG` | `dmauser/finops-sre-agent-pack` | Install the plugin from your fork |
 | `GITHUB_PAT` | unset | Token for a private fork |
 | `FORCE_INFRA=1` | off | Re-run Bicep even though the agent exists |
-
-Each task adds active flow AAU cost to the agent. Enable only the reports you need; see
-[Estimated cost of running the FinOps reports](COST.md) for estimates and disclaimers.
 | `-y` | prompt | Accept defaults without prompting (CI) |
 | `--dry-run` | | Validate inputs and the template; change nothing |
+
+Each task adds active flow AAU cost to the agent. Enable only the reports you need; see
+[Estimated cost of running the FinOps reports](COST.md) for estimates and disclaimers. To understand
+the scores, thresholds, and terms in each report, see [How to read the FinOps reports](REPORTS.md).
 
 Task ids: `cost-anomaly`, `cost-overview-report`, `rightsizing-savings-report`,
 `budget-status-report`, `cost-optimization-report`, `ai-spend-report`,
