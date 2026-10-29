@@ -1,51 +1,22 @@
 # Changelog
 
-## Unreleased
+All notable changes to the **finops** plugin for Azure SRE Agent (`dmauser/finops-sre-agent-pack`) are
+documented in this file.
 
-### Documentation
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
+to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-- **README refresh**: table of contents, architecture diagram, skill capability table, FinOps
-  Framework coverage, Live Report catalog with schedules, a report gallery, example prompts, safety
-  model, and permissions.
-- **Sample reports**: `docs/samples/generate_samples.py` builds all 12 Live Reports from fictional
-  "Contoso" data through the real skill helpers and renderer. The README gallery now shows these
-  samples (`docs/samples/*.html`, `docs/images/reports/*.png`) instead of live customer data.
-- **Install details**: the README lists the four resources `deploy.sh` creates, every role it
-  grants (including the non-read Monitoring Contributor), optional settings, first-run and
-  troubleshooting notes, and `az` commands that grant optional roles to the agent's managed
-  identity. The GitHub Copilot install prompt now retries a failed clone, targets the managed
-  identity, and restores the default `az` subscription.
-- **How to read the reports**: new [`docs/REPORTS.md`](docs/REPORTS.md) explains each Live Report in
-  plain language: the question it answers, how scores and thresholds are calculated (reliability
-  score weights and risk bands, anomaly rules, rightsizing and commitment thresholds, KPI targets,
-  maturity levels), and why it matters for FinOps, with public references. A new drift test,
-  `tests/test_reports_doc.py`, keeps the documented numbers in sync with the skill code. Linked from
-  the README and onboarding guide.
-- **Cost estimates**: new [`docs/COST.md`](docs/COST.md) estimates active flow AAU and USD per run
-  and per month for each Live Report and for all 12, measured on a lab agent. It explains the always-on
-  versus active flow split, states clearly that figures are estimates and your consumption will differ,
-  and shows how to enable only the reports you need. Linked from the README and onboarding guide.
-- **Sub-page review**: skill counts updated to 15, a broken `#rbac` anchor fixed, the Carbon
-  Optimization Reader role and a clone-failure troubleshooting row added, stale counts removed.
+---
 
-### Fixed
+## [Unreleased]
 
-- **Cost Optimization schedule**: `deploy.sh` no longer forces `COST_OPT_CRON` to Mondays 09:00
-  UTC. The task now uses the manifest default (Mondays 17:00 UTC) that the README documents.
-
-- **UsageDetails chain isolation**: `find_usage_tool_output_chains` gains `after_timestamp` (ignore
-  `tmp/ToolOutputs` files from earlier scheduled-task executions) and `request_url_prefix` (never
-  merge chains from other subscriptions or API versions). Production had merged stale pages into a
-  28-page chain of mixed dates.
-- **MOSP/MCA date filters**: `finops-managed-scope` documents that UsageDetails ignores every date
-  filter for MOSP and MCA subscriptions (current billing period only; `billingPeriods` is empty).
-  Detect it on the first page, stop retrying, filter client-side, and label results partial.
-- **Deterministic inputs**: new `save_finops_input` / `load_finops_input` helpers write Advisor,
-  inventory, budget, and tag responses to `tmp/finops-data/<name>.json`, replacing heuristic
-  ToolOutputs scanning. The Monthly Review prompt and `finops-kpi-scorecard` use them.
+## [0.2.0] - 2026-10-29
 
 ### Added
 
+- **Live Reports for anomalies, allocation, waste and commitments**: four renderer adapters and the
+  `cost-allocation-report`, `waste-finder-report` and `commitment-report` scheduled tasks; Cost Anomaly
+  Detection always saves `FinOps: Cost Anomalies` and emails only when anomalies are found.
 - **Microsoft FinOps alignment** (audited against learn.microsoft.com/cloud-computing/finops,
   last reviewed 2026-10-23):
   - **`finops-carbon-optimization`** (15th skill): Azure Carbon Optimization emissions for the
@@ -123,9 +94,67 @@
   optimization.
 - A README section on deploying the pack with SRE Agent: install it as a plugin, set the managed
   scope, grant RBAC, connect the customer's IaC repo as a code source, and set up a FinOps cadence.
+- **Sample reports**: `docs/samples/generate_samples.py` builds all 12 Live Reports from fictional
+  "Contoso" data through the real skill helpers and renderer. The README gallery now shows these
+  samples (`docs/samples/*.html`, `docs/images/reports/*.png`) instead of live customer data.
+- **How to read the reports**: new [`docs/REPORTS.md`](docs/REPORTS.md) explains each Live Report in
+  plain language: the question it answers, how scores and thresholds are calculated (reliability
+  score weights and risk bands, anomaly rules, rightsizing and commitment thresholds, KPI targets,
+  maturity levels), and why it matters for FinOps, with public references. A new drift test,
+  `tests/test_reports_doc.py`, keeps the documented numbers in sync with the skill code. Linked from
+  the README and onboarding guide.
+- **Cost estimates**: new [`docs/COST.md`](docs/COST.md) estimates active flow AAU and USD per run
+  and per month for each Live Report and for all 12, measured on a lab agent. It explains the always-on
+  versus active flow split, states clearly that figures are estimates and your consumption will differ,
+  and shows how to enable only the reports you need. Linked from the README and onboarding guide.
+
+### Changed
+
+- The installer default `REPO_SLUG` and the marketplace owner now point to `dmauser/finops-sre-agent-pack`.
+- Report tables show short resource names and resource groups instead of full ARM ids (anomalies,
+  waste, rightsizing, optimization, Hybrid Benefit); allocation showback columns are labelled with the
+  chosen tag dimension.
+- **README refresh**: table of contents, architecture diagram, skill capability table, FinOps
+  Framework coverage, Live Report catalog with schedules, a report gallery, example prompts, safety
+  model, and permissions.
+- **Install details**: the README lists the four resources `deploy.sh` creates, every role it
+  grants (including the non-read Monitoring Contributor), optional settings, first-run and
+  troubleshooting notes, and `az` commands that grant optional roles to the agent's managed
+  identity. The GitHub Copilot install prompt now retries a failed clone, targets the managed
+  identity, and restores the default `az` subscription.
+- **Sub-page review**: skill counts updated to 15, a broken `#rbac` anchor fixed, the Carbon
+  Optimization Reader role and a clone-failure troubleshooting row added, stale counts removed.
 
 ### Fixed
 
+- **UsageDetails rows sharing an `id` were dropped as duplicates** (every report): Azure reuses one
+  UsageDetails `id` across distinct rows (different dates, quantities, costs and tags), so de-duplicating
+  by `id` removed about 5% of spend (live lab: $1,380.69 reported vs $1,452.35 in Cost Management) and
+  zeroed whole Foundry projects in AI Spend. Row identity is now the full normalized row;
+  `filter_usage_details(..., sources=...)` removes only overlap between separate retrievals, and
+  `prepare_usage_details` never drops identical rows inside one chain.
+- **Waste: unconnected VPN/ExpressRoute gateways missed**: gateways are now evaluated when connections
+  were queried but none exist.
+- **Concurrent scheduled tasks mixed usage pages**: `find_usage_tool_output_chains` never chains
+  outputs from different thread ids (a live Allocation run reported $911 instead of $1,130).
+- **Live Report accuracy** (found validating the new reports): Cost Overview merges resource-group
+  casing and labels short periods; Rightsizing skips deleted resources and excludes Advisor
+  reservation/savings plan recommendations from addressable waste; Commitments request single-scope
+  benefit recommendations; Cost vs Reliability merges service casing and blanks pain per $1K below
+  $10/month; threshold cells (`>=`/`<=`) stay on one line.
+- **Cost Optimization schedule**: `deploy.sh` no longer forces `COST_OPT_CRON` to Mondays 09:00
+  UTC. The task now uses the manifest default (Mondays 17:00 UTC) that the README documents.
+
+- **UsageDetails chain isolation**: `find_usage_tool_output_chains` gains `after_timestamp` (ignore
+  `tmp/ToolOutputs` files from earlier scheduled-task executions) and `request_url_prefix` (never
+  merge chains from other subscriptions or API versions). Production had merged stale pages into a
+  28-page chain of mixed dates.
+- **MOSP/MCA date filters**: `finops-managed-scope` documents that UsageDetails ignores every date
+  filter for MOSP and MCA subscriptions (current billing period only; `billingPeriods` is empty).
+  Detect it on the first page, stop retrying, filter client-side, and label results partial.
+- **Deterministic inputs**: new `save_finops_input` / `load_finops_input` helpers write Advisor,
+  inventory, budget, and tag responses to `tmp/finops-data/<name>.json`, replacing heuristic
+  ToolOutputs scanning. The Monthly Review prompt and `finops-kpi-scorecard` use them.
 - `install-api.sh` (`PLUGIN_SOURCE=direct`): rerunning on an agent with an existing direct install now
   refreshes the plugin to the latest commit instead of skipping it, so new skills are picked up.
 
@@ -134,6 +163,17 @@
   distort savings or anomalies.
 - Budget evaluation respects Quarterly and Annually time grains when computing the period window.
 
-### Changed
+## [0.1.0] - 2026-08-06
 
-- The installer default `REPO_SLUG` and the marketplace owner now point to `dmauser/finops-sre-agent-pack`.
+### Added
+
+- Initial FinOps pack by [nirmash](https://github.com/nirmash/finops-sre-agent-pack): cost anomaly
+  detection, rightsizing advisor (including Container Apps and session pools), cost allocation
+  (showback), budget governance and budget editor, cost optimization report, FinOps for AI, and cost
+  vs reliability skills; Cost Overview, Rightsizing Savings, Budget Status and Cost Optimization Live
+  Reports; the `finops-investigator` agent; managed-scope enforcement; deterministic UsageDetails
+  preparation; governed budget planning scripts.
+
+[Unreleased]: https://github.com/dmauser/finops-sre-agent-pack/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dmauser/finops-sre-agent-pack/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/dmauser/finops-sre-agent-pack/releases/tag/v0.1.0

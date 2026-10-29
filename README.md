@@ -448,7 +448,8 @@ This section is for repository contributors, not an extra installation step:
 Every Azure data source the skills use was validated against a deployed SRE Agent, and the Live
 Reports were reconciled with Azure Cost Management. Guidance is aligned with the
 [Microsoft FinOps documentation](https://learn.microsoft.com/en-us/cloud-computing/finops/). See
-[CHANGELOG.md](CHANGELOG.md) for release history and [SECURITY.md](SECURITY.md) to report issues.
+[CHANGELOG.md](CHANGELOG.md) for release history, [CONTRIBUTING.md](CONTRIBUTING.md) for the changelog
+and release process, and [SECURITY.md](SECURITY.md) to report issues.
 
 ## Acknowledgments
 
