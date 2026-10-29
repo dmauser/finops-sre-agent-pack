@@ -90,6 +90,43 @@ After transport and reconciliation pass, backfill the two required closed months
 coverage before activating schedules. Historical revisions replace a selected generation; they
 are not incremental usage to append. Keep the prior ledger for audit.
 
+### If direct transport fails: approval-required alternative
+
+The following is a **design option, not an implemented or validated connector**. Prefer an existing
+customer-approved MCP hosting/authentication platform when one is available. Otherwise, evaluate a
+small Streamable-HTTP MCP service on a VNet-integrated Container Apps Consumption environment, with
+a Blob private endpoint and private DNS. Keep storage public access disabled. This introduces new
+infrastructure, an authentication boundary and ongoing costs; it requires separate approval.
+
+- Give the service's managed identity Blob Data Reader on the two export containers only. Expose
+  only explicitly selected read tools for generation discovery, manifest retrieval and bounded
+  partition reads. Do not expose shell execution, writes, arbitrary URLs or arbitrary storage
+  accounts. Enforce the configured account, container and managed scope on the server.
+- Authenticate the remote MCP endpoint using a customer-approved, spec-compliant OAuth setup.
+  SRE Agent's documented remote OAuth flow needs a **public HTTPS endpoint and interactive sign-in**;
+  it does not imply unauthenticated access. Its documented managed-identity option applies to
+  **stdio** connectors, not automatic managed-identity authentication to every HTTP MCP endpoint.
+  The service-to-storage managed identity is a separate authentication hop. If policy forbids the
+  public authenticated endpoint, stop and obtain an approved integration design rather than
+  assuming a private MCP endpoint supports this OAuth flow.
+- Prove that complete manifest/partition bytes reach saved tool output and the Python sandbox
+  without model transcription or truncation. Bound individual responses, pin the generation and
+  ETags across chunks, and validate byte counts and hashes after reassembly. Test the largest
+  intended dataset and interruption/retry behavior, not just a small JSON response. A service that
+  merely returns a plausible total has not satisfied the existing export-ingestion contract.
+- Complete source reconciliation, closed-month coverage, denied cross-scope access, token refresh
+  and scheduled-run tests before activation. Keep the current explicit UsageDetails mode until
+  those gates pass; a Connected connector status is not sufficient.
+
+Remote MCP servers receive a health ping approximately every 60 seconds. Do not assume a
+scale-to-zero configuration means negligible monthly compute: heartbeat traffic may keep a replica
+running. See the [separate connector cost scenario](COST.md#approval-required-connector-cost-scenario).
+No connector, new public endpoint, private endpoint, identity registration or OAuth consent is
+created by the current pack.
+
+References: [MCP transports, authentication and heartbeats](https://learn.microsoft.com/azure/sre-agent/mcp-connectors)
+and [connector setup and tool selection](https://learn.microsoft.com/azure/sre-agent/mcp-connector).
+
 ## Controlled upgrades
 
 Capture the installed plugin/source SHA, imported skills, investigator definition, every FinOps
@@ -106,6 +143,12 @@ installation and the installed `sourceCommit` **afterward**. It detects races; i
 immutable-ref installation facility. The current direct API clones the repository URL and rejects
 GitHub `/tree/<sha>` URLs. A candidate branch therefore needs an explicitly approved default-branch
 promotion before this installation path. Do not infer merge approval from a request to commit/push.
+
+The [documented direct-install request](https://learn.microsoft.com/azure/sre-agent/install-plugin-from-url)
+does not establish `ref` or `sha` request parameters. The marketplace's
+[version-pinning description](https://learn.microsoft.com/azure/sre-agent/plugin-marketplace)
+means retaining the installed commit; it is not proof of arbitrary candidate-ref selection.
+Do not add guessed request fields or treat an accepted metadata update as a code import.
 
 Pause only FinOps schedules and drain their active executions. Install the approved SHA, confirm
 auto-update remains off, skill count/content, managed scope and read-only tool inventory. Run Cost

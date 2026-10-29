@@ -18,6 +18,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stay inactive until network, SRE Agent transport and real-ledger reconciliation gates pass.
 - **Production operations guide**: controlled upgrades, explicit source-SHA verification, rollback,
   permissions, coverage limitations, and incremental storage/AAU validation costs.
+- **Blocked-transport alternative**: approval-only read-only MCP design, remote OAuth and complete-file
+  acceptance gates, and a separately priced component scenario accounting for connector heartbeats.
+  No additional connector or networking infrastructure is deployed implicitly.
 
 ### Changed
 

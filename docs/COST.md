@@ -19,6 +19,8 @@ choose which ones to enable.
 - [Keep costs predictable](#keep-costs-predictable)
 - [What makes your cost different](#what-makes-your-cost-different)
 - [How these estimates were measured](#how-these-estimates-were-measured)
+- [Incremental cost of production hardening](#incremental-cost-of-production-hardening)
+- [Approval-required connector cost scenario](#approval-required-connector-cost-scenario)
 
 ## How SRE Agent is billed
 
@@ -165,3 +167,53 @@ that design separately. See [production gates](PRODUCTION.md).
 Sources: [Azure Retail Prices API](https://prices.azure.com/api/retail/prices),
 [Blob Storage pricing](https://azure.microsoft.com/pricing/details/storage/blobs/),
 [Cost Management pricing](https://azure.microsoft.com/pricing/details/cost-management/).
+
+## Approval-required connector cost scenario
+
+The direct-export transport failed in the reference runtime. The
+[alternative design](PRODUCTION.md#if-direct-transport-fails-approval-required-alternative) proposes
+a narrowly scoped, read-only remote MCP service; **it is not deployed or included in the $1-$5
+storage allowance**. A connector requires security/architecture approval and a working authentication
+flow before implementation.
+
+The following is a component-pricing scenario, **not a complete solution quote, forecast or cap**.
+Public USD consumption rates were checked on 2026-10-29 using the Azure Retail Prices API:
+Central US Container Apps Standard meters, global Private Link Standard first-tier meters, and
+Azure DNS Private first-tier meters. Assume 730 hours/month, one 1-vCPU/2-GiB replica billed active
+for the entire month, one storage private endpoint, one new private DNS zone, 10 GB of total
+private-endpoint data processing, 1,000 DNS queries and 53,800 HTTP requests.
+
+| Component | Rate and calculation | Illustrative monthly amount |
+|---|---|---:|
+| Container Apps active vCPU | $0.000024/vCPU-second x 1 x 2,628,000 seconds | $63.072 |
+| Container Apps active memory | $0.000003/GiB-second x 2 x 2,628,000 seconds | $15.768 |
+| HTTP requests | $0.40/million x 0.0538 million | $0.02152 |
+| Storage private endpoint | $0.01/hour x 730 hours | $7.30 |
+| Private Link data processing | $0.01/GB x 10 GB total ingress/egress | $0.10 |
+| Private DNS zone | $0.50/zone-month x 1 | $0.50 |
+| Private DNS queries | $0.40/million x 0.001 million | $0.0004 |
+| **Listed components only** | Sum, rounded | **$86.76** |
+
+Why show a full-month compute scenario? SRE Agent
+[pings remote MCP connectors every 60 seconds](https://learn.microsoft.com/azure/sre-agent/mcp-connectors#connection-health-monitoring):
+about 43,800 pings over 730 hours, plus the 10,000 application requests assumed above. These requests
+can prevent scale-to-zero. This scenario deliberately does not assume idle billing or unused free
+grants. Actual active/idle time, scaling, heartbeat behavior and shared subscription free-grant
+consumption must be measured; multiple replicas or heavier workloads can cost more.
+
+The subtotal **excludes** existing export storage/operations, SRE Agent AAUs, image registry,
+logging, authentication gateway/hosting, NAT, bandwidth outside the stated data-processing
+assumption, taxes, and any extra environment features. Container Apps Environment Private Endpoint
+and Environment Management meters were each listed at $0.10/hour ($73 per 730-hour month) where
+applicable; do not confuse them with the $0.01/hour **storage** private endpoint above. Confirm the
+chosen environment's billable features before approval. A private endpoint on the MCP host does
+not by itself solve the documented public-endpoint requirement for remote OAuth.
+
+An existing approved hosting/authentication platform may avoid some new fixed charges, but its
+capacity and internal charges are not assumed free. Reprice the selected design and obtain
+approval rather than adding this scenario silently to the existing lab.
+
+Sources: [Azure Retail Prices API](https://prices.azure.com/api/retail/prices),
+[Container Apps pricing](https://azure.microsoft.com/pricing/details/container-apps/),
+[Private Link pricing](https://azure.microsoft.com/pricing/details/private-link/),
+[Azure DNS pricing](https://azure.microsoft.com/pricing/details/dns/).
