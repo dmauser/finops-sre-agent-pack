@@ -290,6 +290,7 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
             "id": b.get("id"),
             "scope": _scope_of(b, props),
             "category": props.get("category") or "Cost",
+            "cost_basis": "ActualCost" if str(props.get("category") or "Cost").casefold() == "cost" else None,
             "filter": deepcopy(props.get("filter") or {}),
             "time_grain": props.get("timeGrain"),
             "time_period": deepcopy(props.get("timePeriod") or {}),

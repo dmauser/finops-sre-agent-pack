@@ -28,6 +28,9 @@ ActualCost supports invoice/budget comparisons; AmortizedCost supports usage and
 allocation. Do not mix bases, currencies or scopes in one total. Do not substitute month-to-date
 data when a closed month is missing. Confirm an empty period from its source before treating it as
 zero. Forecast/budget comparison also requires equal filter, scope, currency and period.
+Carry `cost_basis` in both contexts: Azure Cost budgets use `ActualCost`; an `AmortizedCost`
+forecast cannot be scored against them. Missing basis or scalar-budget context suppresses the
+comparison, rather than relying on an explanatory warning after computing an invalid ratio.
 
 ## Optional native exports
 

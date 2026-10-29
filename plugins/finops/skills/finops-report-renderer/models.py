@@ -2541,7 +2541,9 @@ def _detail_text(detail, field):
     if isinstance(detail, bool):
         return "yes" if detail else "no"
     if isinstance(detail, list):
-        return ", ".join(_stable_strings(_strings(detail, field)))
+        return ", ".join(_stable_strings([
+            _detail_text(item, f"{field}[{index}]") for index, item in enumerate(detail)
+        ]))
     if isinstance(detail, dict):
         keys = sorted(detail, key=lambda key: (str(key).casefold(), str(key)))
         return "; ".join(
@@ -2632,6 +2634,7 @@ def build_monthly_review_model(
 
     forecast_rows = []
     forecast_record = None
+    forecast_basis = "cost basis not supplied"
     forecast_metric = {"label": "Month-end forecast", "value": "—", "detail": "Not supplied"}
     if forecast is None:
         generated.append("Forecast was not supplied.")
@@ -2640,6 +2643,10 @@ def build_monthly_review_model(
         generated.append(f"Forecast unavailable: {reason}.")
         forecast_metric["detail"] = "Unavailable"
     else:
+        forecast_context = _object(forecast.get("context") or {}, "review.forecast.context")
+        forecast_basis = _text(
+            forecast_context.get("cost_basis"), "review.forecast.context.cost_basis"
+        ) or forecast_basis
         def money(name):
             return _money(_decimal(forecast.get(name), f"review.forecast.{name}", optional=True))
 
@@ -2903,9 +2910,9 @@ def build_monthly_review_model(
         [
             {
                 "title": "KPI scorecard",
-                "description": "Failing KPIs first; unknown means the source was not supplied.",
-                "columns": ["Capability", "KPI", "Value", "Target", "Status", "Action"],
-                "rows": [[r[1], r[2], r[3], r[4], r[5], r[6]] for r in kpis],
+                "description": "Failing KPIs first; unknown means evidence is missing or not comparable.",
+                "columns": ["Capability", "KPI", "Value", "Target", "Status", "Action", "Detail"],
+                "rows": [[r[1], r[2], r[3], r[4], r[5], r[6], r[7]] for r in kpis],
                 "emptyMessage": "No KPIs were scored.",
             },
             {
@@ -2917,7 +2924,7 @@ def build_monthly_review_model(
             },
             {
                 "title": "Forecast",
-                "description": "Linear-trend forecast with an 80% band; AmortizedCost.",
+                "description": f"Linear-trend forecast with an 80% band; {forecast_basis}.",
                 "columns": ["Month", "Forecast", "Low", "High", "Detail"],
                 "rows": forecast_rows,
                 "emptyMessage": "No forecast was produced.",

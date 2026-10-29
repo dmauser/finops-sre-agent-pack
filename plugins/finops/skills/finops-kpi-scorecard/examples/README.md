@@ -21,6 +21,7 @@ sub = "/subscriptions/000"
 context = {
     "scope": sub,
     "currency": "USD",
+    "cost_basis": "ActualCost",
     "filter": {},
     "period_start": "2025-06-01",
     "period_end_exclusive": "2025-07-01",
@@ -57,6 +58,7 @@ card = module.kpi_scorecard(
     budgets={"budgets": [{
         "id": f"{sub}/providers/Microsoft.Consumption/budgets/monthly",
         "scope": sub, "amount": 4000, "currency": "USD", "category": "Cost",
+        "cost_basis": "ActualCost",
         "time_grain": "Monthly", "filter": {},
         "window": {"start": "2025-06-01", "end_exclusive": "2025-07-01"},
         "status": "forecast_over",

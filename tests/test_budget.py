@@ -55,6 +55,13 @@ def test_none_input_is_treated_as_empty():
     assert out["no_budgets"] is True
 
 
+@pytest.mark.parametrize("category,basis", [("Cost", "ActualCost"), ("cost", "ActualCost"), ("Usage", None)])
+def test_budget_comparison_basis_follows_api_category(category, basis):
+    source = _budget("m", 1000, 100)
+    source["properties"]["category"] = category
+    assert evaluate_budgets([source], as_of=AS_OF)["budgets"][0]["cost_basis"] == basis
+
+
 def test_over_budget_status_and_gate():
     b = _budget("m", 1000.0, 1100.0)
     out = evaluate_budgets([b], as_of=AS_OF)

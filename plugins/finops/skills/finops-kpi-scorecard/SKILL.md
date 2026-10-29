@@ -135,6 +135,7 @@ next_start = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
 context = {
     "scopes": forecast_scopes,  # exact, canonical, nonoverlapping scopes of this cost series
     "currency": prepared["currency"],
+    "cost_basis": prepared["cost_metric"],  # preserve the actual series basis; never relabel it
     "filter": forecast_filter,  # {} only when this series is genuinely unfiltered
     "period_start": month_start.isoformat(),
     "period_end_exclusive": next_start.isoformat(),
@@ -177,9 +178,9 @@ save_finops_input("forecast", forecast, run_id=run_id)
 ```
 
 `selected_budget_context` uses the same keys as `context` and must describe the budget, not be
-copied from the forecast just to force a match. Without `budget_context`, legacy scalar-budget
-calls are labeled `budget_comparison.basis: "caller_supplied_monthly_budget"`; that label is a
-caller assertion, not a validated match.
+copied from the forecast just to force a match. Without `budget_context`, scalar-budget comparisons
+are suppressed with `budget_comparison.reason`; no ratio or budget status is returned. Legacy
+caller-asserted comparisons are not scored.
 
 - `forecast_spend` fits a linear trend over the trailing window, adds day-of-week seasonality when
   at least 28 observations exist, and by default treats the newest day as potentially partial.
@@ -198,10 +199,12 @@ caller assertion, not a validated match.
   `missing_day_policy: "explicit_zero"`; a late, failed, truncated or short billing-data pull
   does not satisfy that requirement. `daily_costs` rejects mixed known/unknown currencies;
   group by currency or supply a verified denomination, never convert implicitly.
-- **Forecast/budget matching:** `context` requires `scope` or `scopes`, `currency`, `filter`,
+- **Forecast/budget matching:** `context` requires `scope` or `scopes`, `currency`, `cost_basis`, `filter`,
   `period_start` and `period_end_exclusive`. The helper fills the forecast month's boundaries
   and rejects contradictory supplied boundaries. `kpi_scorecard` selects one exact Monthly cost
-  budget per nonoverlapping forecast scope with matching currency, filter and window. A parent
+  budget per nonoverlapping forecast scope with matching currency, cost basis, filter and window.
+  `evaluate_budgets` identifies Cost budgets as `ActualCost`; missing, unknown or mismatched bases
+  suppress the KPI, even if current totals happen to be similar. A parent
   budget is not the denominator for a child-only forecast; parent and child budgets are not
   added. Duplicate matches or missing context yield an unknown KPI with `detail.reason`.
   A valid comparison exposes `detail.budget_amount`, `matched_scopes` and `matched_budget_ids`.
@@ -283,7 +286,7 @@ After reporting, refresh the shared Live Report `FinOps: Monthly Review` so the 
 
 1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Monthly Review (<scope>)`. Skip when the user asks not to save.
 2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
-3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. Reload results with `load_finops_input("scorecard", run_id=run_id)` and `load_finops_input("forecast", run_id=run_id)`. With `datetime.now(timezone.utc)`, call `build_monthly_review_model({"month": ..., "scorecard": kpi_scorecard_result, "forecast": ..., "month_over_month": ..., "routing": ..., "unit_economics": ...}, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, f"/mnt/data/finops-runs/{run_id}/finops-monthly-review.html")`.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. Reload results with `load_finops_input("scorecard", run_id=run_id)` and `load_finops_input("forecast", run_id=run_id)`. With `datetime.now(timezone.utc)`, call `build_monthly_review_model({"month": ..., "scorecard": kpi_scorecard_result, "forecast": ..., "month_over_month": ..., "routing": ..., "unit_economics": ...}, cost_context=snapshot, ...)` with the immutable same-run source snapshot, `partial`, warnings, and scope coverage; preserve nested KPI details without serializing them to strings. Do not construct the model or HTML by hand. Run `write_report(model, f"/mnt/data/finops-runs/{run_id}/finops-monthly-review.html")`.
 4. SaveReport the static file with `allowedTools: []`, name `FinOps: Monthly Review`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 
 ## Operating the practice with SRE Agent

@@ -812,8 +812,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_monthly_review_model,
             _monthly,
-            "5f4b112d33e343e5b635a7d7d56b2713f178bb10aff52689769b2f2c25a6f0ff",
-            "f9a7e5ad321fbe78574353a3c3a937171bdd2ed5ffff94cd0c5b05db7340cec4",
+            "7fa02703c731bb9a9316203f44b4e4c458fa9373ee8d9e44a45a38a5a2c1395f",
+            "46157df9c8d3f21477a400a5a38381d8ceddeea63a0f4d96d5547d55aa5287ec",
         ),
     ],
 )
@@ -1014,6 +1014,23 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
     assert "Forecast record" not in sections
 
 
+def test_monthly_review_renders_nested_commitment_kpi_without_input_rewrite():
+    review = _monthly()
+    detail = {"by_meter_category": [
+        {"category": EVIL, "coverage_pct": 12.5, "eligible": True},
+        {"category": "Virtual Machines", "coverage_pct": None, "notes": ["unknown", "partial"]},
+    ]}
+    review["scorecard"]["kpis"][0]["detail"] = detail
+    model = models.build_monthly_review_model(review, **_context())
+    output = renderer.render_report(model)
+    assert "by_meter_category:" in output and "coverage_pct: 12.5" in output
+    assert "eligible: yes" in output and "notes: partial, unknown" in output
+    assert EVIL not in output
+    assert review["scorecard"]["kpis"][0]["detail"] == detail
+    detail["by_meter_category"].reverse()
+    assert renderer.render_report(models.build_monthly_review_model(review, **_context())) == output
+
+
 def test_monthly_review_forecast_record_round_trips_through_scorecard_parser():
     review = _monthly()
     review["forecast"]["as_of"] = "2026-09-30"
@@ -1032,6 +1049,15 @@ def test_monthly_review_forecast_record_round_trips_through_scorecard_parser():
     review["forecast"]["as_of"] = "not-a-date"
     bad = models.build_monthly_review_model(review, **_context())
     assert "Forecast record" not in [s["title"] for s in bad["sections"]]
+
+
+@pytest.mark.parametrize("basis", [None, "ActualCost", "AmortizedCost"])
+def test_monthly_review_labels_forecast_with_its_own_basis(basis):
+    review = _monthly()
+    review["forecast"]["context"] = {"cost_basis": basis}
+    model = models.build_monthly_review_model(review, **_context())
+    section = next(s for s in model["sections"] if s["title"] == "Forecast")
+    assert section["description"].endswith(f"; {basis or 'cost basis not supplied'}.")
 
 
 def test_refreshed_time_is_human_readable_and_chart_titled():

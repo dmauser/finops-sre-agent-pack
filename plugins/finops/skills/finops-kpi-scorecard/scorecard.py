@@ -156,9 +156,9 @@ def forecast_spend(
     z                   band width; 1.2816 = 80% two-sided interval
     missing_days_are_zero  explicit attestation that omitted dates in a complete export are
                         genuine zero spend, not missing/late billing data (default False)
-    context             optional {scope|scopes, currency, filter, period_start,
+    context             optional {scope|scopes, currency, cost_basis, filter, period_start,
                         period_end_exclusive}; the period must match the forecast month
-    budget_context      optional context for budget_amount; mismatches suppress comparisons
+    budget_context      required for budget_amount comparisons; missing/mismatched context suppresses them
 
     Missing observations never enter the regression as zeros without the explicit attestation.
     Incomplete month-to-date data suppresses month-end totals, retaining the observed subtotal
@@ -283,7 +283,7 @@ def forecast_spend(
                        for k in ("period_start", "period_end_exclusive")):
         raise ValueError("forecast context period does not match the forecast month")
     budget = _num(budget_amount)
-    budget_matches = budget_context is None or _same_context(out["context"], budget_context)
+    budget_matches = budget_context is not None and _same_context(out["context"], budget_context)
     if budget and data_complete and budget_matches:
         out["budget_amount"] = round(budget, 2)
         out["forecast_vs_budget_pct"] = round(100.0 * month_forecast / budget, 1)
@@ -294,11 +294,12 @@ def forecast_spend(
         else:
             out["budget_status"] = "on_track"
         out["budget_comparison"] = {
-            "basis": "matched_context" if budget_context else "caller_supplied_monthly_budget",
+            "basis": "matched_context",
             "budget_amount": budget,
+            "cost_basis": out["context"]["cost_basis"],
         }
     elif budget:
-        out["budget_comparison"] = {"reason": "incomplete month or mismatched budget context"}
+        out["budget_comparison"] = {"reason": "incomplete month or missing/mismatched budget context"}
     return out
 
 
@@ -606,11 +607,13 @@ def _context_scopes(context):
 
 
 def _same_context(left, right):
-    """Context equality is strict; absent scope/currency/period is not evidence of a match."""
+    """Context equality is strict; absent or incompatible cost basis is not a match."""
     required = ("currency", "period_start", "period_end_exclusive")
     return (bool(_context_scopes(left)) and _context_scopes(left) == _context_scopes(right)
             and all(left.get(k) and right.get(k) for k in required)
             and _norm(left["currency"]) == _norm(right["currency"])
+            and _norm(left.get("cost_basis")) in ("actualcost", "amortizedcost")
+            and _norm(left.get("cost_basis")) == _norm(right.get("cost_basis"))
             and all(left[k] == right[k] for k in required[1:])
             and (left.get("filter") or {}) == (right.get("filter") or {}))
 
@@ -619,8 +622,8 @@ def _matched_budget(forecast, budgets):
     context = forecast.get("context") or {}
     scopes = _context_scopes(context)
     if not scopes or any(not context.get(k) for k in
-                         ("currency", "period_start", "period_end_exclusive")):
-        return None, {"reason": "forecast scope, currency or period context unavailable"}
+                         ("currency", "cost_basis", "period_start", "period_end_exclusive")):
+        return None, {"reason": "forecast scope, currency, cost basis or period context unavailable"}
     if any(_scope_covered(a, [b]) or _scope_covered(b, [a])
            for i, a in enumerate(scopes) for b in scopes[i + 1:]):
         return None, {"reason": "forecast scopes overlap"}
@@ -630,6 +633,7 @@ def _matched_budget(forecast, budgets):
         for b in (budgets or {}).get("budgets") or []:
             window = b.get("window") or {}
             candidate = {"scope": b.get("scope"), "currency": b.get("currency"),
+                         "cost_basis": b.get("cost_basis"),
                          "period_start": window.get("start"),
                          "period_end_exclusive": window.get("end_exclusive"),
                          "filter": b.get("filter") or {}}
@@ -639,11 +643,12 @@ def _matched_budget(forecast, budgets):
                     and _num(b.get("amount")) is not None and _num(b["amount"]) > 0):
                 matches.append(b)
         if len(matches) != 1:
-            return None, {"reason": "missing or ambiguous same-scope/currency/period/filter budget",
+            return None, {"reason": "missing or ambiguous same-scope/currency/cost-basis/period/filter budget",
                           "scope": scope, "matching_budget_count": len(matches)}
         selected.extend(matches)
     amount = sum(_num(b["amount"]) for b in selected)
     return amount, {"budget_amount": amount, "currency": context["currency"],
+                    "cost_basis": context["cost_basis"],
                     "matched_scopes": scopes,
                     "matched_budget_ids": [b.get("id") or b.get("name") for b in selected],
                     "basis": "one exact monthly envelope per nonoverlapping forecast scope"}
@@ -925,7 +930,7 @@ def kpi_scorecard(
             fvb = round(100.0 * projected / amount, 1)
         elif projected is None or forecast.get("data_complete") is False:
             fvb_detail = {"reason": "complete month-end forecast unavailable"}
-        elif budgets is None and (forecast.get("budget_comparison") or {}).get("basis"):
+        elif budgets is None and (forecast.get("budget_comparison") or {}).get("basis") == "matched_context":
             fvb = _num(forecast.get("forecast_vs_budget_pct"))
             fvb_detail = forecast["budget_comparison"]
     add("forecast_vs_budget_pct", "Month-end forecast as % of budget", "Forecasting", fvb, "%",

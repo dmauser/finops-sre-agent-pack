@@ -39,7 +39,8 @@ def test_forecast_unavailable_without_history():
 
 def test_forecast_flat_series_is_exact_and_on_track():
     daily = _series(61, start=date(2025, 5, 1))  # through 2025-06-30, last day dropped
-    out = sc.forecast_spend(daily, budget_amount=4000)
+    context = _forecast_context(month="2025-06")
+    out = sc.forecast_spend(daily, budget_amount=4000, context=context, budget_context=context)
     assert out["as_of"] == "2025-06-29"
     assert out["method"] == "linear_trend_weekday_seasonality"
     assert out["month_to_date"] == 2900.0
@@ -54,7 +55,8 @@ def test_forecast_flat_series_is_exact_and_on_track():
 
 def test_forecast_trend_and_budget_overrun():
     daily = _series(46, step=1.0)
-    out = sc.forecast_spend(daily, budget_amount=4000)
+    context = _forecast_context(month="2025-06")
+    out = sc.forecast_spend(daily, budget_amount=4000, context=context, budget_context=context)
     assert out["daily_trend_slope"] == pytest.approx(1.0)
     assert out["month_end_forecast"] == 4365.0
     assert out["budget_status"] == "forecast_over"
@@ -81,7 +83,9 @@ def test_forecast_weekday_seasonality_and_band():
 
 def test_forecast_explicit_zero_gap_policy_and_at_risk_status():
     daily = {date(2025, 6, d): 100.0 + (15 if d % 2 else -15) for d in range(1, 21) if d != 10}
+    context = _forecast_context(month="2025-06")
     out = sc.forecast_spend(daily, assume_last_partial=False, budget_amount=3000,
+                            context=context, budget_context=context,
                             missing_days_are_zero=True)
     assert out["history_days"] == 20
     assert out["budget_status"] in {"at_risk", "forecast_over", "on_track"}
@@ -325,14 +329,60 @@ def _kpi(card, name):
 
 def _budget_row(scope, amount, *, currency="USD", filtered=False):
     return {"scope": scope, "amount": amount, "currency": currency, "time_grain": "Monthly",
+            "cost_basis": "ActualCost",
             "category": "Cost", "filter": {"tags": {"name": "team"}} if filtered else {},
             "window": {"start": "2026-07-01", "end_exclusive": "2026-08-01"},
             "status": "on_track"}
 
 
-def _forecast_context(scope="/subscriptions/s"):
-    return {"scope": scope, "currency": "USD", "period_start": "2026-07-01",
-            "period_end_exclusive": "2026-08-01", "filter": {}}
+def _forecast_context(scope="/subscriptions/s", *, month="2026-07"):
+    start = date.fromisoformat(month + "-01")
+    end = (start + timedelta(days=32)).replace(day=1)
+    return {"scope": scope, "currency": "USD", "cost_basis": "ActualCost",
+            "period_start": start.isoformat(), "period_end_exclusive": end.isoformat(), "filter": {}}
+
+
+@pytest.mark.parametrize("basis", [None, "", "AmortizedCost", "unknown"])
+def test_scorecard_does_not_compare_unknown_or_mixed_cost_bases(basis):
+    context = dict(_forecast_context(), cost_basis=basis)
+    card = sc.kpi_scorecard(
+        budgets={"budgets": [_budget_row("/subscriptions/s", 1000)]},
+        forecast={"available": True, "month_end_forecast": 1200, "context": context},
+    )
+    kpi = _kpi(card, "forecast_vs_budget_pct")
+    assert kpi["value"] is None and kpi["status"] == "unknown"
+    assert kpi["detail"]["reason"]
+
+
+def test_scorecard_requires_budget_basis_and_rejects_legacy_scalar_assertion():
+    budget = _budget_row("/subscriptions/s", 1000)
+    budget.pop("cost_basis")
+    forecast = {"available": True, "month_end_forecast": 1200, "context": _forecast_context()}
+    assert _kpi(sc.kpi_scorecard(budgets={"budgets": [budget]}, forecast=forecast),
+                "forecast_vs_budget_pct")["value"] is None
+    forecast.update(forecast_vs_budget_pct=120,
+                    budget_comparison={"basis": "caller_supplied_monthly_budget"})
+    assert _kpi(sc.kpi_scorecard(forecast=forecast), "forecast_vs_budget_pct")["value"] is None
+
+
+@pytest.mark.parametrize("basis", [None, "", "AmortizedCost", "unknown"])
+def test_scalar_forecast_budget_requires_matching_cost_basis(basis):
+    context = _forecast_context()
+    result = sc.forecast_spend(
+        _series(20, start=date(2026, 7, 1)), assume_last_partial=False, budget_amount=1000,
+        context=context, budget_context=dict(context, cost_basis=basis),
+    )
+    assert "forecast_vs_budget_pct" not in result and "budget_status" not in result
+    assert result["budget_comparison"]["reason"]
+
+
+def test_scalar_forecast_budget_requires_independent_context():
+    result = sc.forecast_spend(
+        _series(20, start=date(2026, 7, 1)), assume_last_partial=False,
+        budget_amount=1000, context=_forecast_context(),
+    )
+    assert "forecast_vs_budget_pct" not in result
+    assert _kpi(sc.kpi_scorecard(forecast=result), "forecast_vs_budget_pct")["value"] is None
 
 
 def test_forecast_budget_matches_parent_not_parent_plus_child():
