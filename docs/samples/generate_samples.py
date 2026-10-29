@@ -558,6 +558,8 @@ def monthly():
         },
         "forecast": {
             "available": True, "month": "2026-10", "next_month": "2026-11",
+            "context": {"cost_basis": "ActualCost", "currency": "USD", "scope": SUB,
+                        "filter": {}, "period_start": "2026-10-01", "period_end_exclusive": "2026-11-01"},
             "month_to_date": TOTAL, "days_remaining": 9, "month_end_forecast": 58780.0,
             "month_end_low": 57200.0, "month_end_high": 60100.0,
             "next_month_forecast": 59900.0, "next_month_low": 56800.0,

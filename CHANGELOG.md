@@ -38,6 +38,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Monthly live-canary regressions**: nested commitment KPI details render deterministically
+  without rewriting analysis results; evidence details stay visible for every KPI and forecast
+  labels use their own source basis. Forecast/budget comparisons now enforce explicit cost basis.
+  Scalar budgets without independent matching context no longer produce unverified ratios/statuses.
 - **Live report period and provenance gaps**: Overview shows observed-period spend rather than
   assuming 30 days; Budget and Monthly examples explicitly pass same-run source snapshots;
   omitted or incomplete provenance now marks reports partial instead of silently appearing complete.
