@@ -42,8 +42,8 @@
         },
         {
           "id": "synthetic-managed-a",
-          "date": "2026-08-01",
-          "cost": "10.25",
+          "date": "2026-08-02",
+          "cost": "2.00",
           "resourceGroup": "managed-rg",
           "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/managed-rg/providers/Microsoft.Compute/virtualMachines/a"
         },
@@ -68,18 +68,18 @@
     "remaining_next_link": null,
     "partial": false,
     "input_count": 6,
-    "unique_count": 5,
-    "included_count": 2,
+    "unique_count": 6,
+    "included_count": 3,
     "excluded_count": 2,
     "unattributed_count": 1,
-    "duplicate_count": 1
+    "duplicate_count": 0
   },
   "expectedCosts": {
-    "included_cost": "12.00",
+    "included_cost": "14.00",
     "excluded_cost": "97.00",
     "unattributed_cost": "3.50",
-    "duplicate_cost": "10.25",
-    "attributed_cost": "109.00",
-    "total_cost": "112.50"
+    "duplicate_cost": "0",
+    "attributed_cost": "111.00",
+    "total_cost": "114.50"
   }
 }

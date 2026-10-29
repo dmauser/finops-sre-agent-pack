@@ -145,7 +145,8 @@ Use this canonical UsageDetails transport contract in every consuming FinOps ski
   count tenfold): retry with `%24top=500`, then `250`, and if it still times out split the window
   into calendar-month `usageStart` slices at `%24top=1000`, one chain per slice. Use verified,
   half-open `usageStart` date slices only if bounded pages still fail, and de-duplicate the
-  combined rows.
+  combined rows with `filter_usage_details(..., sources=[slice label per row])` (never by `id`
+  or `(resourceId, date, meter)` alone — distinct rows share those).
 - If retrieval remains incomplete, retain the available rows only with an explicit partial-cost
   warning on every downstream total.
 - **Finish the chain first.** In live runs, "partial" was almost always caused by the agent
@@ -221,8 +222,11 @@ after all bounded-page and date-slice fallbacks fail; the returned `partial` fla
 `remaining_next_link` must then be disclosed on every downstream total.
 
 The filtering core prefers UsageDetails `instanceName` (the modern full ARM ID), falls back to
-`resourceId`, then to resource-group/subscription metadata. It removes duplicate rows,
-keeps subscription-level shared charges only when the subscription itself is managed,
+`resourceId`, then to resource-group/subscription metadata. It removes rows duplicated
+by overlapping retrievals (never rows that merely share a UsageDetails `id` — Azure reuses
+one `id` across distinct rows, and identical projected rows inside one continuation chain
+are distinct charges), keeps subscription-level shared charges only when the subscription
+itself is managed,
 and separates included, excluded, and unattributed rows. Costs and totals are
 `Decimal`; do not convert them to binary floats before reconciliation.
 
@@ -231,8 +235,9 @@ their exact cost totals, `attribution_coverage_pct`, and deterministic diagnosti
 Never hide excluded or unattributed spend, and never assign an unattributed/shared
 charge to an RG by guesswork.
 
-Retrieve analysis data for each effective scope independently, de-duplicate the merged
-rows, then apply this filter as a defensive check. Include excluded and unattributed
+Retrieve analysis data for each effective scope independently, then pass rows to
+`filter_usage_details(..., sources=[...])` with one label per retrieval (continuation chain
+or date slice) so only cross-retrieval overlap is removed. Include excluded and unattributed
 coverage in the final report; do not broaden a query merely because RBAC permits it.
 
 ## 5. MOSP and MCA subscriptions ignore UsageDetails date filters

@@ -341,20 +341,20 @@ def _normalise_for_fingerprint(value, key=""):
         "subscriptionguid",
         "resourcegroup",
         "resourcegroupname",
+        "usagedetailid",
+        "usagerecordid",
+        "chargeid",
+        "billingrecordid",
     }:
         return value.strip().casefold()
     return value
 
 
 def _row_identity(row):
-    explicit = _ci_get(
-        row, "usageDetailId", "usageRecordId", "chargeId", "billingRecordId"
-    )
-    if not explicit:
-        top_level = {str(key).casefold(): value for key, value in row.items()}
-        explicit = top_level.get("id")
-    if explicit:
-        return "id:" + str(explicit).strip().casefold()
+    # Never dedupe on the UsageDetails id alone: Azure reuses one id for many
+    # distinct rows (different dates, quantities, costs and tags), so id-only
+    # identity silently drops real spend. The id still participates in the
+    # fingerprint, so rows with different ids never collapse.
     payload = json.dumps(
         _normalise_for_fingerprint(row),
         sort_keys=True,
@@ -380,13 +380,21 @@ def _row_cost(row):
 
 
 def filter_usage_details(
-    rows, managed_scopes, management_group_expansions=None
+    rows, managed_scopes, management_group_expansions=None, *, sources=None
 ):
     """Filter UsageDetails rows to managed scope and report exact Decimal coverage.
 
     instanceName is preferred over resourceId. Rows without a usable ARM ID fall
     back to resourceGroup + subscription metadata. A subscription-only shared charge
     is included only when that subscription (not merely one RG in it) is managed.
+
+    ``sources`` optionally labels each row with the retrieval it came from (for
+    example one label per continuation chain or date slice). Identical rows are
+    legitimate inside one retrieval -- a projected query can make distinct
+    UsageDetails rows look identical -- so a row is only a duplicate when the same
+    identity already appeared at least as many times in another retrieval
+    (multiset de-duplication). Without ``sources`` every identical row after the
+    first is treated as a duplicate.
     """
 
     resolved = resolve_managed_scopes(
@@ -401,9 +409,15 @@ def filter_usage_details(
     excluded_cost = Decimal("0")
     unattributed_cost = Decimal("0")
     seen = {}
+    kept_counts = {}
+    source_counts = {}
     duplicate_count = 0
     duplicate_cost = Decimal("0")
     input_rows = list(rows or ())
+    if sources is not None:
+        sources = list(sources)
+        if len(sources) != len(input_rows):
+            raise ValueError("sources must label every UsageDetails row")
 
     for index, row in enumerate(input_rows):
         if not isinstance(row, dict):
@@ -417,7 +431,16 @@ def filter_usage_details(
             row = {"value": row}
 
         identity = _row_identity(row)
-        if identity in seen:
+        if sources is None:
+            is_duplicate = identity in seen
+        else:
+            key = (sources[index], identity)
+            occurrence = source_counts.get(key, 0) + 1
+            source_counts[key] = occurrence
+            is_duplicate = occurrence <= kept_counts.get(identity, 0)
+            if not is_duplicate:
+                kept_counts[identity] = occurrence
+        if is_duplicate:
             duplicate_count += 1
             duplicate_cost += _row_cost(row)[0]
             diagnostics.append(
@@ -429,7 +452,7 @@ def filter_usage_details(
                 )
             )
             continue
-        seen[identity] = index
+        seen.setdefault(identity, index)
 
         cost, cost_error = _row_cost(row)
         if cost_error:

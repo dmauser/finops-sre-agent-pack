@@ -297,6 +297,9 @@ def prepare_usage_details(
         normalized_rows,
         managed_scopes,
         management_group_expansions=management_group_expansions,
+        # One continuation chain returns each UsageDetails row once; identical
+        # (often projected) rows within it are distinct charges, never duplicates.
+        sources=[0] * len(normalized_rows),
     )
     warnings = []
     if cost_info["missing_cost_count"]:

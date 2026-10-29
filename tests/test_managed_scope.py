@@ -431,6 +431,35 @@ def test_duplicate_rows_without_ids_use_stable_semantic_fingerprint():
     assert result["total_cost"] == Decimal("1.25")
 
 
+def test_same_id_with_different_content_is_not_a_duplicate():
+    rows = [
+        _row("0.13", id="UD-1", instanceName=VM_A, date="2026-10-27"),
+        _row("0.15", id="UD-1", instanceName=VM_A, date="2026-10-28"),
+    ]
+    result = scope.filter_usage_details(rows, [RG_A])
+    assert result["duplicate_count"] == 0
+    assert result["included_cost"] == Decimal("0.28")
+
+
+def test_sources_dedupe_overlapping_retrievals_as_a_multiset():
+    row = _row("0.01", instanceName=VM_A, meterCategory="Network")
+    other = _row("2.00", instanceName=VM_A, meterCategory="Compute")
+    # Chain "a" legitimately holds two identical projected rows; chain "b" is an
+    # overlapping retrieval (e.g. an ignored date-slice filter) that repeats them.
+    rows = [row, dict(row), other, dict(row), dict(row), dict(row), dict(other)]
+    sources = ["a", "a", "a", "b", "b", "b", "b"]
+    result = scope.filter_usage_details(rows, [RG_A], sources=sources)
+    assert result["included_count"] == 4
+    assert result["duplicate_count"] == 3
+    assert result["included_cost"] == Decimal("2.03")
+    assert result["duplicate_cost"] == Decimal("2.02")
+
+
+def test_sources_must_label_every_row():
+    with pytest.raises(ValueError, match="sources"):
+        scope.filter_usage_details([_row("1", instanceName=VM_A)], [RG_A], sources=[])
+
+
 def test_exact_decimal_coverage_reconciles_included_excluded_unattributed():
     rows = [
         _row("0.1", instanceName=VM_A),

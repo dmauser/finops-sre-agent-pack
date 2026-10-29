@@ -73,8 +73,9 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
   `nextLink` in the raw body is HTML-escaped (`&amp;`) — decode `&amp;`→`&` before following it.
 - **Date-slice fallback:** only if smaller pages still 413, retry with short
   `%24filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'`
-  windows. Because the filter is not reliably applied, verify returned dates and de-duplicate by
-  `(resourceId, date, meterId)` when concatenating.
+  windows. Because the filter is not reliably applied, verify returned dates and de-duplicate the
+  concatenated slices with `finops-managed-scope`'s `filter_usage_details(..., sources=...)`
+  (one label per slice); never key on `id` or `(resourceId, date, meterId)`, which distinct rows share.
 - **Never proceed on silently-partial cost.** If the pull cannot complete after all fallbacks,
   keep the rows you have **but explicitly label every downstream total as "partial — cost pull
   truncated, spend understated"** so the numbers aren't trusted as complete.

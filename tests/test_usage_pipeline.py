@@ -65,12 +65,27 @@ def test_prepares_complete_chain_and_filters_after_merge():
     assert result["page_count"] == 2
     assert result["page_row_counts"] == [2, 2]
     assert result["retrieved_row_count"] == 4
-    assert result["included_count"] == 2
+    assert result["included_count"] == 3
     assert result["excluded_count"] == 1
-    assert result["duplicate_count"] == 1
-    assert str(result["duplicate_cost"]) == "1.25"
-    assert str(result["included_cost"]) == "3.75"
+    assert result["duplicate_count"] == 0
+    assert str(result["duplicate_cost"]) == "0"
+    assert str(result["included_cost"]) == "5.00"
     assert str(result["excluded_cost"]) == "8.75"
+
+
+def test_rows_sharing_a_usage_detail_id_are_all_kept():
+    # Azure reuses one UsageDetails id across distinct rows (e.g. the same Foundry
+    # meter split by project tag); deduping by id under-counted every report.
+    shared = "/subscriptions/sub/providers/Microsoft.Billing/usageDetails/shared"
+    chatbot = {**_row(shared, "managed", "0.13"), "tags": {"project": "chatbot"}}
+    search = {**_row(shared, "managed", "0.15"), "tags": {"project": "search"}}
+    result = usage.prepare_usage_details(
+        [{"requestUrl": "https://management.azure.com/usage", "value": [chatbot, search]}],
+        [RG],
+    )
+    assert result["included_count"] == 2
+    assert result["duplicate_count"] == 0
+    assert str(result["included_cost"]) == "0.28"
 
 
 def test_rejects_pages_from_a_restarted_chain():

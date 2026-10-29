@@ -18,8 +18,8 @@ def test_usage_gate_reconciles_cost_and_has_no_scope_leakage():
     )
 
     assert passed is True
-    assert measurement["raw_retrieved_cost"] == "122.75"
-    assert measurement["duplicate_cost"] == "10.25"
+    assert measurement["raw_retrieved_cost"] == "114.50"
+    assert measurement["duplicate_cost"] == "0"
     assert measurement["scope_leakage_count"] == 0
     assert all(measurement["checks"].values())
 
