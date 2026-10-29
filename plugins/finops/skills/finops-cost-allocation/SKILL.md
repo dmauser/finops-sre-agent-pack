@@ -71,9 +71,11 @@ trailing ~30 days. This skill's projection must explicitly retain `tags`:
 --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
-After managed-scope filtering, aggregate `cost` by resource id into
-`{resourceId: monthly_usd}` with case-insensitive ids. Resource Graph in Step 2 remains the source
-for the current resource tag map used by `allocate_costs`.
+After managed-scope filtering and immutable snapshot creation, call
+`costs = costs_by_resource(snapshot["rows"])` from managed-scope `usage.py`.
+Pass this `CostMap` directly: a plain-dict or float-only conversion discards billing-time tags,
+currency and nonresource charges. Resource Graph in Step 2 remains the source only for the
+separate current-governance view.
 
 Perform the page merge and managed-scope filtering with `finops-managed-scope`'s
 `prepare_usage_details(...)`, then pass only `included_rows` into the allocation input transform.
@@ -116,12 +118,17 @@ read_skill_file(skill_name="finops-cost-allocation", file_path="allocate.py")
 
 ```python
 from allocate import allocate_costs
+from usage import costs_by_resource
+costs = costs_by_resource(snapshot["rows"])
 result = allocate_costs(
-    costs=costs,               # from Step 1  {resourceId: monthly_usd}
+    costs=costs,               # Preserve CostMap metadata and billing-time rows.
     tags=tags,                 # from Step 2  {resourceId: {tagKey: tagVal}}
     dimension="team",          # or env / service / costCenter / app / owner
 )
 ```
+
+Keep the user's requested owner dimension even if it has no coverage. A scheduled team/owner
+review must not switch to `env` or the most-populated tag to hide an ownership gap.
 
 `allocate_costs` handles all grouping and governance:
 

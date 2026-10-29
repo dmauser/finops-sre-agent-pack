@@ -626,12 +626,12 @@ def test_cost_overview_merges_resource_group_casing_and_labels_short_period():
         ["(unattributed)", "$0.50"],
     ]
     assert model["metrics"][0]["label"] == "Period spend"
-    assert "2026-08-01 to 2026-08-02 (2 days)" in model["metrics"][0]["detail"]
+    assert "2026-08-01 to 2026-08-02 (2 observed days)" in model["metrics"][0]["detail"]
 
     overview["daily"] = [
         {"date": f"2026-08-{day:02d}", "cost_usd": 1} for day in range(1, 31)
     ]
-    assert models.build_cost_overview_model(overview, **_context())["metrics"][0]["label"] == "30-day spend"
+    assert models.build_cost_overview_model(overview, **_context())["metrics"][0]["label"] == "Period spend"
 
 
 def test_rightsizing_adapter_uses_decimal_boundaries_and_verify_labels():
@@ -776,44 +776,44 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_cost_overview_model,
             _overview,
-            "21012f2aa4f1e6c78e446a02c205f6042038262d4ba60b92a52b6e41205477fe",
-            "2ecc86c52a4964bcd514eced1a6c08b5c6fc3ecec3e2369ca6855ad99b4182fe",
+            "011d37b5366d916a268a1143dd98e24f1830d6aece10b594e4e19a630a96a860",
+            "0e0b22a6aa3d2e9f7b73fd07cc4c555cadfa78cfb519e992171cddc455bf50b0",
         ),
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
-            "cdc66e52303439dcc519c8d8a9fa20af739319bb6191e1bfdf611265b2a2b166",
-            "5cc14dde48df72fef5d3debfced053c3474a6395e433dc44ef88e505c81cf56f",
+            "d2c936e6efbfd598cb69b00344648b470bc0974e3b26475aaa5463e2ad598ad5",
+            "862371ba132084badf3bab80e7f1c22fa40cf483da597d4ff7a5c7d660244bd3",
         ),
         (
             models.build_budget_status_model,
             _budgets,
-            "07f8af03e2ff258a9252aa7ef8697235ec6379ddf6ad10bf6ab031ef929c4732",
-            "906181ad67ceb11de9cebcfabd653cb226e0c268abd731abb642c3e2ee200aca",
+            "6ab8e5cb5973920ddd218c0ccefee42d99d80bf88a5f4ffc0a11e62a55d95712",
+            "c0c2c522a55d3e3ca1b9a9108e660b3f4068d6e56c0be9ba5d329f173c0a75e0",
         ),
         (
             models.build_cost_optimization_model,
             _optimization,
-            "f79dc3af86ced160438f1935f8b3b1e44b57bcf21a23783a91befc6bb7fd8de8",
-            "36e0aafb2b0ef5a2b9477d85f39040e1ed451d8bec40417b8c8701dec550049c",
+            "cef81797578790d3fd847be1a1533bdb95a8e4e43b1545aa2e23892548025867",
+            "cde0b21317057e23b6ad33801d82e63d17ad76b224f60210b08b327c981a779f",
         ),
         (
             models.build_ai_spend_model,
             _ai_spend,
-            "ec0c391f9b5454c1f86bcf5db3c5c2489d7a5a32c0ccda2681afb827045142ff",
-            "28333931172c135d3e34ae3ddf6c113ec2b063f7537b3b006a747bc21472340e",
+            "286cf0b030ca6dbb67a46e5b81092e5d301a1dfb5956a9ce5bc213744fb053fa",
+            "0838dd47f6ec3ab2becfb5c6eb6e25bdf782122a40d2f714c827f008cfe40049",
         ),
         (
             models.build_cost_vs_reliability_model,
             _reliability,
-            "d6443b5bd04a7c7766e12ac4d1fe2805cb439609a603d6d5be307100e6beffee",
-            "697146eb4eeb92e19d2504242fdfce3ae166bf2c8f2117b124076cd8910d7f9f",
+            "b805021220ffa04a66d6d731c3cd2ab4023f45047b4199a04447e91cb6dd0e24",
+            "45c2ece3ddcc520705e26c13694643d66e76a472499d263704f0b967041eb13c",
         ),
         (
             models.build_monthly_review_model,
             _monthly,
-            "350d9fc7272cd3efff9975e40a4f02b47422115722696a3c557e5590375347a5",
-            "8837ab0ddd2c38fd86c94d04f2f5b57409ceb3404afd1c9480e1a434b724c56d",
+            "5f4b112d33e343e5b635a7d7d56b2713f178bb10aff52689769b2f2c25a6f0ff",
+            "f9a7e5ad321fbe78574353a3c3a937171bdd2ed5ffff94cd0c5b05db7340cec4",
         ),
     ],
 )

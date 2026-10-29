@@ -15,6 +15,14 @@ and observed dates, source generation, snapshot ID, code version and run ID** wh
 is supplied. ActualCost is the invoice/cash view; AmortizedCost spreads commitment purchases across
 benefiting usage. Never add or compare them as though they were the same measure.
 
+Missing or incomplete source provenance marks a report **partial** with an explicit warning.
+Budget Status uses an immutable snapshot of the original budget API objects rather than a usage
+ledger. It shows the evaluation date and API retrieval timestamp; neither proves how current
+Azure's asynchronously updated `currentSpend` is. Its billing-data freshness stays unknown.
+Cost Overview's **Period spend** reports the observed date range and count; 29 observed days are
+never labeled a complete 30-day total. Missing closed-month history remains unavailable, while
+any current operational metrics must identify their distinct period.
+
 One complete export generation is one ledger, not an increment to yesterday's cumulative export.
 If export transport is unavailable, reports disclose the UsageDetails fallback and historical
 limitations. A successful API response or dates on a few rows do **not** prove full-period coverage.

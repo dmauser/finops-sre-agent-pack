@@ -109,6 +109,13 @@ infrastructure, an authentication boundary and ongoing costs; it requires separa
   The service-to-storage managed identity is a separate authentication hop. If policy forbids the
   public authenticated endpoint, stop and obtain an approved integration design rather than
   assuming a private MCP endpoint supports this OAuth flow.
+- Verify client-registration compatibility before selecting Entra alone: the documented SRE
+  OAuth flow expects dynamic registration, which ordinary Entra app registration does not provide.
+  A third-party bridge such as FastMCP's Azure provider/OAuth proxy is a candidate, not an accepted
+  production dependency. It needs a reviewed app/scopes/consent configuration, protected upstream
+  credentials, a stable signing key and **durable encrypted OAuth client/token state**. An ephemeral
+  Container Apps filesystem is not durable state. Include the selected persistence and secret
+  management in the resource approval and price estimate; no particular backend is assumed.
 - Prove that complete manifest/partition bytes reach saved tool output and the Python sandbox
   without model transcription or truncation. Bound individual responses, pin the generation and
   ETags across chunks, and validate byte counts and hashes after reassembly. Test the largest
@@ -124,8 +131,19 @@ running. See the [separate connector cost scenario](COST.md#approval-required-co
 No connector, new public endpoint, private endpoint, identity registration or OAuth consent is
 created by the current pack.
 
+Before provisioning a remote service, an operator can use the dependency-free
+`deploy/mcp-transport-fixture.py` as a temporary stdio MCP connector (`python3 -u <script>`).
+It exposes only `read_transport_fixture`, returning synthetic random payloads of 1 KiB, 256 KiB
+or 1 MiB. Verify that sandbox Python can read the original saved tool result, decode every byte,
+and independently match its byte count and SHA-256. Do not transcribe or regenerate the payload.
+Remove the diagnostic connector after the bounded test. This checks the MCP-result-to-sandbox
+handoff only: it does not prove HTTP/OAuth compatibility, Blob access, export completeness or
+support for files larger than the tested response/chunk size.
+
 References: [MCP transports, authentication and heartbeats](https://learn.microsoft.com/azure/sre-agent/mcp-connectors)
-and [connector setup and tool selection](https://learn.microsoft.com/azure/sre-agent/mcp-connector).
+and [connector setup and tool selection](https://learn.microsoft.com/azure/sre-agent/mcp-connector);
+third-party [FastMCP Azure provider](https://gofastmcp.com/integrations/azure) and
+[OAuth proxy production storage/key requirements](https://gofastmcp.com/servers/auth/oauth-proxy).
 
 ## Controlled upgrades
 

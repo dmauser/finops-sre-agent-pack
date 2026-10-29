@@ -202,7 +202,8 @@ grants. Actual active/idle time, scaling, heartbeat behavior and shared subscrip
 consumption must be measured; multiple replicas or heavier workloads can cost more.
 
 The subtotal **excludes** existing export storage/operations, SRE Agent AAUs, image registry,
-logging, authentication gateway/hosting, NAT, bandwidth outside the stated data-processing
+logging, authentication gateway/hosting, durable encrypted OAuth state, secret/signing-key
+management, NAT, bandwidth outside the stated data-processing
 assumption, taxes, and any extra environment features. Container Apps Environment Private Endpoint
 and Environment Management meters were each listed at $0.10/hour ($73 per 730-hour month) where
 applicable; do not confuse them with the $0.01/hour **storage** private endpoint above. Confirm the
@@ -212,6 +213,8 @@ not by itself solve the documented public-endpoint requirement for remote OAuth.
 An existing approved hosting/authentication platform may avoid some new fixed charges, but its
 capacity and internal charges are not assumed free. Reprice the selected design and obtain
 approval rather than adding this scenario silently to the existing lab.
+For an OAuth proxy, ephemeral container storage is not a production persistence solution; the
+selected encrypted state backend and secret-management design must be priced separately.
 
 Sources: [Azure Retail Prices API](https://prices.azure.com/api/retail/prices),
 [Container Apps pricing](https://azure.microsoft.com/pricing/details/container-apps/),
