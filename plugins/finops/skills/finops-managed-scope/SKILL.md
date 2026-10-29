@@ -344,6 +344,22 @@ AmortizedCost for allocation and optimization, never mixing them. Reconcile reso
 included nonresource costs to included ledger spend; disclose unresolved observed charges
 separately. ARM resource IDs are case-insensitive; only presentation preserves spelling.
 
+Budget-only analysis does not fetch UsageDetails. Instead call
+`make_budget_snapshot(budgets, managed_scopes=effective_scopes, run_id=run_id,
+code_version=<installed source SHA>, as_of=<evaluation YYYY-MM-DD>,
+retrieved_at=<timezone-qualified API retrieval timestamp>, partial=<retrieval incomplete>)`
+on the exact same-run source objects used for evaluation. This preserves the source budget
+windows and currencies without inventing a usage period or billing-data cutoff.
+`save_cost_snapshot(budget_snapshot)` validates its content hash and writes
+`budget-snapshot.json` once in the run directory. Pass `cost_context=budget_snapshot`
+to the Budget Status adapter. Retrieval time is not the freshness of `currentSpend`.
+All other financial reports, including Monthly Review when the requested history is missing,
+must pass their ledger snapshot. Missing provenance explicitly marks the report partial.
+Use the actual installed source SHA/version, never a generic code-version label such as "live".
+Rebuild `CostMap` from saved snapshot rows and pass it directly between helpers; plain-dict and
+float-only conversions lose billing-time tags, currency and nonresource charges. Keep requested
+owner dimensions even when coverage is zero.
+
 Billing-time tags govern historical showback. Current Resource Graph tags are a separate
 current-governance view and must not rewrite earlier ownership. Missing closed-month exports
 mean unavailable monthly variance, not permission to relabel current MTD as a closed month.

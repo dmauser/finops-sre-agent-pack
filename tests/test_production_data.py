@@ -1,6 +1,8 @@
 """Financial invariants shared by both ingestion modes."""
 
 import importlib.util
+import copy
+import json
 import sys
 from pathlib import Path
 
@@ -208,3 +210,142 @@ def test_unknown_currency_is_not_silently_rendered_as_usd():
     assert model["partial"]
     assert "unknown currency" in model["metrics"][0]["value"]
     assert "$" not in model["metrics"][0]["value"]
+
+
+def budget_snapshot(budgets=None, **changes):
+    args = dict(
+        managed_scopes=["/subscriptions/sub"], run_id="budget-run", code_version="test-source",
+        as_of="2026-10-29", retrieved_at="2026-10-29T08:30:00-05:00", partial=False,
+    )
+    args.update(changes)
+    return usage.make_budget_snapshot(
+        budgets if budgets is not None else [{
+            "id": "/subscriptions/sub/providers/Microsoft.Consumption/budgets/example",
+            "properties": {"currentSpend": {"amount": 12.34, "unit": "EUR"},
+                           "timePeriod": {"startDate": "2026-10-01", "endDate": "2027-10-01"}},
+        }], **args,
+    )
+
+
+def test_budget_snapshot_preserves_source_is_detached_and_write_once(tmp_path):
+    snapshot = budget_snapshot()
+    original = copy.deepcopy(snapshot["budgets"])
+    second = budget_snapshot(original, run_id="another-run")
+    assert snapshot["snapshot_id"] == second["snapshot_id"]
+    original[0]["properties"]["currentSpend"]["amount"] = 999
+    assert second["budgets"] == snapshot["budgets"]
+    assert budget_snapshot(original)["snapshot_id"] != snapshot["snapshot_id"]
+    assert snapshot["retrieved_at"] == "2026-10-29T13:30:00+00:00"
+    assert snapshot["billing_data_as_of"] is None
+    assert "requested_period" not in snapshot and "included_rows" not in snapshot
+    path = usage.save_cost_snapshot(snapshot, directory=tmp_path)
+    assert Path(path).name == "budget-snapshot.json"
+    assert json.loads(Path(path).read_text()) == snapshot
+    with pytest.raises(FileExistsError):
+        usage.save_cost_snapshot(snapshot, directory=tmp_path)
+    snapshot["budgets"][0]["properties"]["currentSpend"]["amount"] = 999
+    with pytest.raises(ValueError, match="hash"):
+        usage.save_cost_snapshot(snapshot, directory=tmp_path)
+
+
+def test_budget_provenance_never_invents_usage_dates_or_billing_freshness():
+    report = models.build_budget_status_model(
+        {"budgets": [], "summary": {}, "gates": []},
+        refreshed_at="2026-10-29T14:00:00Z", cost_context=budget_snapshot(),
+    )
+    fields = dict(next(s["rows"] for s in report["sections"] if s["title"] == "Data provenance"))
+    assert fields["Source"] == "Microsoft.Consumption/budgets"
+    assert fields["Cost basis / currency"] == "ActualCost / EUR"
+    assert fields["Evaluation date"] == "2026-10-29"
+    assert fields["Retrieved at"] == "2026-10-29T13:30:00+00:00"
+    assert "Not supplied by the budget API" in fields["Billing-data freshness"]
+    assert "Requested usage dates" not in fields and "Observed usage dates" not in fields
+    assert "billing freshness unverified" in fields["Completeness"]
+
+
+def test_budget_source_keeps_multiple_currencies_without_adding_them():
+    snapshot = budget_snapshot([
+        {"properties": {"currentSpend": {"amount": 10, "unit": "EUR"}}},
+        {"properties": {"currentSpend": {"amount": 20, "unit": "USD"}}},
+    ])
+    assert snapshot["currency"] is None and snapshot["currencies"] == ["EUR", "USD"]
+    assert "included_cost" not in snapshot
+    report = models.build_budget_status_model(
+        {"budgets": [], "summary": {}, "gates": []},
+        refreshed_at="2026-10-29T14:00:00Z", cost_context=snapshot,
+    )
+    assert ["Cost basis / currency", "ActualCost / EUR, USD"] in report["sections"][-1]["rows"]
+
+
+@pytest.mark.parametrize("changes", [
+    {"retrieved_at": "2026-10-29T13:30:00"},
+    {"retrieved_at": "invalid"}, {"as_of": "2026-02-30"},
+    {"partial": None}, {"managed_scopes": []}, {"run_id": ""}, {"code_version": ""},
+])
+def test_budget_snapshot_rejects_unverifiable_metadata(changes):
+    with pytest.raises(ValueError):
+        budget_snapshot(**changes)
+
+
+def test_budget_snapshot_discloses_missing_currency_and_incomplete_retrieval():
+    assert budget_snapshot(partial=True)["partial"]
+    snapshot = budget_snapshot([{"properties": {"currentSpend": {"amount": 1}}}])
+    assert snapshot["partial"] and snapshot["warnings"] and snapshot["currency"] is None
+    for bad in (float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            budget_snapshot([{"properties": {"currentSpend": {"amount": bad, "unit": "USD"}}}])
+    with pytest.raises(ValueError, match="currency"):
+        budget_snapshot([{"properties": {"currentSpend": {"unit": "dollars"}}}])
+    assert budget_snapshot([])["budgets"] == []
+
+
+@pytest.mark.parametrize("context", [None, {}, {"source": "Microsoft.Consumption/budgets"}])
+def test_missing_provenance_cannot_appear_complete(context):
+    report = models.build_cost_overview_model(
+        {"total_usd": 1}, refreshed_at="2026-10-29T14:00:00Z", cost_context=context,
+    )
+    assert report["partial"]
+    assert any("provenance" in w for w in report["warnings"])
+    if context is not None:
+        assert ["Completeness", "Partial"] in report["sections"][-1]["rows"]
+
+
+@pytest.mark.parametrize("field", [
+    "source", "snapshot_id", "code_version", "run_id", "partial", "cost_basis", "as_of", "retrieved_at",
+])
+def test_budget_provenance_requires_all_source_metadata(field):
+    context = budget_snapshot()
+    context.pop(field)
+    report = models.build_budget_status_model(
+        {"budgets": [], "summary": {}, "gates": []},
+        refreshed_at="2026-10-29T14:00:00Z", cost_context=context,
+    )
+    assert report["partial"]
+    assert ["Completeness", "Partial"] in report["sections"][-1]["rows"]
+
+
+@pytest.mark.parametrize("days", [0, 1, 28, 29, 30, 31])
+def test_overview_never_infers_a_thirty_day_window(days):
+    report = models.build_cost_overview_model({
+        "total_usd": days,
+        "daily": [{"date": f"2026-10-{day:02d}", "cost_usd": 1} for day in range(1, days + 1)],
+    }, refreshed_at="2026-10-31T14:00:00Z")
+    headline = report["metrics"][0]
+    assert headline["label"] == "Period spend"
+    assert (f"({days} observed days)" if days else "usage dates unavailable") in headline["detail"]
+
+
+def test_monthly_provenance_keeps_missing_closed_month_explicit():
+    snapshot = usage.make_cost_snapshot(
+        {"currency": "USD", "cost_metric": "AmortizedCost", "included_rows": []},
+        managed_scopes=["/subscriptions/sub"], run_id="monthly-run", code_version="test-source",
+        requested_start="2026-09-01", requested_end="2026-09-30",
+    )
+    report = models.build_monthly_review_model(
+        {"month": "2026-09", "scorecard": {}},
+        refreshed_at="2026-10-29T14:00:00Z", cost_context=snapshot,
+    )
+    fields = dict(report["sections"][-1]["rows"])
+    assert fields["Requested usage dates"] == "2026-09-01 to 2026-09-30"
+    assert "2026-10" not in fields["Observed usage dates"]
+    assert fields["Completeness"] == "Partial" and report["partial"]

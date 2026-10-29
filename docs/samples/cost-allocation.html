@@ -42,7 +42,7 @@ code,td.long { overflow-wrap:anywhere; } td.num { white-space:nowrap; }
 <body>
 <main>
 <header><h1>FinOps: Cost Allocation</h1><p class="subtitle">Weekly showback of Azure cost by team tag with tag coverage and hygiene; recommend-only. Sample data (fictional).</p><p class="refreshed">Last refreshed: 2026-10-23 15:00 UTC</p></header>
-
+<aside class="warnings"><strong>Data quality</strong><ul><li>Source provenance was not supplied; source identity, snapshot and code version are unverified.</li></ul></aside>
 <div class="metrics"><article class="metric neutral"><div class="metric-label">Cost analyzed</div><div class="metric-value">$42,093.65</div><div class="metric-detail">Retrieved UsageDetails window</div></article><article class="metric good"><div class="metric-label">Allocated</div><div class="metric-value">$41,438.45</div><div class="metric-detail">5 distinct team tag values</div></article><article class="metric warning"><div class="metric-label">Unallocated</div><div class="metric-value">1.6%</div><div class="metric-detail">$655.20 without the team tag</div></article><article class="metric warning"><div class="metric-label">Untagged spend</div><div class="metric-value">$2,583.40</div><div class="metric-detail">Resources with no tags at all</div></article><article class="metric neutral"><div class="metric-label">Via tag inheritance</div><div class="metric-value">$1,928.20</div><div class="metric-detail">Resource group or subscription tag</div></article></div>
 <section><h2>Cost by team</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>
 <section><h2>Managed scope</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul></section>

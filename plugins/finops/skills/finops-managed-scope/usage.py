@@ -6,7 +6,7 @@ import os
 import re
 import hashlib
 import tempfile
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from html import unescape
 from urllib.parse import parse_qsl, urlsplit
@@ -458,6 +458,55 @@ def make_cost_snapshot(prepared, *, managed_scopes, requested_start, requested_e
         "partial": bool(prepared.get("partial") or prepared.get("missing_cost_count") or not coverage_complete),
         "warnings": warnings,
     }
+    return _seal_snapshot(payload, run_id=run_id, code_version=code_version)
+
+
+def make_budget_snapshot(budgets, *, managed_scopes, run_id, code_version,
+                         as_of, retrieved_at, partial, warnings=None):
+    """Preserve budget API evidence without inventing a usage ledger or billing cutoff."""
+    if not isinstance(budgets, list) or any(not isinstance(row, dict) for row in budgets):
+        raise ValueError("budget snapshot requires a list of source budget objects")
+    if not managed_scopes or not run_id or not code_version:
+        raise ValueError("managed scopes, run_id and code_version are required")
+    if type(partial) is not bool:
+        raise ValueError("budget retrieval completeness must be explicit")
+    as_of = date.fromisoformat(as_of).isoformat()
+    retrieved = datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
+    if retrieved.utcoffset() is None:
+        raise ValueError("budget retrieval timestamp must include a timezone")
+    currencies = set()
+    missing_currency = False
+    for row in budgets:
+        properties = row.get("properties") or row
+        currency = (properties.get("currentSpend") or {}).get("unit")
+        if not currency:
+            missing_currency = True
+        elif not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
+            raise ValueError("budget source requires a three-letter billing currency")
+        else:
+            currencies.add(currency)
+    notices = list(warnings or [])
+    if missing_currency:
+        notices.append("Some budgets do not report a currentSpend billing currency.")
+    payload = {
+        "schema_version": 1,
+        "source_kind": "budget",
+        "source": "Microsoft.Consumption/budgets",
+        "cost_basis": "ActualCost",
+        "currency": next(iter(currencies)) if len(currencies) == 1 else None,
+        "currencies": sorted(currencies),
+        "managed_scopes": sorted({str(s).rstrip("/").casefold() for s in managed_scopes}),
+        "as_of": as_of,
+        "retrieved_at": retrieved.astimezone(timezone.utc).isoformat(),
+        "billing_data_as_of": None,
+        "budgets": budgets,
+        "partial": partial or missing_currency,
+        "warnings": notices,
+    }
+    return _seal_snapshot(payload, run_id=run_id, code_version=code_version)
+
+
+def _seal_snapshot(payload, *, run_id, code_version):
     encoded = json.dumps(payload, sort_keys=True, default=str, allow_nan=False)
     result = json.loads(encoded)
     result["snapshot_id"] = hashlib.sha256(encoded.encode()).hexdigest()
@@ -476,7 +525,8 @@ def save_cost_snapshot(snapshot, *, directory=None):
         raise ValueError("snapshot content hash mismatch")
     root = _input_directory(directory, snapshot["run_id"])
     os.makedirs(root, exist_ok=True)
-    path = os.path.join(root, "cost-snapshot.json")
+    filename = "budget-snapshot.json" if snapshot.get("source_kind") == "budget" else "cost-snapshot.json"
+    path = os.path.join(root, filename)
     with open(path, "x", encoding="utf-8") as handle:
         json.dump(snapshot, handle, allow_nan=False)
     return path

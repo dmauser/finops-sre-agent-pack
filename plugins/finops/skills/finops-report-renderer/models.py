@@ -40,6 +40,11 @@ def _cost_report(builder):
             model = builder(*args, **kwargs)
         finally:
             _REPORT_CURRENCY.reset(token)
+        if cost_context is None:
+            model["partial"] = True
+            model["warnings"] = _stable_strings(model["warnings"] + [
+                "Source provenance was not supplied; source identity, snapshot and code version are unverified."
+            ])
         if currency == "unknown currency":
             model["partial"] = True
             model["warnings"] = _stable_strings(model["warnings"] + ["Billing currency was not established."])
@@ -59,6 +64,30 @@ def _cost_report(builder):
         if cost_context is not None:
             period = context.get("requested_period") or {}
             obtained = context.get("obtained_period") or {}
+            budget_source = context.get("source_kind") == "budget"
+            provenance_currency = (
+                ", ".join(context.get("currencies") or []) or "Not established"
+            ) if budget_source else currency
+            period_rows = [
+                ["Evaluation date", str(context.get("as_of") or "Not supplied")],
+                ["Retrieved at", str(context.get("retrieved_at") or "Not supplied")],
+                ["Billing-data freshness", "Not supplied by the budget API; currentSpend updates asynchronously"],
+            ] if budget_source else [
+                ["Requested usage dates", f"{period.get('start', '?')} to {period.get('end', '?')}"],
+                ["Observed usage dates", f"{obtained.get('start', '?')} to {obtained.get('end', '?')}"],
+            ]
+            missing_provenance = (
+                any(not context.get(key) for key in ("source", "snapshot_id", "code_version", "run_id"))
+                or type(context.get("partial")) is not bool
+                or context.get("cost_basis") not in ("ActualCost", "AmortizedCost")
+                or (not context.get("as_of") or not context.get("retrieved_at") if budget_source
+                    else not period.get("start") or not period.get("end"))
+            )
+            if missing_provenance:
+                model["partial"] = True
+                model["warnings"] = _stable_strings(model["warnings"] + [
+                    "Source provenance is incomplete; source, snapshot, code version, run, basis, dates and completeness are required."
+                ])
             model["partial"] = model["partial"] or bool(context.get("partial"))
             model["warnings"] = _stable_strings(model["warnings"] + list(context.get("warnings") or []))
             model["sections"].append({
@@ -67,13 +96,14 @@ def _cost_report(builder):
                 "columns": ["Field", "Value"],
                 "rows": [
                     ["Source", str(context.get("source") or "Not supplied")],
-                    ["Cost basis / currency", f"{context.get('cost_basis', 'Not supplied')} / {currency}"],
-                    ["Requested usage dates", f"{period.get('start', '?')} to {period.get('end', '?')}"],
-                    ["Observed usage dates", f"{obtained.get('start', '?')} to {obtained.get('end', '?')}"],
+                    ["Cost basis / currency", f"{context.get('cost_basis', 'Not supplied')} / {provenance_currency}"],
+                    *period_rows,
                     ["Snapshot", str(context.get("snapshot_id") or "Not supplied")],
                     ["Code version", str(context.get("code_version") or "Not supplied")],
                     ["Run", str(context.get("run_id") or "Not supplied")],
-                    ["Completeness", "Partial" if context.get("partial") else "Complete transport; settlement may lag"],
+                    ["Completeness", "Partial" if context.get("partial") or missing_provenance else
+                     "Complete budget retrieval; billing freshness unverified" if budget_source else
+                     "Complete transport; settlement may lag"],
                 ],
                 "emptyMessage": "",
             })
@@ -470,12 +500,11 @@ def build_cost_overview_model(
     ]
     groups.sort(key=lambda row: (-row[1], row[0].casefold(), row[0]))
     dates = sorted({date for date, _ in daily})
-    if dates and len(dates) < 28:
-        spend_label = "Period spend"
-        spend_detail = f"{metric}, {dates[0]} to {dates[-1]} ({len(dates)} days)"
-    else:
-        spend_label = "30-day spend"
-        spend_detail = metric
+    spend_label = "Period spend"
+    spend_detail = (
+        f"{metric}, {dates[0]} to {dates[-1]} ({len(dates)} observed days)"
+        if dates else f"{metric}; usage dates unavailable"
+    )
 
     coverage = scope_coverage
     if coverage is None:

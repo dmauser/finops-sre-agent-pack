@@ -12,6 +12,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Budget-source provenance**: hash-verified, write-once budget API snapshots preserve original
+  objects, evaluation and retrieval times without claiming a usage ledger or billing cutoff.
+- **Bounded MCP transport fixture**: synthetic-only byte/hash checks for the tool-result-to-sandbox
+  handoff; this does not establish remote authentication, Blob access or export completeness.
 - **Auditable cost snapshots and native-export foundation**: run-isolated, write-once ledgers with
   currency, basis, requested/observed coverage, source hashes and report provenance; offline
   CSV/gzip manifest/partition validation and additive Hot ZRS export infrastructure. Export jobs
@@ -34,6 +38,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Live report period and provenance gaps**: Overview shows observed-period spend rather than
+  assuming 30 days; Budget and Monthly examples explicitly pass same-run source snapshots;
+  omitted or incomplete provenance now marks reports partial instead of silently appearing complete.
+- **Monthly ownership evidence**: canonical instructions retain billing-time `CostMap` metadata
+  and the requested owner/team dimension instead of falling back to current tags or `env`.
 - **Financial integrity**: canonical resource identities, mixed-currency/invalid-cost rejection,
   nonresource reconciliation, billing-time allocation tags and distinct current-tag governance.
 - **Budget and commitment semantics**: missing measurements remain unknown, overlapping budgets
