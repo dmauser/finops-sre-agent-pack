@@ -1,6 +1,6 @@
 ---
 name: finops-rightsizing-advisor
-description: Recommend rightsizing and idle-resource cleanup for Azure, read-only. Combines Azure Advisor cost recommendations with live utilization from Azure Monitor and inventory state from Resource Graph, validates each candidate against real CPU utilization and real cost before surfacing it, then ranks recommendations by estimated monthly savings using the bundled rightsize.py with the runtime's sandbox Python tool. Use for "what can we downsize or turn off", periodic savings reviews, and adding a cost-efficiency lens to capacity questions.
+description: Recommend rightsizing and idle-resource cleanup for Azure, read-only. Combines Advisor recommendations, inventory, CPU/memory, workload activity, sample coverage, and currency-labelled costs. Separates supported recommendations, unvalidated candidates, and contradicted estimates using the bundled rightsize.py with the runtime's sandbox Python tool. Use for "what can we downsize or turn off", periodic savings reviews, and adding a cost-efficiency lens to capacity questions.
 ---
 
 ## When to use this skill
@@ -9,8 +9,8 @@ Use it when the user wants to **find underutilized or idle Azure resources and g
 resize / deallocate / delete recommendations** — an on-demand "what can we rightsize or shut down?",
 a weekly savings review, or a cost-efficiency pass during a capacity discussion. This skill
 **validates Advisor's suggestions against real utilization and real cost** before surfacing them and
-ranks by dollar savings. It recommends only; it never changes anything (all steps are read-only, and
-a human approves any action).
+ranks by estimated savings in the input currency. It recommends only; it never changes anything
+(all steps are read-only, and a human approves any action).
 
 For cost *spikes* and their root cause, use `finops-cost-anomaly-detection` instead.
 
@@ -24,13 +24,14 @@ For cost *spikes* and their root cause, use `finops-cost-anomaly-detection` inst
 
 ## Scope
 
-VM / disk / storage-tier / App Service plan / node-level rightsizing works today, plus **Azure
-Container Apps idle detection**: unused Container Apps environments (empty, or every app received
-zero traffic), always-on container apps (`minReplicas>=1`) that keep billing with no requests, and
+The bundled heuristics cover VM utilization, unattached disks, stopped VMs, empty App Service
+plans, and **Azure Container Apps idle candidates**: environments with no inventoried children
+or no observed app HTTP requests, always-on container apps (`minReplicas>=1`) with no requests, and
 **warm dynamic session pools** (`readySessionInstances>=1`) with no session traffic — a class that is
 invisible to `az resource list` yet often tops the bill. A **cost-led coverage sweep** additionally
 flags any high-spend resource whose type has no idle rule as `review`, so nothing expensive is
-silently dropped. **Pod- and namespace-level AKS rightsizing needs a Log Analytics Reader grant +
+silently dropped. A low CPU reading or zero HTTP requests alone is **not proof of idle capacity**;
+see the evidence gate below. **Pod- and namespace-level AKS rightsizing needs a Log Analytics Reader grant +
 `api.loganalytics.io` scope on the agent identity** (Container Insights KQL is otherwise blocked) —
 out of scope here until that grant lands.
 
@@ -83,15 +84,17 @@ optimization, handled by `finops-commitment-advisor`) so they never count as res
 Flatten each recommendation to the shape `rightsize.py` expects:
 `{resourceId, problem, recommendation, targetSku, savingsUsd}` — `resourceId` from
 `resourceMetadata.resourceId` (or the `impactedValue`), `problem`/`recommendation` from
-`shortDescription`, and `savingsUsd` from `extendedProperties.savingsAmount`/`annualSavingsAmount`
-(convert an annual figure to monthly by dividing by 12) when present.
+`shortDescription`. Populate `savingsUsd` from `extendedProperties.savingsAmount`/`annualSavingsAmount`
+only when its source currency is confirmed USD (convert a confirmed annual USD figure to monthly
+by dividing by 12). Do not label an unverified-currency amount as USD. The core excludes an Advisor
+USD estimate from a non-USD or unknown-currency cost calculation rather than converting it.
 
 ### Step 2 — Pull inventory (Resource Graph) for idle patterns Advisor misses
 
 ```bash
 az graph query \
   --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> \
-  -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms','microsoft.app/managedenvironments','microsoft.app/containerapps','microsoft.app/sessionpools') | project id, type, sku=tostring(sku.name), properties, tags" \
+  -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms','microsoft.app/managedenvironments','microsoft.app/containerapps','microsoft.app/jobs','microsoft.app/sessionpools') | project id, type, sku=tostring(sku.name), properties, tags" \
   --first 1000 \
   -o json
 ```
@@ -117,48 +120,76 @@ az graph query --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> -q "Resources | proje
 UsageDetails still bills resources deleted earlier in the window. Without this list the cost-led
 sweep lists them as "review" even though nothing is left to act on.
 
-Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, readySessionInstances, tags}`:
+Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, readySessionInstances, childrenInventoryComplete, tags}`:
 
 - **VM** `powerState` from `properties.extended.instanceView.powerState.code` (e.g.
   `PowerState/stopped` vs `PowerState/deallocated`). A **Stopped (not Deallocated)** VM still bills
   for compute.
-- **Disk** `diskState` from `properties.diskState` (`Unattached` disks are pure waste).
-- **App Service plan** `numberOfSites` from `properties.numberOfSites` (0 = empty plan).
-- **Container Apps environment** (`microsoft.app/managedenvironments`) — no extra field; the ranker
-  counts child apps from the inventory to spot **empty environments**.
+- **Disk** `diskState` from `properties.diskState` (`Unattached` disks are cleanup candidates;
+  the owner must still confirm retention and recovery requirements).
+- **App Service plan** `numberOfSites` from `properties.numberOfSites`: only an explicit numeric
+  zero establishes an empty plan. Preserve absent, invalid, or unavailable counts as unknown;
+  never default them to zero.
+- **Container Apps environment** (`microsoft.app/managedenvironments`) — set
+  `childrenInventoryComplete=True` only after a complete, paginated inventory of apps, jobs, and
+  session pools, with verified parent associations. This is a collector assertion, not an ARM
+  property. Missing child rows alone leave an empty-environment finding unvalidated. Known
+  job/session-pool children prevent the app-only idle heuristic from supporting deletion.
 - **Container App** (`microsoft.app/containerapps`) `environmentId` from
   `properties.environmentId` (fall back to `properties.managedEnvironmentId`) and `minReplicas` from
   `properties.template.scale.minReplicas`. An app with `minReplicas>=1` is **always-on** (bills even
   with zero traffic).
 - **Dynamic session pool** (`microsoft.app/sessionpools`) `readySessionInstances` from
   `properties.scaleConfiguration.readySessionInstances`. Pre-warmed sessions bill continuously, so a
-  pool with `readySessionInstances>=1` and no session traffic is pure waste. **Important:** these do
+  pool with `readySessionInstances>=1` and no session traffic is an idle candidate subject to the
+  sample-coverage and owner-review gates below. **Important:** these do
   **not** appear in `az resource list -g <rg>` (only Resource Graph returns them), yet they are
   frequently the single largest line items on the bill.
+- Preserve `environmentId` associations for jobs and session pools when known. If a parent
+  relationship or an inventory page cannot be verified, do not assert complete child inventory.
 
-### Step 3 — Pull utilization (Azure Monitor) for VM candidates
+### Step 3 — Pull utilization (Azure Monitor) for VM and Container App candidates
 
-For each VM candidate (from Advisor or inventory), pull trailing CPU so the recommendation can be
+For each VM or Container App candidate, pull trailing CPU **and memory** so the recommendation can be
 **validated against reality**. Metrics are not optional: do the Step 4 cost pull first when cost
 access exists, then pull metrics in **descending monthly-cost order** and cover at least the
-**top 15** VM / Container App / session-pool candidates (all of them if fewer) before ranking. Only
-candidates beyond that bound may be left unvalidated, and the output must say how many. Metrics
-need only **Reader** or **Monitoring Reader** on the resource; a 403 here is an RBAC gap to report,
+**top 15** VM / Container App / session-pool candidates (all of them if fewer) before ranking.
+Candidates remain unvalidated whenever required evidence is unavailable, including within that
+bound; report the count and exact missing signals. Metrics need only **Reader** or
+**Monitoring Reader** on the resource; a 403 here is an RBAC gap to report,
 not a reason to skip the remaining resources.
 
 ```bash
 az monitor metrics list --resource <vm-resource-id> --metric "Percentage CPU" --interval PT1H --start-time <UTC-14d> --aggregation Average Maximum -o json
 ```
 
-Reduce each series to `{cpu_p95, cpu_avg, mem_p95, sample_days}` (percent, 0–100). `cpu_p95` is the
-95th percentile of the hourly Average series; `sample_days` is the number of distinct days covered.
-Skip resources with fewer than `min_sample_days` (default 7) of data — the skill treats them as
-unvalidated rather than guessing.
+Reduce the aligned series to `{cpu_p95, cpu_avg, mem_p95, sample_days, sample_coverage_pct}`.
+CPU and memory must be percentages of the relevant capacity, not raw cores/bytes. `cpu_p95` is the
+95th percentile of the hourly Average series; `sample_days` counts distinct observed days, not the
+requested window. `sample_coverage_pct` is the minimum completeness of the required metric series.
+Alternatively supply `sample_count` and `expected_sample_count` for that same interval/window.
+Missing buckets are unknown, **not zero**. If both coverage forms are supplied, the lower coverage
+governs. Preserve missing memory as `None`.
+
+The bundled policy requires at least **7 observed days and 90% sample coverage** before supporting
+a utilization-based action. A one-tier-down candidate needs p95 CPU below **20%** and p95 memory
+below **40%**. An idle action needs CPU below **5%**, memory below **20%**, and independently
+measured zero workload activity with sufficient coverage. These are this pack's conservative
+policy defaults, **not Azure service limits or Advisor's own thresholds**. Known contradictory
+CPU, memory, or activity invalidates the proposed action even if other evidence is missing.
+CPU-only data remains a candidate; insufficient observed days do not generate a utilization-only
+finding. Advisor candidates without enough evidence remain unvalidated.
+
+Collect the actual supported metrics for the resource and normalize their units before calling
+the helper. Container Apps' metric definitions distinguish raw CPU/memory from percentage metrics;
+see [Microsoft Learn: Container Apps metrics](https://learn.microsoft.com/en-us/azure/container-apps/metrics).
+Do not treat a CPU query as a memory measurement.
 
 ### Step 3b — Pull request activity (Azure Monitor) for Container Apps and session pools
 
-For each container app, pull the trailing `Requests` metric so idle apps/environments are validated
-against **real traffic** (not guessed). Without this signal an app is left unvalidated, never flagged.
+For each container app, pull the trailing `Requests` metric to identify zero-request candidates.
+Zero HTTP requests cannot establish that a background worker is idle. An app without usable
+request coverage is not flagged by the app HTTP heuristic.
 
 ```bash
 az monitor metrics list --resource <containerapp-resource-id> --metric "Requests" --interval P1D --start-time <UTC-14d> --aggregation Total -o json
@@ -176,9 +207,31 @@ Note: the session-pool metrics namespace is flaky — a call may return
 If it never succeeds, omit the pool from `activity`; the ranker still surfaces a warm pool as an
 *unvalidated* candidate ("verify usage before reducing") rather than dropping the largest line items.
 
-Sum the Total series into `{resourceId: {"requests_total": <sum>, "sample_days": <distinct days>}}`.
-`requests_total == 0` over enough days means no traffic (for a session pool, no sessions invoked).
-This map is passed as `activity=` below.
+Sum actual Total observations into:
+
+```python
+activity = {
+    resource_id: {
+        "requests_total": observed_requests,
+        "sample_days": observed_days,
+        "sample_coverage_pct": observed_coverage,
+        # VMs/Container Apps only; omit when no independent background-work signal exists:
+        "workload_activity_total": observed_workload_activity,
+    }
+}
+```
+
+`workload_activity_total` is a normalized collector input, **not a platform metric name**. Derive it
+from an appropriate independently observed workload signal that covers background/non-HTTP work;
+never synthesize zero from `Requests == 0`. Its coverage must describe the same complete window.
+VM/Container App idle actions need this activity evidence **and** the CPU/memory evidence from
+Step 3. No HTTP traffic alone leaves app/environment findings as candidates. Jobs run in the same
+environment as apps, so app HTTP traffic cannot establish their inactivity
+([Microsoft Learn: Container Apps jobs](https://learn.microsoft.com/en-us/azure/container-apps/jobs)).
+
+Session pools use their invocation signal instead: enough observed days plus the same sample
+coverage gate are required to support zero-use findings. A warm pool with unavailable or sparse
+usage metrics remains unvalidated. Pass the activity map unchanged to `activity=` below.
 
 ### Step 4 — Pull per-resource monthly cost (optional but recommended)
 
@@ -190,7 +243,7 @@ In **modern billing the full ARM resource id is in `properties.instanceName`** (
 field is null) — project both fields separately and let the helpers resolve them:
 `costs_by_resource(included_rows)` (from `finops-managed-scope/usage.py`) prefers `instanceName` and
 falls back to `resourceId`. Ids are matched
-case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
+case-insensitively. This is what lets the skill **rank by input-currency cost** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
 Start with the complete trailing window using `%24top=1000`, project only the needed fields with
@@ -209,6 +262,13 @@ Persist the page envelopes and run `finops-managed-scope`'s `prepare_usage_detai
 monthly cost only from `included_rows`; use its exact coverage and `partial` fields in the final
 result. Do not merge or scope-filter UsageDetails in model reasoning.
 
+Keep the dict-compatible `CostMap` returned by `costs_by_resource` intact so its `currency`
+metadata survives. Canonically equivalent resource ids (case/trailing slash) are summed, including
+in the cost-led review sweep. Utilization/activity dictionaries are indexed, **not added**.
+Pass an explicit `currency=` only when verified; a conflict with `costs.currency` raises
+`ValueError`. A plain dict without a verified currency stays unknown. No exchange-rate conversion
+occurs, and non-resource/unattributed charges must not be assigned to invented resource ids.
+
 ### Step 5 — Rank (bundled rightsize.py, in-sandbox)
 
 Read the module and run it — do **not** re-implement the logic in the prompt:
@@ -222,11 +282,11 @@ from rightsize import recommend_rightsizing
 recs = recommend_rightsizing(
     resources=resources,       # from Step 2
     utilization=utilization,   # from Step 3  {resourceId: {...}}
-    activity=activity,         # from Step 3b {resourceId: {"requests_total", "sample_days"}}
-    costs=costs,               # from Step 4  {resourceId: monthly_usd}
+    activity=activity,         # Step 3b: observed activity + sample coverage
+    costs=costs,               # Step 4: CostMap; preserves the verified input currency
     advisor=advisor,           # from Step 1
     existing_resource_ids=existing_ids,  # from Step 2 `Resources | project id`
-)   # returns findings ranked by estMonthlySavingsUsd desc
+)   # returns findings ranked by generic estMonthlySavings desc
 ```
 
 `recommend_rightsizing` handles all classification and validation:
@@ -236,16 +296,23 @@ recs = recommend_rightsizing(
   session pool with no session traffic, or p95 CPU below `cpu_idle_pct`=5%), `oversized` (p95 CPU
   below `cpu_underutil_pct`=20%), `advisor` (an Advisor rec with no independent signal), or `review`
   (see cost-led sweep below).
-- **validated** is `True` when utilization/inventory backs the call, `False` when utilization
-  **contradicts** an Advisor rec (high CPU — flagged "verify before acting"), and `None`/unvalidated
-  when no metrics were available (e.g. a warm session pool whose metrics namespace was unavailable —
-  surfaced as "verify usage before reducing" rather than dropped).
-- **estMonthlySavingsUsd**: full monthly cost for idle resources; Advisor's own number when present;
-  otherwise a conservative 50% estimate for a one-tier downsize. Findings below
-  `min_monthly_savings_usd` (default $5) are dropped; findings with unknown cost are kept and sort last.
+- **validated / validationStatus**: `True` / `supported` when the required evidence supports a
+  reviewable action; `None` / `candidate` when evidence is missing or insufficient; `False` /
+  `contradicted` when known CPU, memory, or activity conflicts with the action. Contradictions
+  override otherwise positive inventory/Advisor signals. Supported does not authorize execution.
+- **currency / currentMonthlyCost / estMonthlySavings** are the canonical monetary fields.
+  `currency=None` means unknown, not USD. `currentMonthlyUsd` and `estMonthlySavingsUsd` remain
+  backward-compatible aliases only when currency is confirmed USD; otherwise they are `None`.
+  An Advisor-only `savingsUsd` can establish USD for that estimate when no cost amount is present.
+- **estMonthlySavings** retains full input-period cost for idle candidates, or a conservative 50%
+  estimate for a one-tier downsize, merged with compatible Advisor estimates. These are potential
+  estimates, not realized savings. Do not include candidate/contradicted estimates in a supported
+  savings headline. The legacy argument `min_monthly_savings_usd` defaults to **5 input-currency
+  units**, not an implicit USD conversion; unknown estimates are kept and sort last.
 - **Cost-led coverage sweep** — after the rules run, any resource costing at least
-  `review_min_monthly_usd` (default $20/mo) whose **type has no idle rule** and that **no other signal
-  flagged** is surfaced as `kind="review"` (no savings claimed, `validated=None`). This guarantees no
+  `review_min_monthly_usd` (default 20 input-currency units for the period) whose **type has no
+  idle rule** and that **no other signal flagged** is surfaced as `kind="review"` (no savings
+  claimed, `validated=None`). This guarantees no
   expensive line item is silently dropped just because we lack a heuristic for its type. Covered types
   that a rule evaluated but did not flag are **not** re-listed as review. When
   `existing_resource_ids` is passed, resources that no longer exist are skipped.
@@ -254,9 +321,13 @@ recs = recommend_rightsizing(
 
 ### Step 6 — Report
 
-Produce a ranked table: resource (id + type), kind, current SKU, recommended action, current monthly
-$, estimated monthly savings $, validated, and the evidence/sources. Call out the **total estimated
-monthly savings** at the top. Clearly mark `validated=False` and unvalidated rows as "verify first".
+Produce a ranked table: resource (id + type), kind, current SKU, recommended action,
+`currentMonthlyCost`, `estMonthlySavings`, **currency**, validation status, and evidence/sources.
+Lead with **supported estimated savings only**; show candidate estimates separately. Contradicted
+estimates are diagnostic only, never actionable savings. Do not rank contradicted rows as actions.
+Use `summarize_optimization(rightsizing=recs)` for tested supported/candidate/contradicted rollups
+and currency buckets rather than summing all rows. Never add different currencies or label an
+unknown currency as dollars; show a mixed-currency scalar as unavailable and retain the buckets.
 List `kind="review"` rows in a separate **"High spend, no idle rule yet — review"** section so the
 report's coverage is complete by spend even where no automated recommendation exists.
 Recommend only — do not perform any resize/deallocate/delete. If nothing clears the threshold, say so
@@ -275,10 +346,13 @@ After reporting, refresh the shared Live Report `FinOps: Rightsizing Savings` so
 
 ## Notes
 
-- Storage hot→cold tiering and reservation/savings-plan suggestions come through Advisor (Step 1) and
-  flow through as `advisor` findings; utilization validation applies only to VM CPU today.
-- The 50% one-tier savings estimate and the CPU thresholds are tunable via `recommend_rightsizing`
+- Storage-tier suggestions can arrive as Advisor candidates; reservation/savings-plan purchases
+  are filtered out and belong to `finops-commitment-advisor`. Missing suitable evidence never
+  becomes a supported recommendation.
+- The 50% one-tier savings estimate and CPU thresholds are tunable via `recommend_rightsizing`
   keyword args if a subscription needs a different risk posture.
+- Evidence/currency contract reviewed against `rightsize.py`; Container Apps metrics and shared
+  app/job environment references above validated through Microsoft Learn on 2026-10-29.
 
 ## Microsoft workload optimization guidance
 

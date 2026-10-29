@@ -36,6 +36,11 @@ aren't dropped. See the pack README's "AI resource taxonomy" note.
 
 ## Scope
 
+Meter classification is conservative: security/Defender, storage, network and support charges are
+`ancillary`; unfamiliar Machine Learning meters remain `unclassified`. They must not be added to
+token or compute savings claims. Resource identity matching is case-insensitive. Mixed currencies
+are rejected, not converted. Preserve the source snapshot's currency/basis/window in the report.
+
 v1 attributes AI spend from **cost line items only** — per **resource**, per **model** (parsed from
 the token meter), per **service family**, and a **token vs compute** meter split. Per-**deployment**
 attribution and $/1K-token efficiency need Azure Monitor token *metrics* (a separate GET) and are

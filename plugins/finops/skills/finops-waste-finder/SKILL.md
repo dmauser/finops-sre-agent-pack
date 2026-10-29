@@ -11,8 +11,10 @@ yet keep billing every hour (public IPs, NAT gateways, gateways, load balancers,
 gateways, snapshots).
 
 It **does not** repeat `finops-rightsizing-advisor` (unattached managed disks, stopped-not-deallocated
-VMs, empty App Service plans, idle Container Apps, Advisor cost recommendations), so savings from
-the two skills can be added together. It recommends only; it never deletes or changes anything.
+VMs, empty App Service plans, idle Container Apps, Advisor cost recommendations). Combine their
+**supported, same-currency** savings through `summarize_optimization`, which defensively
+deduplicates resources and alternative actions. Do not blindly add raw finding estimates.
+It recommends only; it never deletes or changes anything.
 
 ## Required access
 
@@ -68,6 +70,12 @@ page envelopes, and run `prepare_usage_details(...)`. Build `costs = costs_by_re
 (from `usage.py`; it resolves `instanceName` → `resourceId`); do not merge or scope-filter
 UsageDetails in model reasoning. If the pull is partial, label savings "partial — cost pull truncated".
 
+Preserve the dict-compatible `CostMap` and its `currency` metadata. The analyzer sums costs for
+canonically equivalent resource ids (case/trailing slash), rather than overwriting one with another.
+This additive treatment applies to **costs only**: ingestion measurements are indexed, not summed
+across differently cased copies of the same workspace measurement. Keep unattributed/non-resource
+charges separate; never invent resource ids to allocate them.
+
 For Log Analytics workspaces, use `ingestion = ingestion_gb_per_day(included_rows, days=<window>)`:
 it sums `quantity` of rows whose `meterCategory` is `Log Analytics` and whose unit is GB (retention
 `GB/Month` excluded), per workspace id, divided by the window length.
@@ -85,7 +93,7 @@ result = find_waste(
     costs=costs,                             # Step 2 {resourceId: monthly cost}
     ingestion_gb_per_day=ingestion,          # Step 2 {workspaceId: GB/day}
     managed_scopes=effective_scopes,
-    currency=prepared["currency"],
+    currency=costs.currency,                  # optional: defaults to costs.currency
     connections_queried=True,                # Step 1 query includes microsoft.network/connections
 )
 ```
@@ -93,6 +101,11 @@ result = find_waste(
 Pass `connections_queried=True` whenever the Step 1 query included `microsoft.network/connections`,
 even if it returned zero connection rows; otherwise a subscription with gateways but no connections
 skips the gateway rule.
+
+`currency` is optional and otherwise inherited from `costs.currency`. If both are specified and
+disagree, the analyzer raises `ValueError`; it does not convert or relabel amounts. A plain cost
+dict without currency stays unknown. Results and each finding carry `currency`; the monetary
+fields are generic `monthlyCost` and `estMonthlySavings`, **not guaranteed USD**.
 
 | Kind | Rule | Savings counted |
 | --- | --- | --- |
@@ -107,7 +120,8 @@ Findings are sorted by estimated monthly savings; unknown cost sorts last and is
 
 ### Step 4 — Report
 
-Lead with `headline.potential_monthly_savings` (orphan + idle + stale only) and the count by kind.
+Lead with `headline.potential_monthly_savings` (orphan + idle + stale only), its `currency`,
+and the count by kind. Label an unknown currency explicitly rather than adding a dollar sign.
 Show a table: resource, type, kind, reason, monthly cost, estimated savings, recommended action,
 evidence. Put `hygiene` and `review` rows in their own sections without savings claims. Before any
 deletion is acted on, the owner must confirm the resource is not a DR standby, a reserved static
@@ -126,8 +140,11 @@ After reporting, refresh the shared Live Report `FinOps: Waste Cleanup` so the r
 4. SaveReport the static file with `allowedTools: []`, name `FinOps: Waste Cleanup`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 ## Notes
 
-- Add `finops-rightsizing-advisor` savings to this skill's savings for the total usage-optimization
-  opportunity; the rule sets are disjoint by design.
+- Use `finops-cost-optimization-report` for total usage-optimization opportunity: it keeps
+  supported, candidate/unvalidated, and contradicted estimates separate, deduplicates overlapping
+  resources, and emits currency buckets instead of adding mixed/unknown currency to known USD.
+  Raw inventory findings still require the owner's dependency/retention review before action;
+  supported evidence is not permission to delete.
 - Tag the owner on each finding (`tags`) when present so cleanup can be routed (accountability).
 - Microsoft recommends cleaning up unused resources as a first, low-risk optimization step. Pair it
   with an environment tag and auto-shutdown for non-production. The service-specific Advisor

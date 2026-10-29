@@ -36,6 +36,7 @@ the [Microsoft FinOps Framework](https://learn.microsoft.com/en-us/cloud-computi
   - [Manual (portal)](#manual-portal)
   - [Installer for an existing agent](#installer-for-an-existing-agent)
   - [Permissions](#permissions)
+- [Production operations and upgrade gates](docs/PRODUCTION.md)
 - [Repository layout](#repository-layout)
 - [Test](#test)
 - [Contributing another plugin](#contributing-another-plugin)
@@ -50,9 +51,9 @@ and report templates to do that work on a schedule and on demand:
 
 - **One source of truth for scope.** Every run reads the agent's own managed resources, so reports
   never drift outside the boundary you configured.
-- **Deterministic numbers.** Costs are computed by tested Python helpers, not estimated by the
-  model, and reconcile with Azure Cost Management. In live validation every report matched Cost
-  Management month-to-date amortized cost within 1.3%.
+- **Deterministic numbers.** Tested Python helpers compute costs with explicit currency, basis,
+  period and source provenance. Every deployment must reconcile its own complete ledger with
+  Cost Management; historical lab results are not a production correctness guarantee.
 - **Honest data quality.** Each report shows a *Data quality* panel listing billing lag, missing
   permissions, partial data, and scope coverage instead of hiding gaps.
 - **Recommend, never act.** Every Azure call is read-only. Savings are labeled as estimates, and
@@ -73,7 +74,7 @@ flowchart LR
         R[finops-report-renderer]
     end
     subgraph Azure["Azure (read-only)"]
-        CM[Cost Management<br/>UsageDetails · Budgets]
+        CM[Cost Management<br/>Native exports · UsageDetails · Budgets]
         ADV[Advisor]
         ARG[Resource Graph]
         MON[Azure Monitor<br/>metrics · alerts]
@@ -107,7 +108,7 @@ flowchart LR
 | `finops-sre-agent` | Azure Agent Unit (AAU) spend per SRE Agent, always-on versus active flow, top threads, and monthly-limit headroom. | *"How much do our SRE Agents cost?"* |
 | `finops-carbon-optimization` | Carbon emissions (kgCO2e) trend, top emitters, regions, and largest increases from Azure Carbon Optimization. | *"What is our cloud carbon footprint?"* |
 | `finops-cost-vs-reliability` | Joins cost with alerts, Resource Health, and Advisor high-availability findings to show where spend and reliability pain overlap. | *"Where should we invest in reliability, and what can we safely cut?"* |
-| `finops-kpi-scorecard` | Month-end and next-month forecast, unit economics, FinOps KPIs with a Crawl/Walk/Run maturity score, and one action list per owner. | *"Run our monthly FinOps review."* |
+| `finops-kpi-scorecard` | Forecasts, unit economics, KPI health and evidence coverage, and owner action lists. Not an organizational maturity assessment. | *"Run our monthly FinOps review."* |
 | `finops-cost-optimization-report` | Executive rollup of anomalies, rightsizing, waste, commitments, SRE Agent spend, budgets, and governance into one prioritized action list. | *"Give me a cost optimization summary for leadership."* |
 | `finops-report-renderer` | Renders the structured results as escaped, CSP-safe Live Report HTML with metrics, charts, tables, and data-quality warnings. | *(used by scheduled tasks)* |
 
@@ -131,7 +132,7 @@ chat, and it is the agent that runs all scheduled tasks. It:
 | **Understand usage and cost** | Data ingestion with managed-scope filtering, allocation and showback, reporting and analytics, anomaly management |
 | **Quantify business value** | Forecasting, budgeting, unit economics, KPI benchmarking |
 | **Optimize usage and cost** | Workload optimization (rightsizing, waste), rate optimization (reservations, savings plans, Hybrid Benefit), licensing, cloud sustainability, AI and SRE Agent spend |
-| **Manage the FinOps practice** | Monthly review cadence, maturity scoring, policy and tag governance, owner accountability |
+| **Manage the FinOps practice** | Monthly review cadence, evidence coverage, policy and tag governance, owner accountability |
 
 ## Live Reports
 
@@ -157,14 +158,14 @@ ranked tables. They render on desktop and mobile.
 | **FinOps: AI Spend** | Mon 18:00 | AI cost by resource, model, and service; token versus compute |
 | **FinOps: SRE Agent Spend** | Mon 18:30 | AAU cost per agent, always-on versus active flow, limit headroom |
 | **FinOps: Cost vs Reliability** | Mon 19:00 | Cost versus alerts, Resource Health, and HA findings; invest and verify-before-cutting lists |
-| **FinOps: Monthly Review** | 1st of month 15:00 | KPI scorecard, maturity, forecast, month-over-month variance, owner actions |
+| **FinOps: Monthly Review** | 1st of month 15:00 | KPI health, evidence coverage, forecast, closed-month variance, owner actions |
 
 Schedules, names, and model tiers can be overridden at install time; see
 [`task-manifest.json`](plugins/finops/scheduled-tasks/task-manifest.json).
 
 **What do the numbers mean?** [How to read the FinOps reports](docs/REPORTS.md) explains, in plain
 language, what question each report answers, how its scores and thresholds are calculated (for
-example the Cost vs Reliability score and the Monthly Review maturity level), and why it matters
+example the Cost vs Reliability score and the Monthly Review evidence coverage), and why it matters
 for FinOps.
 
 ### Estimated cost
@@ -310,8 +311,8 @@ The agent asks before it creates anything, and the pack itself stays read-only a
 
 ### Automated deployment
 
-One command creates the SRE Agent (Bicep), installs the plugin from this repository with
-auto-update, creates `finops-investigator`, and schedules the weekly Cost Optimization Live Report.
+One command creates the SRE Agent (Bicep), installs the plugin with auto-update **off**,
+creates `finops-investigator`, and schedules the weekly Cost Optimization Live Report.
 It prompts only for the agent name, region, and resource group:
 
 ```bash
@@ -346,8 +347,9 @@ Optional settings (environment variables):
 - **Data-plane 403 right after deployment.** The SRE Agent Administrator role can take a few minutes
   to propagate. The script retries automatically; if it still fails, wait and re-run.
 - **`/agent finops-investigator` is missing in chat.** Start a new chat or hard-refresh the page.
-- **Default subscription changed.** Passing `-s` runs `az account set`. Switch back afterward with
-  `az account set --subscription <id>`.
+- **Production upgrades:** use an expected source SHA, preserve task settings, and run canaries.
+  Optional native export storage and its transport/security gates are documented in
+  [Production operations](docs/PRODUCTION.md); exports are not silently enabled.
 
 ### Manual (portal)
 
@@ -357,7 +359,8 @@ by hand. See [Option B](docs/ONBOARDING.md#option-b-manual-portal).
 ### Installer for an existing agent
 
 `install-api.sh` installs the complete **`finops` plugin package**: all 15 skills,
-`finops-investigator`, 12 scheduled tasks, and 12 Live Reports. It does not install unrelated
+`finops-investigator`, and the Cost Optimization task by default. Set `TASK_IDS=all` explicitly
+for all 12 scheduled reports. It does not install unrelated
 plugins from the marketplace. It requires `az`, `curl`, and `python3`, and `AGENT_RESOURCE_ID` is
 mandatory so the managed scope can be discovered. Sign in with `az login` as an identity that can
 manage the agent and create role assignments on it:
@@ -388,7 +391,9 @@ your user account.
 | Reader | The agent ARM resource | deploy.sh, installer (always) | Reading `managedResources` |
 | Reader, Log Analytics Reader | Subscription | deploy.sh | Resource Graph, Advisor, Monitor, Resource Health, logs |
 | Cost Management Reader | Managed subscriptions | deploy.sh; installer when `MI_OBJECT_ID` is set | UsageDetails, budgets, forecasts |
-| Monitoring Contributor | Subscription and the agent's resource group | deploy.sh | Standard SRE Agent monitoring setup. The only non-read role; the FinOps pack never uses it to write |
+| Monitoring Reader | Subscription | deploy.sh | Read-only monitoring analysis |
+| Monitoring Contributor | Agent resource group only | Platform deployment | Platform monitoring setup; not required for subscription-wide FinOps analysis |
+| Storage Blob Data Reader | Export containers only | Optional export deployment | Read complete export manifests and partitions; no upload/delete permission |
 | SRE Agent Administrator | The agent (assigned to **you**) | deploy.sh | Data-plane access to configure the agent |
 | Reader | Managed scopes | You (existing agents) | Resource Graph, Advisor, Monitor, Resource Health |
 | Reservations Reader, Savings plan Reader | Tenant (`/providers/Microsoft.Capacity`, `/providers/Microsoft.BillingBenefits`) | You, or `GRANT_COMMITMENT_READERS=1` | Existing commitment inventory and utilization |

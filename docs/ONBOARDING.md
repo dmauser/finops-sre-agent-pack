@@ -23,10 +23,10 @@ against it: the script detects the existing agent and adds only what is missing.
 | SRE Agent (`Microsoft.App/agents`) | Default `sre-finops-demo` in `centralus`. Access level Low, Review action mode, model *Automatic*, Stable channel, 10,000 monthly agent units, Limited sandbox egress |
 | User-assigned managed identity | Used for actions and the knowledge graph. Managed resources = the subscription |
 | Log Analytics + Application Insights | Agent telemetry |
-| Agent identity RBAC (subscription) | Reader, Monitoring Contributor, Log Analytics Reader, **Cost Management Reader** |
+| Agent identity RBAC (subscription) | Reader, Monitoring Reader, Log Analytics Reader, **Cost Management Reader** |
 | Agent identity RBAC (agent resource) | Reader, so every run can read the managed scope |
 | Your RBAC | **SRE Agent Administrator** on the agent (data-plane access) |
-| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 15 skills |
+| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update off**, 15 skills |
 | Subagent `finops-investigator` | Instructions, exactly five read-only tools, the FinOps skills plus `live_report_authoring` |
 | Scheduled task | `FinOps: Cost Optimization (Live Report, Weekly)`, Mondays 17:00 UTC, **Autonomous**, response agent `finops-investigator` |
 | Live Report | `FinOps: Cost Optimization` in Operations Hub. Created on the task's first run and refreshed on every run after that |
@@ -67,7 +67,7 @@ It then runs two phases:
    [`agent.bicep`](../plugins/finops/deploy/agent.bicep) create the resource group, identity,
    monitoring, the agent, and the RBAC grants.
 2. **Agent configuration.** [`install-api.sh`](../plugins/finops/install-api.sh) runs with
-   `PLUGIN_SOURCE=direct`. It installs the plugin from the GitHub URL with auto-update on, upserts
+   `PLUGIN_SOURCE=direct`. It installs the plugin from the GitHub URL with auto-update off, upserts
    `finops-investigator`, and creates the scheduled task(s) as Autonomous on that subagent.
 
 Re-running is safe. An existing agent is never re-provisioned, so its identity and settings are
@@ -238,9 +238,12 @@ Both paths install the reports. To run FinOps as a monthly operating rhythm, als
 When `main` gains skills, subagent changes or tasks, bring an agent up to date the same way you
 onboarded it.
 
-**Automated.** Rerun the deploy script against the existing agent. It skips the infrastructure,
-refreshes the plugin to the latest commit, upserts `finops-investigator`, and upserts the tasks you
-list (existing tasks with the same name are updated in place):
+**Automated.** Follow [production operations](PRODUCTION.md) before upgrading. Freeze auto-update,
+capture rollback settings and explicitly approve the source SHA. The default-branch source must
+match `EXPECTED_SOURCE_COMMIT`; a GitHub `/tree/<sha>` URL is not supported. The installer upserts
+only selected tasks, preserving existing scheduling/model/status fields unless explicitly overridden.
+For an existing email task, supply its approved `ALERT_EMAIL`; clearing delivery requires
+`DISABLE_NOTIFICATIONS=true`. It never adds recipients implicitly.
 
 ```bash
 ./plugins/finops/deploy/deploy.sh -n sre-finops-demo -g SRE-FinOps-Demo \
@@ -249,9 +252,9 @@ list (existing tasks with the same name are updated in place):
 
 **Manual (portal).**
 
-1. **Skills**: with auto-update on, the plugin follows `main`. To pull immediately, reinstall the
-   plugin from the same URL; the installation is refreshed in place and reports the new skill
-   count.
+1. **Skills**: leave auto-update off for controlled environments. Reinstall only an approved source
+   and confirm the installed `sourceCommit`, not just the skill count. Branch promotion and a
+   deployment are separate actions; neither is implied by a local commit.
 2. **Subagent**: open `finops-investigator`, paste the current instructions from
    [`finops-investigator.yaml`](../plugins/finops/agents/finops-investigator.yaml) (replace the
    agent resource ID placeholder), and add any new skill (for example `finops-kpi-scorecard`) to

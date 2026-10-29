@@ -30,13 +30,19 @@ introduces no SRE Agent runtime changes.
 
 ## Skills
 
+The wave status below records historical validation, not a guarantee for every deployment.
+Unreleased hardening must pass the [production gates](../../docs/PRODUCTION.md), including real
+export transport and reconciliation. Reports now distinguish KPI health/evidence from
+organizational maturity, historical billing tags from current governance, and supported savings
+from review candidates. See [How to read reports](../../docs/REPORTS.md).
+
 | Skill | What it does | Status |
 |-------|--------------|--------|
 | [`finops-cost-anomaly-detection`](skills/finops-cost-anomaly-detection/SKILL.md) | Detect cost spikes and correlate each to the deployment / change / PR that caused it | ✅ Wave 1 — validated live |
 | [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations (incl. idle Azure Container Apps environments, always-on apps, and warm session pools with no traffic, plus a cost-led sweep so no high-spend resource is missed), validated against real utilization and cost | ✅ Wave 1 — validated live |
 | [`finops-waste-finder`](skills/finops-waste-finder/SKILL.md) | Find orphaned and idle non-compute waste the rightsizing advisor does not cover — unattached public IPs, NAT gateways with no subnets, dead private endpoints, empty load balancers and application gateways, unconnected VPN/ExpressRoute gateways, snapshots older than 90 days, orphaned NICs, and Log Analytics commitment-tier review — priced from amortized UsageDetails. Read-only. | ✅ Wave 5 — offline-tested |
 | [`finops-commitment-advisor`](skills/finops-commitment-advisor/SKILL.md) | **Rate optimization** — reservation and savings-plan inventory with utilization, underutilized and expiring commitments, normalized monthly purchase recommendations (reservation **or** savings plan, never summed), on-demand vs committed coverage, and Azure Hybrid Benefit candidates for Windows VMs and SQL VMs. Read-only; recommends acting on usage optimization first. | ✅ Wave 5 — offline-tested |
-| [`finops-kpi-scorecard`](skills/finops-kpi-scorecard/SKILL.md) | **Run the practice** — month-end and next-month spend forecast with a confidence band and budget status, unit economics (cost per request/order/user and its trend), a FinOps KPI scorecard (allocation, tag and budget governance checks, forecast vs budget, commitment coverage/utilization, waste %, anomaly impact, unit-cost trend) with a crawl/walk/run indication, and per-owner action lists from the owner/team tags. Drives the monthly review task. Read-only. | ✅ Wave 6 — offline-tested |
+| [`finops-kpi-scorecard`](skills/finops-kpi-scorecard/SKILL.md) | **Run the practice** — supported-period forecasts, unit economics, KPI health and evidence coverage, and owner action lists. No organizational maturity certification from financial KPIs. | ✅ Wave 6 — offline-tested |
 | [`finops-cost-allocation`](skills/finops-cost-allocation/SKILL.md) | Join cost line items with tags → showback by any dimension; **tag-generic** (inventories the tag keys you actually use and reports coverage against a recommended `team/env/service/costCenter/app/owner` set rather than hard-coding it); explicit unallocated bucket + ranked untagged spend (no tags at all) + tag-hygiene flags | ✅ Wave 2 — offline-tested |
 | [`finops-budget-governance`](skills/finops-budget-governance/SKILL.md) | Read native Azure budgets (`GET Microsoft.Consumption/budgets`) → evaluate each against amount + its own notification thresholds; Azure `forecastSpend` when present, else a client-side run-rate month-end forecast; ranks over / forecast-over / at-risk budgets and flags process gates. Handles the no-budgets-defined case. | ✅ Wave 2 — offline-tested |
 | [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | Advisory recommendations plus deterministic create/update plans for subscription, resource-group, and management-group budgets; Monthly/Quarterly/Annually; explicit or UsageDetails-derived amount; filter preservation and real-contact validation. Produces a governed human-run script with confirmation and read-back verification. | ✅ planning — offline-tested |
@@ -206,6 +212,12 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 
 ## How to deploy with Azure SRE Agent
 
+Controlled installation defaults to **Cost Optimization only** and **auto-update off**.
+Set `TASK_IDS=all` explicitly for all reports. Production upgrades should set
+`EXPECTED_SOURCE_COMMIT` and preserve existing scheduling and delivery; see
+[production operations](../../docs/PRODUCTION.md). Optional native exports are additive and
+inactive until their network, transport and financial-integrity gates pass.
+
 > **Onboarding guide:** [docs/ONBOARDING.md](../../docs/ONBOARDING.md) covers the one-command
 > automated deployment ([`deploy/deploy.sh`](deploy/deploy.sh): agent, plugin, subagent, scheduled
 > report, RBAC) and the equivalent manual portal steps.
@@ -287,9 +299,9 @@ GRANT_COMMITMENT_READERS=1 MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<
 ```
 
 Configuration: required `AGENT_RESOURCE_ID`; optional `ENDPOINT` (consistency check only),
-`PLUGIN_SOURCE=marketplace` (or `direct` to install from the GitHub URL with auto-update, like the
+`PLUGIN_SOURCE=marketplace` (or `direct` to install from the GitHub URL with auto-update off, unlike the
 portal's *Install from URL*; `deploy/deploy.sh` uses `direct`), `PLUGIN_PATH=plugins/finops`,
-`TASK_IDS=all` (comma-separated task ids from `scheduled-tasks/task-manifest.json` to install a subset),
+`TASK_IDS=cost-optimization-report` (use comma-separated task ids or explicit `all`),
 `MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=dmauser/finops-sre-agent-pack`,
 `GITHUB_PAT`, `FINOPS_AGENT_NAME=finops-investigator`, `TASK_AGENT_NAME=finops-investigator`,
 `FINOPS_MCP_TOOLS`, `FINOPS_CONNECTORS`, `TASK_NAME`,

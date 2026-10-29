@@ -80,7 +80,7 @@ You don't have to run every report. Enable only the ones that answer questions y
 
 - **`deploy.sh`** installs only **Cost Optimization** by default. Add more with
   `--tasks cost-optimization-report,waste-finder-report`, or use `--tasks all` for every report.
-- **`install-api.sh`** installs all 12 by default. Limit it with `TASK_IDS`, for example
+- **`install-api.sh`** also defaults to Cost Optimization only. Select others with `TASK_IDS`, for example
   `TASK_IDS=cost-overview-report,budget-status-report AGENT_RESOURCE_ID=<id> ./plugins/finops/install-api.sh`.
 - **After install**, pause or delete a task under **Scheduled tasks** in the SRE Agent portal. A paused
   task uses no active flow.
@@ -127,3 +127,41 @@ AAU consumption depends on the tokens each run uses, so your cost will vary with
 
 The sample is small, and a larger or busier environment will use more AAUs per run. Treat these numbers
 as a starting point and check your own consumption after the first runs.
+
+## Incremental cost of production hardening
+
+The optional native-export design reuses the existing agent and model. It adds one Central US
+StorageV2 account using **Hot Standard_ZRS**, not another agent or always-on compute service.
+Cost Management itself has no extra Azure-service fee; its storage destination is billed.
+
+Public retail rates checked 2026-10-29, USD consumption, Central US, General Block Blob v2 Hot ZRS:
+
+| Meter | Unit price |
+|---|---:|
+| Stored data, first tier | $0.023 / GB-month |
+| Read operations | $0.004 / 10,000 |
+| Write/list/create-container operations | $0.0625 / 10,000 |
+
+Illustration: **10 GB total retained**, 100,000 reads and 10,000 writes per month costs
+`10 × 0.023 + 10 × 0.004 + 1 × 0.0625 = $0.3325/month`.
+**$1–$5/month is a small-lab planning allowance, not a cap or forecast.** It excludes transfer,
+logs, taxes, extra services and larger retained datasets. Daily cumulative exports, 400-day closed
+history, soft-deleted blobs and revisions all consume storage; do not confuse daily file size with
+total retained capacity.
+
+If active AAUs stayed unchanged, the old all-report lab scenario would move from about
+**$787/month** ($292 always-on + $495 active) to about **$788–$792/month** with that storage allowance.
+This excludes the workloads being analyzed. Reconciliation, richer evidence and retries can
+increase active AAUs; exports may reduce paging but **no AAU saving is promised**.
+
+One run of each of the 12 reports at the earlier median rates totals **$53.70**. Cost Overview and
+Budget Status canaries add **$7.20**, giving **$60.90** for that validation sequence before transport
+smoke tests, retries and reruns. This is separate from ongoing schedules.
+
+Security-controlled networking can prevent direct export reads. A private endpoint, connector,
+private DNS or additional compute is **not included or automatically deployed**; price and approve
+that design separately. See [production gates](PRODUCTION.md).
+
+Sources: [Azure Retail Prices API](https://prices.azure.com/api/retail/prices),
+[Blob Storage pricing](https://azure.microsoft.com/pricing/details/storage/blobs/),
+[Cost Management pricing](https://azure.microsoft.com/pricing/details/cost-management/).

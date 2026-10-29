@@ -23,7 +23,7 @@ param deployerObjectId string
 @allowed(['User', 'ServicePrincipal', 'Group'])
 param deployerPrincipalType string = 'User'
 
-@description('Grant the agent identity Reader, Monitoring Contributor, Log Analytics Reader and Cost Management Reader on this subscription.')
+@description('Grant the agent identity Reader, Monitoring Reader, Log Analytics Reader and Cost Management Reader on this subscription.')
 param assignSubscriptionRoles bool = true
 
 param tags object = {
@@ -32,7 +32,7 @@ param tags object = {
 
 var roles = [
   'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader
-  '749f88d5-cbae-40b8-bcfc-e573ddc772fa' // Monitoring Contributor
+  '43d0d8ad-25c7-4714-9337-8ba259a9fe05' // Monitoring Reader
   '73c42c96-874c-492b-b04d-ab87d138a893' // Log Analytics Reader
   '72fafb9e-0641-4937-9268-a91bfd8191a3' // Cost Management Reader
 ]

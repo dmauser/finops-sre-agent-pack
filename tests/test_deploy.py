@@ -70,7 +70,9 @@ def test_installer_supports_direct_plugin_install():
     assert "/api/v2/plugins/install-direct" in script
     assert "autoUpdate" in script
     assert "task-count.txt" in script
-    assert 'TASK_IDS="${TASK_IDS:-all}"' in script
+    assert 'TASK_IDS="${TASK_IDS:-cost-optimization-report}"' in script
+    assert 'PLUGIN_AUTO_UPDATE="${PLUGIN_AUTO_UPDATE:-false}"' in script
+    assert 'EXPECTED_SOURCE_COMMIT' in script
 
 
 def test_deploy_script_defaults_and_handoff():
@@ -101,8 +103,10 @@ def test_bicep_grants_read_only_finops_roles():
         "acdd72a7-3385-48ef-bd42-f606fba81ae7",  # Reader
         "72fafb9e-0641-4937-9268-a91bfd8191a3",  # Cost Management Reader
         "73c42c96-874c-492b-b04d-ab87d138a893",  # Log Analytics Reader
+        "43d0d8ad-25c7-4714-9337-8ba259a9fe05",  # Monitoring Reader
     ):
         assert role in main
+    assert "749f88d5-cbae-40b8-bcfc-e573ddc772fa" not in main
     assert "e79298df-d852-4c6d-84f9-5d13249d1e55" in agent  # SRE Agent Administrator
     assert "Microsoft.App/agents@" in agent
     for forbidden in ("8e3af657-a8ff-443c-a75c-2fe8c4bcb635", "b24988ac-6180-42a0-ab88-20f7382dd24c"):
@@ -118,3 +122,25 @@ def test_onboarding_doc_covers_both_paths():
     assert "Install from URL" in doc
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "docs/ONBOARDING.md" in readme
+
+
+def test_upgrade_preserves_task_settings_and_gates_notification_changes(tmp_path, monkeypatch):
+    module = _renderer(monkeypatch)
+    monkeypatch.setenv("TASK_IDS", "cost-optimization-report")
+    monkeypatch.delenv("COST_OPT_CRON", raising=False)
+    monkeypatch.delenv("ALERT_EMAIL", raising=False)
+    monkeypatch.delenv("DISABLE_NOTIFICATIONS", raising=False)
+    task = module.render_api_payloads()[0]
+    current = {**task, "id": "existing-task", "cronExpression": "0 1 * * 2",
+               "status": "Inactive", "modelTier": "Premium", "endTime": "2027-01-01T00:00:00Z"}
+    existing = tmp_path / "existing.json"
+    existing.write_text(json.dumps([current]))
+    plan = tmp_path / "plan"
+    module.write_install_plan(existing, plan)
+    actual = json.loads((plan / "task-1.json").read_text())
+    for key in ("cronExpression", "status", "modelTier", "endTime"):
+        assert actual[key] == current[key]
+    current["agentPrompt"] += "\nUse SendEmailToUser for the approved recipient."
+    existing.write_text(json.dumps([current]))
+    with pytest.raises(ValueError, match="ALERT_EMAIL"):
+        module.write_install_plan(existing, plan)

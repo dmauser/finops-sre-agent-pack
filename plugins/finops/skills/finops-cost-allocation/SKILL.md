@@ -22,6 +22,17 @@ use `finops-rightsizing-advisor`.
 
 ## Scope
 
+Use the currency-aware `CostMap` rebuilt from snapshot rows for historical showback: every row's
+billing-time tags determine ownership. Never replace those tags with today's Resource Graph
+inventory. Pass current tags separately to populate `current_tag_governance`; this is a distinct
+current-inventory view, not a restatement of history. Resource counts coalesce case-insensitive
+ARM IDs while retaining all legitimate charges. Included nonresource cost remains unallocated.
+
+Current scope inheritance is ignored for billing rows unless `inherited_tags_are_historical=True`
+explicitly attests historical provenance. Legacy plain-dict inputs use current inventory tags and
+are labeled `allocation_basis="current_inventory"`. Historical comparisons require complete,
+same-basis periods; never substitute current-month rows for an unavailable closed month.
+
 Attributes any resource that lands a cost line item in Consumption UsageDetails — the allocation is
 **service-agnostic** (it works off cost + tags, not a hard-coded resource list). It is also
 **tag-generic**: it groups by whatever tag keys exist in your data (a **tag inventory**) and treats

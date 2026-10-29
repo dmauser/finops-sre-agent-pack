@@ -22,6 +22,11 @@ For cost spikes use `finops-cost-anomaly-detection`; for concrete savings recomm
 
 ## Scope
 
+Pass `None` when a source is unavailable or failed, and `[]` only after a successful complete
+query found no events. Zero observed score with incomplete sources is `unknown` for both resources
+and services, never proof of health. Suppress high-spend/no-pain optimization hints in that case.
+Record source availability independently of event count and keep the billing currency explicit.
+
 v1 is **per-resource first**, with a **per-service rollup**. It joins monthly UsageDetails cost to:
 
 1. Azure Monitor / Alerts Management alerts — the primary reliability pain signal.

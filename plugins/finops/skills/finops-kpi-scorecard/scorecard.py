@@ -7,7 +7,7 @@ after the other FinOps skills have produced their results. It covers the FinOps 
   * daily_costs / forecast_spend  month-end and next-month forecast with a confidence band
   * unit_economics                cost per business unit (request, order, user, GB...) and trend
   * kpi_scorecard                 pass/warn/fail FinOps KPIs, including tag and budget governance
-                                  checks, with an overall Crawl/Walk/Run maturity indication
+                                  checks, with KPI health and independent evidence coverage
   * route_to_owners               group findings (waste, rightsizing, anomalies...) by the
                                   accountable owner tag so each team gets its own action list
 
@@ -73,16 +73,19 @@ def _pct(part, whole):
 # Forecast
 # --------------------------------------------------------------------------------------------
 
-def daily_costs(rows, *, include_credits: bool = True, exclude_purchases: bool = False):
+def daily_costs(rows, *, include_credits: bool = True, exclude_purchases: bool = False, currency=None):
     """Sum prepared UsageDetails rows into {date: cost}. Rows without a date or cost are skipped.
 
     With include_credits=False negative rows (refunds, credits) are ignored, which is what a usage
     forecast wants; the default keeps them so totals reconcile with the invoice.
+    currency declares the denomination for rows without one. Known mixed currencies (including
+    known + unknown rows) are rejected instead of silently converted or summed.
     With exclude_purchases=True rows whose chargeType is "Purchase" (reservation, savings plan and
     Marketplace purchases) are dropped, so one-time purchases do not skew a usage trend; forecast
     them separately, as Microsoft's forecasting guidance recommends.
     """
     totals = defaultdict(float)
+    currencies = set()
     for row in rows or ():
         if not isinstance(row, dict) or not row.get("date"):
             continue
@@ -91,7 +94,12 @@ def daily_costs(rows, *, include_credits: bool = True, exclude_purchases: bool =
         cost = _num(row.get("cost"))
         if cost is None or (cost < 0 and not include_credits):
             continue
+        code = str(row.get("currency") or row.get("billingCurrency") or
+                   row.get("billingCurrencyCode") or currency or "UNKNOWN").strip().upper()
+        currencies.add(code)
         totals[_parse_date(row["date"])] += cost
+    if len(currencies) > 1:
+        raise ValueError("daily_costs requires one currency; group rows by currency before forecasting")
     return dict(sorted(totals.items()))
 
 
@@ -134,6 +142,9 @@ def forecast_spend(
     assume_last_partial: bool = True,
     budget_amount=None,
     z: float = 1.2816,
+    missing_days_are_zero: bool = False,
+    context=None,
+    budget_context=None,
 ):
     """Forecast month-end and next-month spend from daily cost.
 
@@ -143,6 +154,15 @@ def forecast_spend(
     assume_last_partial drop the newest day (Cost Management data lags 1-2 days)
     budget_amount       optional monthly budget; adds forecast_vs_budget_pct and budget_status
     z                   band width; 1.2816 = 80% two-sided interval
+    missing_days_are_zero  explicit attestation that omitted dates in a complete export are
+                        genuine zero spend, not missing/late billing data (default False)
+    context             optional {scope|scopes, currency, filter, period_start,
+                        period_end_exclusive}; the period must match the forecast month
+    budget_context      optional context for budget_amount; mismatches suppress comparisons
+
+    Missing observations never enter the regression as zeros without the explicit attestation.
+    Incomplete month-to-date data suppresses month-end totals, retaining the observed subtotal
+    and the trend/next-month estimate with low confidence and missing-date diagnostics.
 
     Method: linear trend (OLS) over the trailing window, with day-of-week seasonality when at least
     28 days exist; a flat trailing average below 7 days. The band is z * residual standard
@@ -158,15 +178,29 @@ def forecast_spend(
         last = days_sorted[-2] if assume_last_partial and len(days_sorted) >= 2 else days_sorted[-1]
     else:
         last = _parse_date(as_of)
+    if history_days < 1:
+        raise ValueError("history_days must be positive")
     first = max(last - timedelta(days=history_days - 1), days_sorted[0])
-    # Fill gaps with zero inside the observed range: a missing day in UsageDetails means no spend.
+    if first > last:
+        return {"available": False, "reason": "no daily cost history on or before as_of", "warnings": []}
     history = {}
+    missing_history = []
     day = first
     while day <= last:
-        history[day] = series.get(day, 0.0)
+        if day in series:
+            history[day] = series[day]
+        else:
+            missing_history.append(day.isoformat())
+            if missing_days_are_zero:
+                history[day] = 0.0
         day += timedelta(days=1)
     n = len(history)
+    if not n:
+        return {"available": False, "reason": "no observations in the requested history window",
+                "warnings": []}
     warnings = []
+    if missing_history and not missing_days_are_zero:
+        warnings.append(f"{len(missing_history)} missing history days; fitted only observed days")
     if n < 14:
         warnings.append(f"only {n} days of history; forecast confidence is low")
 
@@ -196,6 +230,12 @@ def forecast_spend(
 
     month_start = last.replace(day=1)
     month_end = last.replace(day=calendar.monthrange(last.year, last.month)[1])
+    missing_mtd = [(month_start + timedelta(days=i)).isoformat()
+                   for i in range((last - month_start).days + 1)
+                   if month_start + timedelta(days=i) not in series]
+    data_complete = missing_days_are_zero or not missing_mtd
+    if not data_complete:
+        warnings.append(f"{len(missing_mtd)} missing month-to-date days; month-end total unavailable")
     mtd = sum(v for d, v in series.items() if month_start <= d <= last)
     remaining = [last + timedelta(days=i) for i in range(1, (month_end - last).days + 1)]
     month_forecast = mtd + sum(predict(d) for d in remaining)
@@ -216,21 +256,35 @@ def forecast_spend(
         "history_days": n,
         "daily_trend_slope": round(slope, 4),
         "month": last.strftime("%Y-%m"),
-        "month_to_date": round(mtd, 2),
+        "month_to_date": round(mtd, 2) if data_complete else None,
+        "observed_month_to_date": round(mtd, 2),
+        "data_complete": data_complete,
+        "history_complete": missing_days_are_zero or not missing_history,
+        "missing_history_days": missing_history,
+        "missing_mtd_days": missing_mtd,
+        "missing_day_policy": "explicit_zero" if missing_days_are_zero else "unknown",
         "days_remaining": len(remaining),
-        "month_end_forecast": round(month_forecast, 2),
-        "month_end_low": round(max(mtd, month_forecast - band), 2),
-        "month_end_high": round(month_forecast + band, 2),
+        "month_end_forecast": round(month_forecast, 2) if data_complete else None,
+        "month_end_low": round(max(mtd, month_forecast - band), 2) if data_complete else None,
+        "month_end_high": round(month_forecast + band, 2) if data_complete else None,
         "next_month": next_start.strftime("%Y-%m"),
         "next_month_forecast": round(next_forecast, 2),
         "next_month_low": round(max(0.0, next_forecast - next_band), 2),
         "next_month_high": round(next_forecast + next_band, 2),
         "run_rate_30d": round(run_rate, 2),
-        "confidence": "low" if n < 14 else ("medium" if n < 45 else "high"),
+        "confidence": "low" if n < 14 or not data_complete or
+                      (missing_history and not missing_days_are_zero) else
+                      ("medium" if n < 45 else "high"),
         "warnings": warnings,
+        "context": dict(context or {}, period_start=month_start.isoformat(),
+                        period_end_exclusive=next_start.isoformat()),
     }
+    if context and any(context.get(k) and context[k] != out["context"][k]
+                       for k in ("period_start", "period_end_exclusive")):
+        raise ValueError("forecast context period does not match the forecast month")
     budget = _num(budget_amount)
-    if budget:
+    budget_matches = budget_context is None or _same_context(out["context"], budget_context)
+    if budget and data_complete and budget_matches:
         out["budget_amount"] = round(budget, 2)
         out["forecast_vs_budget_pct"] = round(100.0 * month_forecast / budget, 1)
         if month_forecast - band > budget:
@@ -239,6 +293,12 @@ def forecast_spend(
             out["budget_status"] = "at_risk"
         else:
             out["budget_status"] = "on_track"
+        out["budget_comparison"] = {
+            "basis": "matched_context" if budget_context else "caller_supplied_monthly_budget",
+            "budget_amount": budget,
+        }
+    elif budget:
+        out["budget_comparison"] = {"reason": "incomplete month or mismatched budget context"}
     return out
 
 
@@ -270,7 +330,7 @@ def parse_forecast_record(text, month):
     return found
 
 
-def prior_forecast_inputs(daily, month, *, record_text=None):
+def prior_forecast_inputs(daily, month, *, record_text=None, missing_days_are_zero=False):
     """Return prior_forecast and actual_spend for scoring forecast accuracy of a closed month.
 
     daily        {date|str: cost} covering the closed month and the month before it
@@ -292,7 +352,15 @@ def prior_forecast_inputs(daily, month, *, record_text=None):
     if not in_month:
         warnings.append(f"no cost data for {month}; forecast accuracy not scored")
         return out
-    out["actual_spend"] = round(sum(in_month.values()), 2)
+    out["observed_actual_spend"] = round(sum(in_month.values()), 2)
+    missing = [start + timedelta(days=i) for i in range((end - start).days + 1)
+               if start + timedelta(days=i) not in in_month]
+    out["missing_actual_days"] = [d.isoformat() for d in missing]
+    out["actual_complete"] = not missing or missing_days_are_zero
+    if out["actual_complete"]:
+        out["actual_spend"] = out["observed_actual_spend"]
+    else:
+        warnings.append(f"{len(missing)} missing days in {month}; actual spend not scored")
     if max(in_month) < end:
         warnings.append(f"cost data for {month} ends {max(in_month).isoformat()}; actual may be low")
 
@@ -305,8 +373,10 @@ def prior_forecast_inputs(daily, month, *, record_text=None):
     if len(before) < 7:
         warnings.append(f"no forecast record and under 7 days before {month}; accuracy not scored")
         return out
-    rebuilt = forecast_spend(before, as_of=start - timedelta(days=1), assume_last_partial=False)
-    if rebuilt.get("available") and rebuilt.get("next_month") == month:
+    rebuilt = forecast_spend(before, as_of=start - timedelta(days=1), assume_last_partial=False,
+                             missing_days_are_zero=missing_days_are_zero)
+    if (rebuilt.get("available") and rebuilt.get("history_complete") and
+            rebuilt.get("next_month") == month):
         out.update(prior_forecast=rebuilt["next_month_forecast"], source="reconstructed")
         warnings.append(
             f"no forecast record for {month}; reconstructed from {len(before)} days before it "
@@ -526,6 +596,188 @@ def _scope_covered(scope, budget_scopes):
     return False
 
 
+def _norm(value):
+    return str(value or "").strip().casefold().rstrip("/")
+
+
+def _context_scopes(context):
+    scopes = context.get("scopes") or ([context["scope"]] if context.get("scope") else [])
+    return sorted({_norm(s) for s in scopes if _norm(s)})
+
+
+def _same_context(left, right):
+    """Context equality is strict; absent scope/currency/period is not evidence of a match."""
+    required = ("currency", "period_start", "period_end_exclusive")
+    return (bool(_context_scopes(left)) and _context_scopes(left) == _context_scopes(right)
+            and all(left.get(k) and right.get(k) for k in required)
+            and _norm(left["currency"]) == _norm(right["currency"])
+            and all(left[k] == right[k] for k in required[1:])
+            and (left.get("filter") or {}) == (right.get("filter") or {}))
+
+
+def _matched_budget(forecast, budgets):
+    context = forecast.get("context") or {}
+    scopes = _context_scopes(context)
+    if not scopes or any(not context.get(k) for k in
+                         ("currency", "period_start", "period_end_exclusive")):
+        return None, {"reason": "forecast scope, currency or period context unavailable"}
+    if any(_scope_covered(a, [b]) or _scope_covered(b, [a])
+           for i, a in enumerate(scopes) for b in scopes[i + 1:]):
+        return None, {"reason": "forecast scopes overlap"}
+    selected = []
+    for scope in scopes:
+        matches = []
+        for b in (budgets or {}).get("budgets") or []:
+            window = b.get("window") or {}
+            candidate = {"scope": b.get("scope"), "currency": b.get("currency"),
+                         "period_start": window.get("start"),
+                         "period_end_exclusive": window.get("end_exclusive"),
+                         "filter": b.get("filter") or {}}
+            target = dict(context, scopes=[scope])
+            if (_same_context(candidate, target) and _norm(b.get("category") or "Cost") == "cost"
+                    and _norm(b.get("time_grain")) == "monthly"
+                    and _num(b.get("amount")) is not None and _num(b["amount"]) > 0):
+                matches.append(b)
+        if len(matches) != 1:
+            return None, {"reason": "missing or ambiguous same-scope/currency/period/filter budget",
+                          "scope": scope, "matching_budget_count": len(matches)}
+        selected.extend(matches)
+    amount = sum(_num(b["amount"]) for b in selected)
+    return amount, {"budget_amount": amount, "currency": context["currency"],
+                    "matched_scopes": scopes,
+                    "matched_budget_ids": [b.get("id") or b.get("name") for b in selected],
+                    "basis": "one exact monthly envelope per nonoverlapping forecast scope"}
+
+
+def _optimization_total(waste, rightsizing):
+    """Deduplicate evidenced actions; different actions on the same resource remain distinct.
+
+    Destructive/idle-stop and resize options on one resource are alternatives, not additive.
+    Legacy headline-only inputs cannot establish overlap with a second optimization source.
+    """
+    rightsizing = list(rightsizing or [])
+    if waste is not None and "findings" not in waste:
+        headline = _num((waste.get("headline") or {}).get("potential_monthly_savings"))
+        if headline is not None and _norm(waste.get("currency")) != "usd":
+            return None, {"reason": "legacy waste headline currency unavailable or not USD"}
+        if rightsizing and headline != 0:
+            return None, {"reason": "headline-only waste cannot be de-duplicated against rightsizing"}
+        if not rightsizing:
+            return headline, {"basis": "legacy single-source headline", "duplicates_removed": 0}
+    findings = list((waste or {}).get("findings") or []) + rightsizing
+    keyed, anonymous = {}, []
+    removed = 0
+    unsupported = 0
+    for item in findings:
+        if ("validated" in item and item["validated"] is not True) or (
+                item.get("validationStatus") in {"candidate", "contradicted"}):
+            unsupported += 1
+            continue
+        value = _finding_amount(item)
+        if value is None or value < 0:
+            continue
+        if item.get("kind") in {"review", "unknown"}:
+            continue
+        currency = _norm(item.get("currency") or (
+            "USD" if _num(item.get("estMonthlySavingsUsd")) is not None else None))
+        if currency != "usd":
+            return None, {"reason": "optimization amounts not all USD; no currency conversion"}
+        rid = _norm(item.get("resourceId"))
+        action = _norm(item.get("action") or item.get("recommendedAction") or item.get("recommendation"))
+        kind = _norm(item.get("kind"))
+        recommendation = item.get("recommendationId") or item.get("recommendation_id")
+        period = (item.get("period_start"), item.get("period_end_exclusive"))
+        key = (rid, recommendation or action or kind, period)
+        if not rid or not key[1]:
+            anonymous.append((item, value))
+            continue
+        if key in keyed:
+            removed += 1
+            keyed[key] = (item, max(value, keyed[key][1]))
+        else:
+            keyed[key] = (item, value)
+    if anonymous and waste is not None and rightsizing:
+        return None, {"reason": "resource/action identity missing; optimization overlap unknown",
+                      "duplicates_removed": removed}
+    by_resource = defaultdict(list)
+    for item, amount in keyed.values():
+        by_resource[(_norm(item.get("resourceId")), item.get("period_start"),
+                     item.get("period_end_exclusive"))].append((item, amount))
+    total = sum(v for _, v in anonymous)
+    alternatives = 0
+    for group in by_resource.values():
+        destructive = any(_norm(i.get("kind")) in {"idle", "orphan", "orphaned", "stale"}
+                          or any(word in _norm(i.get("action") or i.get("recommendedAction"))
+                                 for word in ("delete", "deallocate", "shut down", "scale to zero"))
+                          for i, _ in group)
+        if destructive and len(group) > 1:
+            total += max(v for _, v in group)
+            alternatives += len(group) - 1
+        else:
+            resize = [v for i, v in group if "resize" in _norm(
+                i.get("action") or i.get("recommendedAction")) or _norm(i.get("kind")) == "downsize"]
+            total += sum(v for _, v in group) - sum(resize) + (max(resize) if resize else 0)
+            alternatives += max(0, len(resize) - 1)
+    return total, {"duplicates_removed": removed, "alternative_actions_not_added": alternatives,
+                   "unsupported_findings_excluded": unsupported,
+                   "basis": "unique resource/action; mutually exclusive stop/resize alternatives use max"}
+
+
+def _anomaly_total(anomalies):
+    """Deduplicate explicit events or identical dimension observations, never equal amounts alone.
+
+    Without event/resource provenance across dimensions, the overlap is unknown. Suppress the
+    KPI rather than count each projection as another incident; retain observation bounds.
+    """
+    groups, anonymous = {}, []
+    removed = 0
+    for a in anomalies or []:
+        if not _is_increase(a):
+            continue
+        event = a.get("event_id") or a.get("eventId")
+        day = a.get("date") or a.get("period_start")
+        end = a.get("period_end_exclusive")
+        rid = a.get("resourceId")
+        dimension = _norm(a.get("dimension"))
+        if dimension == "resourceid":
+            rid = rid or a.get("value")
+        fingerprint = (_num(a.get("impact_usd")), _num(a.get("current_usd")),
+                       _num(a.get("baseline_mean_usd")), _norm(a.get("kind")),
+                       _norm(a.get("currency") or "USD"))
+        if event:
+            key = ("event", str(event), day, end, _norm(a.get("currency") or "USD"))
+        elif rid and day:
+            key = ("resource", _norm(rid), day, end, dimension, _norm(a.get("value")), fingerprint)
+        elif dimension and a.get("value") and day:
+            key = ("dimension", dimension, _norm(a["value"]), day, end, fingerprint)
+        else:
+            anonymous.append(a)
+            continue
+        if key in groups:
+            removed += 1
+            if (_num(a.get("impact_usd")) or 0) > (_num(groups[key].get("impact_usd")) or 0):
+                groups[key] = a
+        else:
+            groups[key] = a
+    unique = list(groups.values()) + anonymous
+    unresolved = [a for a in unique if not (a.get("event_id") or a.get("eventId"))]
+    dimensions = {_norm(a.get("dimension")) for a in unresolved if a.get("dimension")}
+    by_dimension = defaultdict(float)
+    for a in unresolved:
+        by_dimension[_norm(a.get("dimension"))] += max(0, _num(a.get("impact_usd")) or 0)
+    detail = {"duplicates_removed": removed, "raw_detection_count": len(anomalies or []),
+              "unique_observation_count": len(unique)}
+    if len(dimensions) > 1:
+        detail.update(reason="cross-dimensional observations lack shared event provenance",
+                      observed_impact_lower_bound_usd=max(by_dimension.values()),
+                      observed_impact_upper_bound_usd=sum(by_dimension.values()))
+        return None, None, detail
+    if any(_num(a.get("impact_usd")) is None or
+           _norm(a.get("currency") or "USD") != "usd" for a in unique):
+        return None, None, dict(detail, reason="anomaly amount or USD currency unavailable")
+    return sum(max(0, _num(a["impact_usd"])) for a in unique), len(unique), detail
+
+
 def kpi_scorecard(
     *,
     allocation=None,
@@ -569,8 +821,10 @@ def kpi_scorecard(
                    anomaly KPI. Without it the forecast's 30-day run rate is used, then total/30
 
     Each KPI: {id, name, capability, value, unit, target, higher_is_better, status, action,
-    detail}. status is pass | warn | fail | unknown (source not provided). The maturity indication
-    is "run" when >= 80% of known KPIs pass, "walk" when >= 50%, otherwise "crawl".
+    detail}. status is pass | warn | fail | unknown. score_pct is the legacy alias for
+    kpi_health_pct (pass rate among observed KPIs); evidence_coverage_pct is known / all KPIs.
+    Legacy maturity bands are suppressed below 80% evidence coverage. They are KPI health
+    bands, not an organizational maturity assessment; organizational_maturity is always unknown.
     `benchmarks` lists unscored context values (anomaly count and impact, Advisor cost score).
     `next_iteration_focus` lists up to 3 capabilities with failing, then warning, KPIs: the
     candidates for the next FinOps iteration (Microsoft recommends a small set per iteration).
@@ -582,7 +836,9 @@ def kpi_scorecard(
 
     alloc = allocation or {}
     total = _num(alloc.get("total_usd"))
-    if total is None and forecast and forecast.get("available"):
+    forecast_currency = _norm(((forecast or {}).get("context") or {}).get("currency")
+                              or (forecast or {}).get("currency"))
+    if total is None and forecast and forecast.get("available") and forecast_currency == "usd":
         total = _num(forecast.get("run_rate_30d"))
     kpis = []
 
@@ -605,12 +861,15 @@ def kpi_scorecard(
     # Allocation and tag governance
     allocated_pct = untagged_pct = hygiene_pct = None
     if allocation is not None:
-        if alloc.get("unallocated_pct") is not None:
-            allocated_pct = round(100.0 - float(alloc["unallocated_pct"]), 1)
+        if _num(alloc.get("unallocated_pct")) is not None:
+            allocated_pct = round(100.0 - _num(alloc["unallocated_pct"]), 1)
         if total:
-            untagged_pct = _pct(_num(alloc.get("untagged_usd")) or 0.0, total)
-            hygiene = sum(_num(h.get("cost_affected")) or 0.0 for h in alloc.get("tag_hygiene") or [])
-            hygiene_pct = _pct(hygiene, total)
+            untagged = _num(alloc.get("untagged_usd"))
+            untagged_pct = _pct(untagged, total) if untagged is not None else None
+            hygiene_rows = alloc.get("tag_hygiene")
+            if hygiene_rows is not None and all(_num(h.get("cost_affected")) is not None
+                                                for h in hygiene_rows):
+                hygiene_pct = _pct(sum(_num(h["cost_affected"]) for h in hygiene_rows), total)
     add("allocated_pct", f"Spend allocated by '{alloc.get('dimension', 'owner')}' tag", "Allocation",
         allocated_pct, "%",
         "Tag the top unallocated resources, or enable tag inheritance from resource groups and "
@@ -625,34 +884,53 @@ def kpi_scorecard(
 
     # Budget governance
     uncovered = []
+    coverage_detail = None
     coverage = over = None
     if budgets is not None:
         budget_list = budgets.get("budgets") or []
         if managed_scopes:
-            budget_scopes = [b.get("scope") for b in budget_list]
+            budget_scopes = [b.get("scope") for b in budget_list
+                             if b.get("window") and not b.get("filter") and b.get("currency")
+                             and _num(b.get("amount")) is not None
+                             and _norm(b.get("category") or "Cost") == "cost"]
             uncovered = [s for s in managed_scopes if not _scope_covered(s, budget_scopes)]
             coverage = round(100.0 * (len(managed_scopes) - len(uncovered)) / len(managed_scopes), 1)
+            ambiguous = [b for b in budget_list
+                         if not b.get("scope") or not b.get("window") or not b.get("currency")
+                         or _num(b.get("amount")) is None]
+            if any(not b.get("scope") or _scope_covered(scope, [b["scope"]])
+                   for scope in uncovered for b in ambiguous):
+                coverage = None
+                coverage_detail = {"reason": "budget scope/currency/window/amount metadata incomplete"}
         else:
-            coverage = 100.0 if budget_list else 0.0
+            coverage = None
+            coverage_detail = {"reason": "managed scopes unavailable; no coverage denominator"}
         summary = budgets.get("summary") or {}
-        over = (summary.get("over_budget") or 0) + (summary.get("forecast_over") or 0)
+        if not any(b.get("status") in (None, "unknown") for b in budget_list):
+            over = sum(b.get("status") in ("over_budget", "forecast_over") for b in budget_list)
     add("budget_coverage_pct", "Managed scopes with a budget", "Budgeting (governance)", coverage, "%",
         "Create a budget with actual and forecast alerts for every uncovered scope "
         "(finops-budget-editor can draft it).",
-        {"uncovered_scopes": uncovered} if uncovered else None)
+        dict(coverage_detail or {}, uncovered_scopes=uncovered) if uncovered or coverage_detail else None)
     add("budgets_over", "Budgets over or forecast over", "Budgeting", over, "count",
         "Review the overrunning scopes with their owners; reduce spend or re-baseline the budget.")
 
     # Forecast vs budget
     fvb = None
+    fvb_detail = {"reason": "forecast unavailable"}
     if forecast and forecast.get("available"):
-        fvb = _num(forecast.get("forecast_vs_budget_pct"))
-        if fvb is None and budgets is not None:
-            amount = _num((budgets.get("summary") or {}).get("total_amount"))
-            if amount:
-                fvb = round(100.0 * forecast["month_end_forecast"] / amount, 1)
+        amount, fvb_detail = _matched_budget(forecast, budgets)
+        projected = _num(forecast.get("month_end_forecast"))
+        if amount and projected is not None and forecast.get("data_complete") is not False:
+            fvb = round(100.0 * projected / amount, 1)
+        elif projected is None or forecast.get("data_complete") is False:
+            fvb_detail = {"reason": "complete month-end forecast unavailable"}
+        elif budgets is None and (forecast.get("budget_comparison") or {}).get("basis"):
+            fvb = _num(forecast.get("forecast_vs_budget_pct"))
+            fvb_detail = forecast["budget_comparison"]
     add("forecast_vs_budget_pct", "Month-end forecast as % of budget", "Forecasting", fvb, "%",
-        "Forecast exceeds budget: act on the top optimization priorities now or re-plan the budget.")
+        "Forecast exceeds budget: act on the top optimization priorities now or re-plan the budget.",
+        fvb_detail)
 
     accuracy = None
     prior, actual = _num(prior_forecast), _num(actual_spend)
@@ -673,7 +951,8 @@ def kpi_scorecard(
     head = (commitments or {}).get("headline") or {}
     add("commitment_coverage_pct", "Eligible compute covered by commitments", "Rate optimization",
         _num(head.get("coverage_pct")), "%",
-        "Review finops-commitment-advisor purchase recommendations after rightsizing.")
+        "Review finops-commitment-advisor purchase recommendations after rightsizing.",
+        (commitments or {}).get("coverage"))
     utils = []
     for item in (commitments or {}).get("inventory") or []:
         value = _num(item.get("utilization_30d"))
@@ -686,21 +965,22 @@ def kpi_scorecard(
         "Exchange or re-scope under-utilized reservations, or move eligible workloads onto them.")
 
     # Usage optimization (waste + rightsizing)
-    waste_usd = None
+    waste_usd, waste_detail = None, None
     if waste is not None or rightsizing is not None:
-        waste_usd = _num(((waste or {}).get("headline") or {}).get("potential_monthly_savings")) or 0.0
-        waste_usd += sum(_num(r.get("estMonthlySavingsUsd")) or 0.0 for r in rightsizing or [])
+        waste_usd, waste_detail = _optimization_total(waste, rightsizing)
+        if waste_usd is not None:
+            waste_detail["monthly_usd"] = round(waste_usd, 2)
     add("waste_pct", "Addressable waste as % of spend", "Workload optimization",
         _pct(waste_usd, total) if (waste_usd is not None and total) else None, "%",
         "Work the waste and rightsizing lists by owner (route_to_owners).",
-        {"monthly_usd": round(waste_usd, 2)} if waste_usd is not None else None)
+        waste_detail)
 
     # Anomaly management: only cost increases count against the KPI.
-    impact = None
+    impact, anomaly_count, anomaly_detail = None, None, None
     if anomalies is not None:
-        impact = sum(_num(a.get("impact_usd")) or 0.0 for a in anomalies
-                     if _is_increase(a))
-    run_rate = _num((forecast or {}).get("run_rate_30d")) if (forecast or {}).get("available") else None
+        impact, anomaly_count, anomaly_detail = _anomaly_total(anomalies)
+    run_rate = (_num((forecast or {}).get("run_rate_30d"))
+                if (forecast or {}).get("available") and forecast_currency in ("", "usd") else None)
     if total and _num(period_days):
         daily_spend = total / _num(period_days)
     elif run_rate:
@@ -709,7 +989,8 @@ def kpi_scorecard(
         daily_spend = (total / 30.0) if total else None
     add("anomaly_impact_pct", "Unexplained spike impact as % of daily spend", "Anomaly management",
         _pct(impact, daily_spend) if (impact is not None and daily_spend) else None, "%",
-        "Investigate open spikes (finops-cost-anomaly-detection) and record the cause.")
+        "Investigate open spikes (finops-cost-anomaly-detection) and record the cause.",
+        anomaly_detail)
 
     # Unit economics: the worst (highest) change across the supplied unit metrics.
     units = unit_costs if isinstance(unit_costs, list) else ([unit_costs] if unit_costs else [])
@@ -721,7 +1002,8 @@ def kpi_scorecard(
     known = [k for k in kpis if k["status"] != "unknown"]
     passed = sum(1 for k in known if k["status"] == "pass")
     score = round(100.0 * passed / len(known), 1) if known else None
-    if score is None:
+    evidence = round(100.0 * len(known) / len(kpis), 1)
+    if score is None or evidence < 80:
         maturity = "unknown"
     elif score >= 80:
         maturity = "run"
@@ -742,11 +1024,10 @@ def kpi_scorecard(
             focus.append(capability)
     benchmarks = []
     if anomalies is not None:
-        ups = [a for a in anomalies if _is_increase(a)]
         benchmarks.append({"id": "anomaly_count", "name": "Cost anomalies detected (increases)",
-                           "value": len(ups), "unit": "count"})
+                           "value": anomaly_count, "unit": "count"})
         benchmarks.append({"id": "anomaly_impact_usd", "name": "Cost impact of anomalies",
-                           "value": round(impact or 0.0, 2), "unit": "USD"})
+                           "value": round(impact, 2) if impact is not None else None, "unit": "USD"})
     score_value = _num(advisor_cost_score)
     if score_value is not None:
         benchmarks.append({"id": "advisor_cost_score", "name": "Azure Advisor Cost score",
@@ -758,6 +1039,12 @@ def kpi_scorecard(
     return {
         "as_of": as_of_text,
         "score_pct": score,
+        "kpi_health_pct": score,
+        "evidence_coverage_pct": evidence,
+        "organizational_maturity": "unknown",
+        "maturity_reason": ("Insufficient evidence: fewer than 80% of KPIs are known."
+                            if evidence < 80 else
+                            "Legacy KPI-health band only; not an organizational maturity assessment."),
         "maturity": maturity,
         "counts": {s: sum(1 for k in kpis if k["status"] == s)
                    for s in ("pass", "warn", "fail", "unknown")},

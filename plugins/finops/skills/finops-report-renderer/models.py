@@ -4,10 +4,81 @@ from __future__ import annotations
 
 import math
 import re
+from contextvars import ContextVar
+from functools import wraps
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
 _CENT = Decimal("0.01")
+_REPORT_CURRENCY = ContextVar("finops_report_currency", default="USD")
+
+
+def _cost_report(builder):
+    """Keep currency local to one adapter call, including nested sections."""
+    @wraps(builder)
+    def build(*args, cost_context=None, **kwargs):
+        result = args[0] if args else kwargs.get(builder.__code__.co_varnames[0])
+        context = cost_context or {}
+        currencies = {
+            str(row["currency"]).upper()
+            for row in (result if isinstance(result, list) else [result])
+            if isinstance(row, dict) and row.get("currency")
+        }
+        if context.get("currency"):
+            currencies.add(str(context["currency"]).upper())
+        if len(currencies) > 1:
+            raise ValueError("report currency disagrees with its source snapshot")
+        explicit_unknown = any(
+            isinstance(row, dict) and "currency" in row and not row["currency"]
+            for row in (result if isinstance(result, list) else [result])
+        )
+        currency = next(iter(currencies), "unknown currency" if explicit_unknown else "USD")
+        if currency != "unknown currency" and not re.fullmatch(r"[A-Z]{3}", currency):
+            raise ValueError("report currency must be a three-letter code")
+        token = _REPORT_CURRENCY.set(currency)
+        try:
+            model = builder(*args, **kwargs)
+        finally:
+            _REPORT_CURRENCY.reset(token)
+        if currency == "unknown currency":
+            model["partial"] = True
+            model["warnings"] = _stable_strings(model["warnings"] + ["Billing currency was not established."])
+        if builder.__name__ == "build_cost_allocation_model" and result.get("current_tag_governance"):
+            governance = result["current_tag_governance"]
+            model["sections"].append({
+                "title": "Current tag governance",
+                "description": "Today's inventory tags; separate from historical billing-time showback.",
+                "columns": ["Measure", "Value"],
+                "rows": [
+                    ["Allocation basis", str(result.get("allocation_basis", "Not supplied"))],
+                    ["Current unallocated share", f"{governance['unallocated_pct']}%"],
+                    ["Currently untagged spend", _money(Decimal(str(governance["untagged_usd"])), currency)],
+                ],
+                "emptyMessage": "",
+            })
+        if cost_context is not None:
+            period = context.get("requested_period") or {}
+            obtained = context.get("obtained_period") or {}
+            model["partial"] = model["partial"] or bool(context.get("partial"))
+            model["warnings"] = _stable_strings(model["warnings"] + list(context.get("warnings") or []))
+            model["sections"].append({
+                "title": "Data provenance",
+                "description": "Snapshot metadata; refresh time is not the billing-data freshness.",
+                "columns": ["Field", "Value"],
+                "rows": [
+                    ["Source", str(context.get("source") or "Not supplied")],
+                    ["Cost basis / currency", f"{context.get('cost_basis', 'Not supplied')} / {currency}"],
+                    ["Requested usage dates", f"{period.get('start', '?')} to {period.get('end', '?')}"],
+                    ["Observed usage dates", f"{obtained.get('start', '?')} to {obtained.get('end', '?')}"],
+                    ["Snapshot", str(context.get("snapshot_id") or "Not supplied")],
+                    ["Code version", str(context.get("code_version") or "Not supplied")],
+                    ["Run", str(context.get("run_id") or "Not supplied")],
+                    ["Completeness", "Partial" if context.get("partial") else "Complete transport; settlement may lag"],
+                ],
+                "emptyMessage": "",
+            })
+        return model
+    return build
 _STATUS_ORDER = {
     "over_budget": 0,
     "forecast_over": 1,
@@ -107,9 +178,10 @@ def _integer(value, field, *, default=0):
     return value
 
 
-def _money(value, currency="USD"):
+def _money(value, currency=None):
     if value is None:
         return "—"
+    currency = currency or _REPORT_CURRENCY.get()
     amount = value.quantize(_CENT, rounding=ROUND_HALF_UP)
     if currency == "USD":
         sign = "-" if amount < 0 else ""
@@ -314,6 +386,7 @@ def _model(title, description, context, metrics, chart, sections):
     }
 
 
+@_cost_report
 def build_cost_overview_model(
     overview,
     *,
@@ -458,6 +531,7 @@ def build_cost_overview_model(
     )
 
 
+@_cost_report
 def build_rightsizing_savings_model(
     result,
     *,
@@ -480,10 +554,10 @@ def build_rightsizing_savings_model(
         sku = _text(row.get("currentSku"), f"{prefix}.currentSku")
         action = _text(row.get("recommendedAction"), f"{prefix}.recommendedAction")
         current = _decimal(
-            row.get("currentMonthlyUsd"), f"{prefix}.currentMonthlyUsd", optional=True
+            _field(row, "currentMonthlyCost", "currentMonthlyUsd"), f"{prefix}.currentMonthlyCost", optional=True
         )
         savings = _decimal(
-            row.get("estMonthlySavingsUsd"),
+            _field(row, "estMonthlySavings", "estMonthlySavingsUsd"),
             f"{prefix}.estMonthlySavingsUsd",
             optional=True,
         )
@@ -524,13 +598,19 @@ def build_rightsizing_savings_model(
             row["evidence"],
         )
     )
-    quantified = [row["savings"] for row in findings if row["savings"] is not None]
+    quantified = [row["savings"] for row in findings
+                  if row["savings"] is not None and row["validated_raw"] is not False]
     total_savings = sum(quantified, Decimal(0))
     actionable = [row for row in findings if row["kind"].casefold() != "review"]
     review_count = len(findings) - len(actionable)
     verified_count = sum(row["validated_raw"] is True for row in actionable)
     verify_count = len(actionable) - verified_count
-    chart_rows = [row for row in findings if row["savings"] is not None][:10]
+    chart_rows = [row for row in findings
+                  if row["savings"] is not None and row["validated_raw"] is not False][:10]
+    supported = sum((row["savings"] or Decimal(0) for row in findings
+                     if row["validated_raw"] is True), Decimal(0))
+    contradicted = sum((row["savings"] or Decimal(0) for row in findings
+                       if row["validated_raw"] is False), Decimal(0))
 
     context = _context(
         source,
@@ -548,7 +628,7 @@ def build_rightsizing_savings_model(
             {
                 "label": "Estimated monthly savings",
                 "value": _money(total_savings),
-                "detail": f"{len(quantified)} quantified recommendations",
+                "detail": f"{_money(supported)} supported; {_money(total_savings - supported)} unverified; {_money(contradicted)} contradicted and excluded",
                 "tone": "good",
             },
             {
@@ -571,7 +651,7 @@ def build_rightsizing_savings_model(
         ],
         {
             "type": "bar",
-            "label": "Estimated monthly savings (USD)",
+            "label": f"Estimated monthly savings ({_REPORT_CURRENCY.get()})",
             "labels": [_short_resource(row["resource_id"]) for row in chart_rows],
             "values": [_chart_number(row["savings"]) for row in chart_rows],
         },
@@ -633,6 +713,7 @@ def build_rightsizing_savings_model(
     )
 
 
+@_cost_report
 def build_budget_status_model(
     result,
     *,
@@ -655,7 +736,7 @@ def build_budget_status_model(
         scope = _text(row.get("scope"), f"{prefix}.scope")
         currency = _text(row.get("currency"), f"{prefix}.currency", default="USD") or "USD"
         amount = _decimal(row.get("amount"), f"{prefix}.amount", optional=True)
-        current = _decimal(row.get("current_spend"), f"{prefix}.current_spend")
+        current = _decimal(row.get("current_spend"), f"{prefix}.current_spend", optional=True)
         used = _decimal(row.get("pct_used"), f"{prefix}.pct_used", optional=True)
         forecast = _decimal(
             row.get("forecast_spend"), f"{prefix}.forecast_spend", optional=True
@@ -775,13 +856,13 @@ def build_budget_status_model(
         summary_currency = currencies.pop() if len(currencies) == 1 else ""
     mixed_currency = not summary_currency and bool(budgets)
     total_amount = _decimal(
-        summary.get("total_amount"), "result.summary.total_amount", optional=mixed_currency
+        summary.get("total_amount"), "result.summary.total_amount", optional=True
     )
     total_current = _decimal(
-        summary.get("total_current"), "result.summary.total_current", optional=mixed_currency
+        summary.get("total_current"), "result.summary.total_current", optional=True
     )
     total_forecast = _decimal(
-        summary.get("total_forecast"), "result.summary.total_forecast", optional=mixed_currency
+        summary.get("total_forecast"), "result.summary.total_forecast", optional=True
     )
     if mixed_currency:
         total_amount = total_current = total_forecast = None
@@ -798,7 +879,7 @@ def build_budget_status_model(
         "Daily Azure budget-governance snapshot; currentSpend is updated asynchronously.",
         context,
         [
-            {"label": "Portfolio budget", "value": _money(total_amount, summary_currency), "detail": "Configured amount" if not mixed_currency else "Mixed currencies"},
+            {"label": "Portfolio budget", "value": _money(total_amount, summary_currency), "detail": summary.get("aggregation_reason") or ("Configured amount" if not mixed_currency else "Mixed currencies")},
             {"label": "Current spend", "value": _money(total_current, summary_currency), "detail": "Azure currentSpend"},
             {
                 "label": "Forecast spend",
@@ -877,7 +958,7 @@ def _optimization_rightsizing(rows):
         prefix = f"result.rightsizing.top[{index}]"
         resource_id = _text(row.get("resourceId"), f"{prefix}.resourceId")
         savings = _decimal(
-            row.get("estMonthlySavingsUsd"),
+            _field(row, "estMonthlySavings", "estMonthlySavingsUsd"),
             f"{prefix}.estMonthlySavingsUsd",
             optional=True,
         )
@@ -908,6 +989,7 @@ def _optimization_rightsizing(rows):
     return result
 
 
+@_cost_report
 def build_cost_optimization_model(
     result,
     *,
@@ -931,7 +1013,7 @@ def build_cost_optimization_model(
     for index, row in enumerate(_objects(result.get("priorities"), "result.priorities")):
         prefix = f"result.priorities[{index}]"
         rank = _integer(row.get("rank"), f"{prefix}.rank", default=index + 1)
-        impact = _decimal(row.get("impact_usd"), f"{prefix}.impact_usd", optional=True)
+        impact = _decimal(_field(row, "impact", "impact_usd"), f"{prefix}.impact", optional=True)
         priorities.append(
             {
                 "rank": rank,
@@ -1132,6 +1214,7 @@ def build_cost_optimization_model(
     potential_savings = _decimal(
         headline.get("potential_monthly_savings"),
         "result.headline.potential_monthly_savings",
+        optional=True,
     )
     anomaly_count = _integer(
         headline.get("anomaly_count"), "result.headline.anomaly_count"
@@ -1192,7 +1275,7 @@ def build_cost_optimization_model(
         + extra_metrics,
         {
             "type": "bar",
-            "label": "Estimated monthly savings (USD)",
+            "label": f"Estimated monthly savings ({_REPORT_CURRENCY.get()})",
             "labels": [_short_resource(row["resource_id"]) for row in chart_rows],
             "values": [_chart_number(row["savings"]) for row in chart_rows],
         },
@@ -1538,6 +1621,7 @@ def _optimization_commitments(result):
     return metrics, section
 
 
+@_cost_report
 def build_ai_spend_model(
     result,
     *,
@@ -1722,7 +1806,7 @@ def build_ai_spend_model(
         ],
         {
             "type": "bar",
-            "label": "Model-token spend (USD)",
+            "label": f"Model-token spend ({_REPORT_CURRENCY.get()})",
             "labels": [row[0] for row in models[:10]],
             "values": [_chart_number(row[1]) for row in models[:10]],
         },
@@ -1795,6 +1879,7 @@ def _optional_text(value, field):
     return "—" if value is None else _text(value, field)
 
 
+@_cost_report
 def build_sre_agent_spend_model(
     result,
     *,
@@ -1807,10 +1892,11 @@ def build_sre_agent_spend_model(
     """Adapt analyze_sre_agent_costs output to the generic report model."""
 
     result = _object(result, "result")
-    currency = _text(result.get("currency"), "result.currency", default="USD") or "USD"
+    currency = _text(result.get("currency"), "result.currency", default=_REPORT_CURRENCY.get()) or _REPORT_CURRENCY.get()
     total = _decimal(result.get("total_usd"), "result.total_usd")
     always_on = _decimal(result.get("always_on_usd"), "result.always_on_usd")
     active = _decimal(result.get("active_usd"), "result.active_usd")
+    unreconciled = _decimal(result.get("unreconciled_usd"), "result.unreconciled_usd", optional=True)
     always_on_pct = _decimal(result.get("always_on_pct"), "result.always_on_pct", optional=True)
     agent_count = _integer(result.get("agent_count"), "result.agent_count")
     inventory_count = _integer(result.get("inventory_count"), "result.inventory_count")
@@ -1928,7 +2014,7 @@ def build_sre_agent_spend_model(
             {
                 "label": "Always-on flow",
                 "value": money(always_on),
-                "detail": f"{_percent(always_on_pct)} of spend; ends only when an agent is deleted",
+                "detail": f"{_percent(always_on_pct)} of spend; unexplained billed remainder: {money(unreconciled)}",
             },
             {"label": "Active flow", "value": money(active), "detail": "Chats, incidents, tasks, triggers"},
             {
@@ -1953,7 +2039,8 @@ def build_sre_agent_spend_model(
                 "title": "By agent",
                 "description": (
                     "Billed cost split into always-on and active flow. 'estimated' splits assume "
-                    "96 AAU/day always-on because no per-thread usage was available."
+                    "at most 96 AAU/day always-on because no per-thread usage was available. "
+                    "Unreconciled billing is not an idle-agent saving."
                 ),
                 "columns": [
                     "Agent", "Status", "Model", "Cost", "Always-on", "Active", "Split",
@@ -1978,7 +2065,8 @@ def build_sre_agent_spend_model(
             },
             {
                 "title": "Active flow by source",
-                "description": "Measured active AAU from each agent's per-thread usage.",
+                "description": "Observed activity AAU; cost is a rate-based estimate, not settled billing. "
+                               "Activity and invoices can arrive on different days.",
                 "columns": ["Source", "AAU", "Cost", "Share", "Threads"],
                 "rows": [
                     [label, _number(aau), money(cost), _percent(pct), str(count)]
@@ -2014,6 +2102,7 @@ def build_sre_agent_spend_model(
     )
 
 
+@_cost_report
 def build_cost_vs_reliability_model(
     result,
     *,
@@ -2436,6 +2525,7 @@ def _optional_object(value, field):
     return None if value is None else _object(value, field)
 
 
+@_cost_report
 def build_monthly_review_model(
     review,
     *,
@@ -2760,9 +2850,9 @@ def build_monthly_review_model(
         context,
         [
             {
-                "label": "FinOps score",
+                "label": "KPI health",
                 "value": _percent(score),
-                "detail": f"Maturity: {maturity}",
+                "detail": f"Evidence coverage: {_percent(_decimal(scorecard.get('evidence_coverage_pct'), 'evidence_coverage_pct', optional=True))}. Not an organizational maturity assessment.",
                 "tone": _MATURITY_TONE.get(maturity, "neutral"),
             },
             {
@@ -2777,7 +2867,7 @@ def build_monthly_review_model(
         ],
         {
             "type": "bar",
-            "label": "Month-over-month change by owner (USD)",
+            "label": f"Month-over-month change by owner ({_REPORT_CURRENCY.get()})",
             "labels": [row[0] for row in chart_rows],
             "values": [_chart_number(row[3]) for row in chart_rows],
         },
@@ -2859,13 +2949,14 @@ def _yes_no(value, field):
     return "yes" if _boolean(value, field) else "no"
 
 
-def _signed_money(value, currency="USD"):
+def _signed_money(value, currency=None):
     if value is None:
         return "—"
     text = _money(value, currency)
     return text if value < 0 else "+" + text
 
 
+@_cost_report
 def build_cost_anomaly_model(
     result,
     *,
@@ -2961,7 +3052,7 @@ def build_cost_anomaly_model(
         chart = {
             "type": "line",
             "title": "Daily spend",
-            "label": "Daily cost (USD)",
+            "label": f"Daily cost ({_REPORT_CURRENCY.get()})",
             "labels": [date for date, _ in daily],
             "values": [_chart_number(cost) for _, cost in daily],
         }
@@ -2970,7 +3061,7 @@ def build_cost_anomaly_model(
         chart = {
             "type": "bar",
             "title": "Largest anomalies",
-            "label": "Impact (USD)",
+            "label": f"Impact ({_REPORT_CURRENCY.get()})",
             "labels": [_short_resource(row["value"]) for row in top],
             "values": [_chart_number(row["impact"]) for row in top],
         }
@@ -3069,6 +3160,7 @@ def build_cost_anomaly_model(
     )
 
 
+@_cost_report
 def build_cost_allocation_model(
     result,
     *,
@@ -3345,7 +3437,7 @@ def build_cost_allocation_model(
         {
             "type": "bar",
             "title": f"Cost by {dimension}",
-            "label": "Fully loaded cost (USD)",
+            "label": f"Fully loaded cost ({_REPORT_CURRENCY.get()})",
             "labels": [name for name, _ in chart_rows],
             "values": [_chart_number(cost) for _, cost in chart_rows],
         },
@@ -3353,6 +3445,7 @@ def build_cost_allocation_model(
     )
 
 
+@_cost_report
 def build_waste_model(
     result,
     *,
@@ -3365,7 +3458,7 @@ def build_waste_model(
     """Adapt find_waste output to the generic report model."""
 
     result = _object(result, "result")
-    currency = _text(result.get("currency"), "result.currency", default="USD") or "USD"
+    currency = _text(result.get("currency"), "result.currency", default=_REPORT_CURRENCY.get()) or _REPORT_CURRENCY.get()
     headline = _object(result.get("headline") or {}, "result.headline")
     findings = []
     for index, row in enumerate(_objects(result.get("findings"), "result.findings")):
@@ -3484,6 +3577,7 @@ def build_waste_model(
     )
 
 
+@_cost_report
 def build_commitment_model(
     result,
     *,
@@ -3496,7 +3590,7 @@ def build_commitment_model(
     """Adapt analyze_commitments output to the generic report model."""
 
     result = _object(result, "result")
-    currency = _text(result.get("currency"), "result.currency", default="USD") or "USD"
+    currency = _text(result.get("currency"), "result.currency", default=_REPORT_CURRENCY.get()) or _REPORT_CURRENCY.get()
     headline = _object(result.get("headline") or {}, "result.headline")
     coverage = _object(result.get("coverage") or {}, "result.coverage")
     savings = _decimal(

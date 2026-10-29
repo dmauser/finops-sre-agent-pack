@@ -782,8 +782,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
-            "a97c5a522f5d8653f5d6b15162d1f33dae15c49799aba80a66acdd8cdb1f9277",
-            "8b7783935d3120dc13ffb49166298e6addaaebc894aeb41595e87bd0f599c91f",
+            "cdc66e52303439dcc519c8d8a9fa20af739319bb6191e1bfdf611265b2a2b166",
+            "5cc14dde48df72fef5d3debfced053c3474a6395e433dc44ef88e505c81cf56f",
         ),
         (
             models.build_budget_status_model,
@@ -812,8 +812,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_monthly_review_model,
             _monthly,
-            "85657923896814482a757fc3a3f78f7b66a858fb59a6bb9594ef5c958b5b1d65",
-            "c3efa78279dfd0184140ef8f933c37effc0f94d8ab5a11cd6085b48fa0ae4285",
+            "350d9fc7272cd3efff9975e40a4f02b47422115722696a3c557e5590375347a5",
+            "8837ab0ddd2c38fd86c94d04f2f5b57409ceb3404afd1c9480e1a434b724c56d",
         ),
     ],
 )
@@ -981,7 +981,7 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
 
     assert model["title"] == "FinOps: Monthly Review"
     assert [m["label"] for m in model["metrics"]] == [
-        "FinOps score", "KPIs passing", "Month-end forecast",
+        "KPI health", "KPIs passing", "Month-end forecast",
         "Month-over-month change", "Owner-routed findings",
     ]
     assert model["metrics"][1]["value"] == "2 of 4"
@@ -1083,7 +1083,7 @@ def _allocation():
         f"{_RG}/Microsoft.Compute/virtualMachines/vm2": {"Team": "platform"},
         f"{_RG}/Microsoft.Compute/virtualMachines/vm3": {"team": "Platform"},
     }
-    result = _alloc.allocate_costs(costs, tags)
+    result = _alloc.allocate_costs(costs, tags, currency="USD")
     result["month_over_month"] = _alloc.month_over_month(
         costs, {k: v / 2 for k, v in costs.items()}, dimension_tags=tags
     )
@@ -1105,7 +1105,7 @@ def _waste_result():
             "properties": {"diskState": "Unattached", "diskSizeGB": 128},
         },
     ]
-    return _waste.find_waste(rows, costs={rows[0]["id"]: 3.65}, as_of=_AS_OF)
+    return _waste.find_waste(rows, costs={rows[0]["id"]: 3.65}, as_of=_AS_OF, currency="USD")
 
 
 def _commitments():

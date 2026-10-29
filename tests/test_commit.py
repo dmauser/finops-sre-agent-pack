@@ -189,7 +189,9 @@ def test_coverage_from_amortized_rows():
          "meterCategory": "Virtual Machines"},
     ]
     coverage = analyze(usage_rows=rows, as_of=TODAY)["coverage"]
-    assert coverage["coverage_pct"] == 30.0
+    assert coverage["coverage_pct"] == 60.0
+    assert coverage["unknown_eligibility_cost"] == 100.0
+    assert coverage["ineligible_cost"] == 5.0
     assert coverage["unused_commitment_cost"] == 15.0
     vm = next(c for c in coverage["by_meter_category"] if c["meter_category"] == "Virtual Machines")
     assert vm["coverage_pct"] == 60.0
@@ -268,3 +270,68 @@ def test_shared_scope_benefit_recommendations_are_excluded_for_managed_scope():
     )
     assert out["purchases"] == []
     assert any("Shared-scope" in w for w in out["warnings"])
+
+
+def test_coverage_excludes_noneligible_and_keeps_unknown_separate():
+    rows = [
+        {"cost": 50, "pricingModel": "Reservation", "meterCategory": "Virtual Machines"},
+        {"cost": 50, "pricingModel": "OnDemand", "meterCategory": "Virtual Machines"},
+        {"cost": 1000, "pricingModel": "OnDemand", "meterCategory": "Bandwidth"},
+        {"cost": 300, "pricingModel": "OnDemand", "meterCategory": "Storage"},
+        {"cost": 30, "meterCategory": "Virtual Machines"},
+    ]
+    cov = analyze(usage_rows=rows, currency="USD")["coverage"]
+    assert cov["coverage_pct"] == 50.0
+    assert cov["eligible_cost"] == 100
+    assert cov["ineligible_cost"] == 1000
+    assert cov["unknown_eligibility_cost"] == 330
+    assert "Virtual Machines" in cov["eligibility_basis"]
+
+
+def test_coverage_does_not_combine_currencies():
+    rows = [
+        {"cost": 50, "pricingModel": "Reservation", "billingCurrency": "USD"},
+        {"cost": 50, "pricingModel": "OnDemand", "meterCategory": "Virtual Machines",
+         "billingCurrency": "EUR"},
+    ]
+    cov = analyze(usage_rows=rows)["coverage"]
+    assert cov["coverage_pct"] is None
+    assert cov["covered_cost"] is None
+    assert set(cov["by_currency"]) == {"USD", "EUR"}
+
+
+def test_hybrid_cost_mapping_sums_numeric_case_variants():
+    rid = f"{SUB}/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/win"
+    result = analyze(vms=[{"id": rid, "osType": "Windows"}],
+                     costs={rid: 40, rid.upper(): 60, rid.lower(): "999"})
+    assert result["hybrid_benefit"][0]["monthly_cost"] == 100
+
+
+def test_explicit_eligibility_credit_and_spot_handling():
+    rows = [
+        {"cost": 60, "pricingModel": "Reservation"},
+        {"cost": 40, "pricingModel": "OnDemand", "meterCategory": "Storage",
+         "commitmentEligible": True},
+        {"cost": 100, "pricingModel": "OnDemand", "meterCategory": "Virtual Machines",
+         "commitmentEligible": False},
+        {"cost": -20, "pricingModel": "Reservation"},
+        {"cost": 50, "pricingModel": "Spot", "meterCategory": "Virtual Machines"},
+    ]
+    cov = analyze(usage_rows=rows, currency="USD")["coverage"]
+    assert cov["coverage_pct"] == 60
+    assert cov["ineligible_cost"] == 150
+    assert cov["excluded_adjustment_cost"] == -20
+
+
+def test_all_unknown_eligibility_is_not_zero_coverage():
+    cov = analyze(usage_rows=[{"cost": 100, "meterCategory": "Storage"}])["coverage"]
+    assert cov["coverage_pct"] is None
+    assert cov["unknown_eligibility_cost"] == 100
+
+
+def test_unknown_currency_is_not_mixed_with_known_currency():
+    rows = [{"cost": 50, "pricingModel": "Reservation", "billingCurrency": "USD"},
+            {"cost": 50, "pricingModel": "Reservation"}]
+    cov = analyze(usage_rows=rows)["coverage"]
+    assert cov["coverage_pct"] is None
+    assert set(cov["by_currency"]) == {"USD", "UNKNOWN"}

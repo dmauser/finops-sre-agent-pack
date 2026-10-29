@@ -47,6 +47,7 @@ optimization hints. Feed it to a table / Live Report.
 """
 
 import re
+import math
 from collections import defaultdict
 
 # consumedService -> the service family we report under. Keys matched case-insensitively.
@@ -145,13 +146,14 @@ def _meter_type(family, item) -> str:
     cat = _norm(item.get("meterCategory"))
     haystack = " ".join((name, sub, cat))
 
+    if any(h in haystack for h in ("defender", "security", "bandwidth", "storage", "network", "support", "data transfer")):
+        return "ancillary"
     if any(h in haystack for h in _TOKEN_HINTS):
         return _MODEL_TOKEN
     if any(h in haystack for h in _COMPUTE_HINTS):
         return _COMPUTE
-    # Machine Learning with no token signal is compute (managed endpoints / training).
     if family == "Machine Learning":
-        return _COMPUTE
+        return "unclassified"
     return _OTHER_COGNITIVE
 
 
@@ -283,14 +285,25 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
     project_cost = defaultdict(float)               # project tag -> usd
     tagged_project_seen = False
     ft_hosting_cost = defaultdict(float)            # resourceId -> fine-tuned hosting usd
+    currencies = set()
+    display_ids = {}
 
     for item in line_items:
         cost = item.get("cost")
-        if not isinstance(cost, (int, float)):
+        if cost in (None, ""):
             continue
+        if isinstance(cost, bool):
+            raise ValueError("AI cost must be finite")
+        cost = float(cost)
+        if not math.isfinite(cost):
+            raise ValueError("AI cost must be finite")
         family = _service_family(item.get("consumedService"))
         if family is None:
             continue  # not an AI service family — skip defensively
+        if item.get("currency"):
+            currencies.add(str(item["currency"]).upper())
+        if len(currencies) > 1:
+            raise ValueError("AI spend cannot aggregate mixed currencies")
 
         total += cost
         date = item.get("date")
@@ -299,7 +312,8 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
 
         mtype = _meter_type(family, item)
         words = _meter_words(item)
-        rid = item.get("resourceId") or ""
+        raw_id = item.get("resourceId") or ""
+        rid = display_ids.setdefault(raw_id.rstrip("/").casefold(), raw_id)
         fam_cost[family] += cost
         type_cost[mtype] += cost
         res_cost[rid] += cost
@@ -371,6 +385,7 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
     )
 
     return {
+        "currency": next(iter(currencies), None),
         "as_of": as_of,
         "total_ai_usd": round(total, 2),
         "resource_count": len(res_cost),

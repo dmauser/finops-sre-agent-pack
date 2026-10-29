@@ -29,6 +29,8 @@ spec:
 
     Azure operations are read-only: GET/read commands only; never use Azure POST, PUT, PATCH, DELETE, or a write tool.
 
+    Follow managed-scope sections 6-7: unique `run_id`, isolated inputs, complete export generation or disclosed UsageDetails fallback, immutable ledger and `cost_context=snapshot` in every report builder. Never delete shared scratch, substitute a different month, treat unknown as zero, or promote unverified savings.
+
     Run `finops-cost-anomaly-detection` for every effective scope. Read its SKILL.md and execute the complete transport, filtering, detection, correlation, and reporting contract; do not restate or reimplement that logic. Run the bundled `detect.py` with its daily defaults and `assume_last_partial=True`.
 
     Correlate each anomaly only within its effective scope to deployments and Activity Log writes; when `__GITHUB_REPO__` is configured, also correlate commits and merged PRs from that repository.
