@@ -115,7 +115,10 @@ def test_idle_agents_and_consolidation_candidate():
         {"id": OPS, "name": "ops-agent", "powerState": "Running"},
         {"id": LAB, "name": "lab-agent", "powerState": "Running"},
     ]
-    usage = {OPS: _usage(*((d, "Thread", "a", 4.0) for d in days)), LAB: _usage()}
+    usage = {
+        OPS: _usage(*((d, "Thread", "a", 4.0) for d in days)),
+        LAB: _usage(*((d, "Thread", "b", 4.0) for d in days)),
+    }
     result = sre.analyze_sre_agent_costs(lines, agents, usage)
     types = [h["type"] for h in result["hints"]]
     assert types.count("idle_agent") == 2
@@ -244,7 +247,8 @@ def _idle_pair():
         {"id": OPS, "name": "ops-agent", "powerState": "Running"},
         {"id": LAB, "name": "lab-agent", "powerState": "Running"},
     ]
-    return sre.analyze_sre_agent_costs(lines, agents, {OPS: _usage(), LAB: _usage()})
+    usage = {rid: _usage(*((d, "Thread", "a", 4.0) for d in days)) for rid in (OPS, LAB)}
+    return sre.analyze_sre_agent_costs(lines, agents, usage)
 
 
 def test_cost_optimization_rollup_dedupes_sre_savings_and_ranks_hints():

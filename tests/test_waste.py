@@ -4,6 +4,8 @@ import importlib.util
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 _PATH = (
     Path(__file__).resolve().parent.parent
     / "plugins" / "finops" / "skills" / "finops-waste-finder" / "waste.py"
@@ -191,3 +193,30 @@ def test_min_monthly_savings_filters_cheap_known_findings():
     b = _row("microsoft.network/publicipaddresses", "unknown")
     result = find([a, b], costs={a["id"]: 1.0}, min_monthly_savings=2.0, as_of=TODAY)
     assert _kinds(result) == {"unknown": "orphan"}
+
+
+def test_regression_canonical_costs_are_summed_and_currency_inherited():
+    class CostMap(dict):
+        currency = "EUR"
+
+    row = _row("microsoft.network/publicipaddresses", "free")
+    costs = CostMap({row["id"]: 3, row["id"].upper() + "/": 4})
+    result = find([row], costs=costs, as_of=TODAY)
+    assert result["currency"] == "EUR"
+    assert result["findings"][0]["monthlyCost"] == 7
+    assert result["headline"]["potential_monthly_savings"] == 7
+
+
+def test_explicit_currency_cannot_relabel_cost_metadata():
+    class CostMap(dict):
+        currency = "EUR"
+
+    with pytest.raises(ValueError, match="currency"):
+        find([], costs=CostMap(), currency="USD", as_of=TODAY)
+
+
+def test_ingestion_measurements_are_not_summed_like_cost_rows():
+    row = _row("microsoft.operationalinsights/workspaces", "usage",
+               {"sku": {"name": "PerGB2018"}, "retentionInDays": 30})
+    result = find([row], ingestion_gb_per_day={row["id"]: 60, row["id"].upper(): 60}, as_of=TODAY)
+    assert result["findings"] == []

@@ -239,7 +239,7 @@ def test_ingestion_gb_per_day_counts_only_log_analytics_gb_ingestion():
         {"instanceName": LAW, "meterCategory": "Log Analytics", "unitOfMeasure": "1 GB/Month", "quantity": 500},
         {"instanceName": LAW, "meterCategory": "Storage", "unitOfMeasure": "1 GB", "quantity": 500},
     ]
-    assert usage.ingestion_gb_per_day(rows, days=30) == {LAW: 2.0}
+    assert usage.ingestion_gb_per_day(rows, days=30) == {LAW.lower(): 2.0}
     with pytest.raises(ValueError):
         usage.ingestion_gb_per_day(rows, days=0)
 

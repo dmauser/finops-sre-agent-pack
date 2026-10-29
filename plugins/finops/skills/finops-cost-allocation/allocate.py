@@ -51,7 +51,7 @@ DEFAULT_DIMENSION = "team"
 
 def _key(resource_id) -> str:
     """Case-insensitive resource-id key (ARM ids are case-insensitive)."""
-    return str(resource_id or "").strip().lower()
+    return str(resource_id or "").strip().rstrip("/").lower()
 
 
 def _norm_val(value) -> str:
@@ -139,7 +139,9 @@ def allocate_costs(
     recommended_keys=RECOMMENDED_TAG_KEYS,
     top_n_resources: int = 25,
     inherited_tags=None,
+    inherited_tags_are_historical=False,
     shared=None,
+    currency=None,
 ):
     """Attribute monthly cost to an owner dimension, keeping unallocated spend explicit.
 
@@ -185,7 +187,11 @@ def allocate_costs(
     allocated_usd + unallocated_usd + undistributed_usd == total_usd (to rounding).
     Untagged entries gain "inherited_owner"/"inherited_from" when inheritance filled the dimension.
     """
-    costs = costs or {}
+    currency = currency or getattr(costs, "currency", None)
+    nonresource_cost = getattr(costs, "nonresource_cost", 0.0)
+    billing_rows = getattr(costs, "billing_rows", None)
+    current_tags_available = tags is not None
+    costs = costs if costs is not None else {}
     tags = tags or {}
     dim = str(dimension).strip()
     rec_keys = tuple(recommended_keys) or RECOMMENDED_TAG_KEYS
@@ -193,7 +199,9 @@ def allocate_costs(
     # index raw tag maps case-insensitively by resource id (raw keys/values preserved for display)
     tags_by_id = {_key(rid): (t or {}) for rid, t in tags.items()}
     inherited_by_scope = {
-        _scope_key(scope): _tags_ci(t) for scope, t in (inherited_tags or {}).items()
+        _scope_key(scope): _tags_ci(t) for scope, t in (
+            inherited_tags or {} if billing_rows is None or inherited_tags_are_historical else {}
+        ).items()
     }
 
     shared_cfg = shared or {}
@@ -211,31 +219,35 @@ def allocate_costs(
     shared_resources = []
     group_inherited = defaultdict(float)
     inherited_cost = 0.0
-    inherited_count = 0
+    inherited_resources = set()
 
     group_cost = defaultdict(float)          # normalized owner value -> cost
-    group_count = defaultdict(int)
+    group_count = defaultdict(set)
     group_raw = defaultdict(lambda: defaultdict(float))  # norm -> {raw spelling: cost} (display + hygiene)
     key_cost = defaultdict(float)            # normalized tag key -> cost covered
-    key_count = defaultdict(int)             # normalized tag key -> resource count
+    key_count = defaultdict(set)             # normalized tag key -> distinct resources
     key_raw = defaultdict(lambda: defaultdict(float))    # normalized tag key -> {raw key spelling: cost}
-    unallocated_cost = 0.0
+    unallocated_cost = nonresource_cost
     unallocated = []                          # resources with no value for `dim`
     untagged = []                             # resources with NO tags at all
-    total = 0.0
+    total = nonresource_cost
 
-    for rid, monthly in costs.items():
+    entries = (
+        [(row["resourceId"], float(row["cost"]), row["tags"]) for row in billing_rows]
+        if billing_rows is not None else
+        [(rid, monthly, tags_by_id.get(_key(rid), {})) for rid, monthly in costs.items()]
+    )
+    for rid, monthly, raw_tags in entries:
         if not isinstance(monthly, (int, float)):
             continue
         total += monthly
-        raw_tags = tags_by_id.get(_key(rid), {})
         ci = _tags_ci(raw_tags)
 
         # dimension grouping (shared resources are split later, not directly allocated)
         inherited_raw = inherited_from = None
         if shared and _is_shared(rid, ci, shared_ids, shared_tag):
             shared_cost += monthly
-            shared_resources.append({"resourceId": rid, "monthly_usd": round(monthly, 2)})
+            shared_resources.append({"resourceId": rid, "monthly_usd": monthly})
         else:
             raw = _lookup_tag(ci, dim)
             if raw is None and inherited_by_scope:
@@ -244,15 +256,15 @@ def allocate_costs(
             if raw is not None:
                 norm = _norm_val(raw)
                 group_cost[norm] += monthly
-                group_count[norm] += 1
+                group_count[norm].add(_key(rid))
                 group_raw[norm][str(raw).strip()] += monthly
                 if inherited_raw is not None:
                     group_inherited[norm] += monthly
                     inherited_cost += monthly
-                    inherited_count += 1
+                    inherited_resources.add(_key(rid))
             else:
                 unallocated_cost += monthly
-                unallocated.append({"resourceId": rid, "monthly_usd": round(monthly, 2)})
+                unallocated.append({"resourceId": rid, "monthly_usd": monthly})
 
         # tag inventory — count every tag key with a non-empty value on this resource
         present = False
@@ -262,12 +274,12 @@ def allocate_costs(
             present = True
             kn = str(raw_key).strip().lower()
             key_cost[kn] += monthly
-            key_count[kn] += 1
+            key_count[kn].add(_key(rid))
             key_raw[kn][str(raw_key).strip()] += monthly
 
         # untagged = no tags at all (dimension-independent governance list)
         if not present:
-            entry = {"resourceId": rid, "monthly_usd": round(monthly, 2)}
+            entry = {"resourceId": rid, "monthly_usd": monthly}
             if inherited_raw is not None:
                 entry["inherited_owner"] = str(inherited_raw).strip()
                 entry["inherited_from"] = inherited_from
@@ -285,7 +297,7 @@ def allocate_costs(
             "owner": display,
             "monthly_usd": round(cost, 2),
             "pct": _pct(cost, total),
-            "resource_count": group_count[norm],
+            "resource_count": len(group_count[norm]),
             "inherited_usd": round(group_inherited.get(norm, 0.0), 2),
             "direct_usd": round(cost, 2),
             "shared_usd": round(shared_split.get(norm, 0.0), 2),
@@ -298,10 +310,21 @@ def allocate_costs(
         display = max(group_raw[norm].items(), key=lambda kv: kv[1])[0]
         distribution.append({"owner": display, "shared_usd": round(amount, 2)})
     distribution.sort(key=lambda d: d["shared_usd"], reverse=True)
-    shared_resources.sort(key=lambda r: r["monthly_usd"], reverse=True)
+    def coalesce(rows):
+        merged = {}
+        for row in rows:
+            key = _key(row["resourceId"])
+            if key not in merged:
+                merged[key] = {**row, "monthly_usd": 0.0}
+            merged[key]["monthly_usd"] += row["monthly_usd"]
+        return sorted(
+            ({**row, "monthly_usd": round(row["monthly_usd"], 2)} for row in merged.values()),
+            key=lambda row: (-row["monthly_usd"], _key(row["resourceId"])),
+        )
 
-    unallocated.sort(key=lambda r: r["monthly_usd"], reverse=True)
-    untagged.sort(key=lambda r: r["monthly_usd"], reverse=True)
+    shared_resources = coalesce(shared_resources)
+    unallocated = coalesce(unallocated)
+    untagged = coalesce(untagged)
     untagged_usd = sum(r["monthly_usd"] for r in untagged)
 
     # tag inventory — every key present, ranked by cost covered
@@ -310,7 +333,7 @@ def allocate_costs(
         display = max(key_raw[kn].items(), key=lambda kv: kv[1])[0]  # most-costly raw key spelling
         tag_inventory.append({
             "key": display,
-            "resource_count": key_count[kn],
+            "resource_count": len(key_count[kn]),
             "cost_usd": round(cost, 2),
             "pct": _pct(cost, total),
         })
@@ -325,7 +348,7 @@ def allocate_costs(
         recommended_coverage.append({
             "key": rk,
             "present": present,
-            "resource_count": key_count.get(kn, 0),
+            "resource_count": len(key_count.get(kn, set())),
             "cost_usd": round(key_cost.get(kn, 0.0), 2),
             "pct": _pct(key_cost.get(kn, 0.0), total),
         })
@@ -344,6 +367,18 @@ def allocate_costs(
     hygiene.sort(key=lambda h: h["cost_affected"], reverse=True)
 
     return {
+        "currency": currency,
+        "allocation_basis": "billing_time" if billing_rows is not None else "current_inventory",
+        "current_tag_governance": (
+            allocate_costs(dict(costs), tags, dimension=dimension, currency=currency,
+                           recommended_keys=recommended_keys, top_n_resources=top_n_resources)
+            if billing_rows is not None and current_tags_available else None
+        ),
+        "warnings": (
+            ["Current inherited tags were not applied to historical billing rows."]
+            if billing_rows is not None and inherited_tags and not inherited_tags_are_historical else []
+        ),
+        "nonresource_cost": round(nonresource_cost, 2),
         "dimension": dim,
         "total_usd": round(total, 2),
         "allocated_usd": round(allocated_cost, 2),
@@ -366,7 +401,7 @@ def allocate_costs(
         "inheritance": {
             "enabled": bool(inherited_by_scope),
             "allocated_via_inheritance_usd": round(inherited_cost, 2),
-            "resource_count": inherited_count,
+            "resource_count": len(inherited_resources),
         },
         "shared_costs": {
             "total_usd": round(shared_cost, 2),

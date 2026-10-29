@@ -1,6 +1,6 @@
 ---
 name: finops-kpi-scorecard
-description: Run the FinOps practice, read-only. Forecasts month-end and next-month spend with a confidence band, computes unit economics (cost per request/order/user), scores FinOps KPIs (allocation, tag and budget governance, forecast vs budget, commitment coverage/utilization, waste, anomaly impact, unit-cost trend) with a Crawl/Walk/Run indication, and routes every finding to its accountable owner tag. Uses the bundled scorecard.py with the runtime's sandbox Python tool over the results of the other FinOps skills. Use for the monthly FinOps review, "are we on track for budget", "what is our cost per transaction", "how mature is our FinOps", and "send each team its cleanup list".
+description: Run the FinOps practice, read-only. Forecasts spend without inventing zero-cost days, compares only matched budget contexts, computes unit economics, and scores FinOps KPIs with health separated from evidence coverage. Deduplicates evidenced optimization actions and anomaly events; ambiguous overlap stays unknown. Legacy Crawl/Walk/Run bands are not an organizational maturity assessment. Uses bundled scorecard.py over sibling-skill results and routes findings to accountable owners. Use for monthly FinOps reviews, budget outlook, unit cost and owner action lists.
 ---
 
 ## When to use this skill
@@ -13,9 +13,10 @@ on top of what the other skills already found:
   whether it is improving while spend grows.
 - **KPIs and governance checks**: allocation %, untagged spend, tag hygiene, budget coverage of
   every managed scope, budgets over, forecast vs budget, forecast accuracy, commitment coverage and
-  utilization, addressable waste %, anomaly impact %, unit-cost change; with pass/warn/fail and a
-  maturity indication (crawl/walk/run). Unscored benchmarks are also reported: anomaly count and
-  impact, and the Azure Advisor Cost score.
+  utilization, addressable waste %, anomaly impact %, unit-cost change; with pass/warn/fail/unknown,
+  **KPI health** and separate **evidence coverage**. Legacy crawl/walk/run health bands are not an
+  organizational maturity assessment. Unscored benchmarks include anomaly count and impact when
+  event overlap can be resolved, and the Azure Advisor Cost score.
 - **Accountability**: one action list per owner/team from waste, rightsizing and anomaly findings.
 - **Practice operations**: the next FinOps iteration's focus, assessment cadence, steering
   committee, onboarding, education and chargeback sequencing. See
@@ -61,18 +62,37 @@ Run, or reuse from the same conversation turn, the results of:
 | `waste` | `finops-waste-finder` → `find_waste(...)` | addressable waste |
 | `rightsizing` | `finops-rightsizing-advisor` → `recommend_rightsizing(...)` | addressable waste |
 | `anomalies` | `finops-cost-anomaly-detection` → `detect_anomalies(...)` | anomaly impact |
-| `rows` | prepared AmortizedCost UsageDetails, trailing **60 days** | forecast |
+| `rows` | prepared daily costs, trailing **60 days**, with explicit currency, scope and cost basis | forecast; use a budget-comparable series for budget checks, separate from an amortized optimization ledger |
 | `prior_forecast`, `actual_spend` | `prior_forecast_inputs(daily, closed_month, record_text=...)` (see below) | forecast accuracy |
 | `advisor_cost_score` | `GET .../providers/Microsoft.Advisor/advisorScore/Cost` (see the practice guide) | benchmark |
 
 Every input is optional; a missing input makes its KPI `unknown` rather than failing. Say which
 inputs were missing in the report.
 
-Pass raw Azure responses between steps through deterministic files, not ToolOutputs scanning
-(see `finops-managed-scope` section 6). Save each one with `usage.save_finops_input` before running
-the analysis: Advisor → `tmp/finops-data/advisor.json`, Resource Graph inventory →
-`inventory.json`, budgets → `budgets.json`, tags → `tags.json`. UsageDetails pages are rebuilt
-with `find_usage_tool_output_chains(..., after_timestamp=run_start, thread_id=<this run's thread id>, request_url_prefix=...)`.
+Pass raw responses between steps through deterministic, run-isolated files
+(see `finops-managed-scope` section 6), never shared scratch files or unbounded ToolOutputs scans.
+Establish one unique `run_id` before collection and carry it through every load/save and report step:
+
+```python
+from usage import load_finops_input, save_finops_input
+
+save_finops_input("advisor", advisor_response, run_id=run_id)
+save_finops_input("inventory", inventory_response, run_id=run_id)
+save_finops_input("budgets", budgets_response, run_id=run_id)
+save_finops_input("tags", resource_tags, run_id=run_id)
+save_finops_input("forecast-prepared", forecast_prepared, run_id=run_id)
+resource_tags = load_finops_input("tags", run_id=run_id)
+```
+
+Files live under `/mnt/data/finops-runs/<run_id>/`. A missing input must remain a missing source;
+never load a previous run's file as fallback. UsageDetails page reconstruction must retain the
+same-run `after_timestamp=run_start`, exact thread ID and request URL prefix controls from
+`finops-managed-scope`.
+
+Match cost basis as well as currency, scope, filters and period when comparing a forecast with a
+budget. Use a separate budget-comparable cost series when the optimization ledger has a different
+basis. The context matcher checks the fields documented below; it does not prove that the caller
+selected the correct underlying ledger or that collection was complete.
 
 The forecast and month-over-month inputs need earlier months. For MOSP/MCA subscriptions the
 UsageDetails date filter is ignored and only the current billing period is returned
@@ -98,12 +118,32 @@ read_skill_file(skill_name="finops-kpi-scorecard", file_path="scorecard.py")
 ```
 
 ```python
+from datetime import date, timedelta
 from scorecard import (daily_costs, forecast_spend, unit_economics, kpi_scorecard,
                        route_to_owners, prior_forecast_inputs)
+from usage import load_finops_input, save_finops_input
 
-daily = daily_costs(prepared["included_rows"])
-forecast = forecast_spend(daily,
-                          budget_amount=<monthly budget for the scope, if one exists>)
+prepared = load_finops_input("forecast-prepared", run_id=run_id)
+budgets = load_finops_input("budget-evaluation", default=None, run_id=run_id)
+commitments = load_finops_input("commitment-analysis", default=None, run_id=run_id)
+daily = daily_costs(prepared["included_rows"], currency=prepared["currency"])
+
+# forecast_as_of is the verified last complete observation day, not blindly today's date.
+last_complete = date.fromisoformat(forecast_as_of)
+month_start = last_complete.replace(day=1)
+next_start = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+context = {
+    "scopes": forecast_scopes,  # exact, canonical, nonoverlapping scopes of this cost series
+    "currency": prepared["currency"],
+    "filter": forecast_filter,  # {} only when this series is genuinely unfiltered
+    "period_start": month_start.isoformat(),
+    "period_end_exclusive": next_start.isoformat(),
+}
+forecast = forecast_spend(
+    daily, as_of=last_complete, assume_last_partial=False,
+    context=context, missing_days_are_zero=False,
+)
+# Let the scorecard select exact budget envelopes; never pass summary.total_amount.
 accuracy = prior_forecast_inputs(daily, closed_month, record_text=previous_review_content)
 unit = unit_economics(cost_30d, requests_30d, unit_name="request", per=1000,
                       previous_cost=cost_prev_30d, previous_units=requests_prev_30d)
@@ -115,14 +155,57 @@ card = kpi_scorecard(allocation=allocation, budgets=budgets, commitments=commitm
                      prior_forecast_source=accuracy["source"],
                      advisor_cost_score=advisor_cost_score,
                      period_days=days_of_usage_analyzed)  # anomaly KPI daily-spend denominator
-owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, source="optimization")
+# Use adjudicated, nonoverlapping USD actions for any additive owner savings total.
+# If that selection is unavailable, route items without claiming a realizable aggregate.
+owners = route_to_owners(supported_nonoverlapping_usd_actions,
+                          tags=resource_tags, source="optimization")
+save_finops_input("forecast", forecast, run_id=run_id)
+save_finops_input("forecast-accuracy", accuracy, run_id=run_id)
+save_finops_input("scorecard", card, run_id=run_id)
+save_finops_input("owner-routing", owners, run_id=run_id)
 ```
 
+For a separately selected scalar monthly budget, supply its independently established context:
+
+```python
+forecast = forecast_spend(
+    daily, as_of=last_complete, assume_last_partial=False,
+    context=context, budget_amount=selected_budget_amount,
+    budget_context=selected_budget_context, missing_days_are_zero=False,
+)
+save_finops_input("forecast", forecast, run_id=run_id)
+```
+
+`selected_budget_context` uses the same keys as `context` and must describe the budget, not be
+copied from the forecast just to force a match. Without `budget_context`, legacy scalar-budget
+calls are labeled `budget_comparison.basis: "caller_supplied_monthly_budget"`; that label is a
+caller assertion, not a validated match.
+
 - `forecast_spend` fits a linear trend over the trailing window, adds day-of-week seasonality when
-  at least 28 days exist, and drops the newest day as partial (Cost Management lags 1-2 days).
-  It returns `month_end_forecast` with an 80% `month_end_low`/`month_end_high` band,
-  `next_month_forecast`, `run_rate_30d`, `confidence` and, with a budget, `budget_status`
-  (`on_track` / `at_risk` / `forecast_over`).
+  at least 28 observations exist, and by default treats the newest day as potentially partial.
+  An explicit `as_of` selects the anchor instead. It returns `month_end_forecast` with
+  `month_end_low`/`month_end_high`, `next_month_forecast`, `run_rate_30d`, `confidence` and
+  `context`. These are model estimates, not guaranteed ranges.
+- **Missing dates stay missing.** `missing_days_are_zero=False` fits only observed history,
+  including valid explicit zero values. `history_days` is the count actually fitted;
+  `missing_history_days`, `history_complete`, `missing_mtd_days`, `data_complete`,
+  `missing_day_policy` and `warnings` disclose gaps. Incomplete month-to-date data sets
+  `month_to_date`, `month_end_forecast`, `month_end_low` and `month_end_high` to null while
+  retaining `observed_month_to_date` and the low-confidence trend/next-month estimate.
+  `available: true` means a model was fitted, not that every output or the export is complete.
+- Set `missing_days_are_zero=True` **only** after independently verifying a complete export
+  in which omitted dates genuinely mean zero spend. This is recorded as
+  `missing_day_policy: "explicit_zero"`; a late, failed, truncated or short billing-data pull
+  does not satisfy that requirement. `daily_costs` rejects mixed known/unknown currencies;
+  group by currency or supply a verified denomination, never convert implicitly.
+- **Forecast/budget matching:** `context` requires `scope` or `scopes`, `currency`, `filter`,
+  `period_start` and `period_end_exclusive`. The helper fills the forecast month's boundaries
+  and rejects contradictory supplied boundaries. `kpi_scorecard` selects one exact Monthly cost
+  budget per nonoverlapping forecast scope with matching currency, filter and window. A parent
+  budget is not the denominator for a child-only forecast; parent and child budgets are not
+  added. Duplicate matches or missing context yield an unknown KPI with `detail.reason`.
+  A valid comparison exposes `detail.budget_amount`, `matched_scopes` and `matched_budget_ids`.
+  Missing month-end totals or `data_complete: false` also suppress the comparison.
 - `kpi_scorecard` defaults follow common FinOps targets (allocated ≥ 90%, untagged ≤ 5%,
   every managed scope budgeted, commitment utilization ≥ 95%, waste ≤ 5% of spend). Override with
   `targets={"commitment_coverage_pct": {"target": 60}}` when the customer has agreed different
@@ -138,7 +221,37 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
   - **Reconstructed** (fallback): with no record, the forecast is rebuilt by running
     `forecast_spend` on the days before the closed month. Say that it tests the method, not the
     forecast published at the time.
-  - Pass `prior_forecast_source=inputs["source"]`; the KPI is `unknown` when neither is available.
+  - `actual_spend` is null for an incomplete closed month, even if a forecast record exists.
+    Preserve `observed_actual_spend`, `missing_actual_days` and `actual_complete` for disclosure.
+    The same explicit-zero attestation is available through
+    `prior_forecast_inputs(..., missing_days_are_zero=True)` only for verified complete exports.
+  - Pass `prior_forecast_source=inputs["source"]`; the KPI is `unknown` when the forecast or
+    complete actual is unavailable. Do not compare a recorded USD forecast with another currency.
+- **Health is not evidence coverage:** `kpi_health_pct` is the pass rate among known KPIs;
+  `score_pct` remains its compatibility alias. `evidence_coverage_pct` is the share of all KPIs
+  with known results. Two passing KPIs and ten unknowns therefore mean 100% observed health but
+  only 16.7% evidence coverage. Show both percentages and the status counts.
+  `maturity` is suppressed to `unknown` below 80% evidence coverage. Above that threshold it is
+  only a legacy KPI-health band; `organizational_maturity` remains `unknown` and
+  `maturity_reason` explains the limitation. Never call this an organizational Crawl/Walk/Run
+  assessment or treat missing inputs as passes.
+- **Commitment coverage** uses the commitment advisor's conservative eligible denominator.
+  Retain its full `coverage` detail and `eligibility_basis`; do not reinterpret it as all-service
+  coverage or omit unknown-eligibility amounts.
+- **Optimization overlap:** the waste KPI uses finding-level resource/action or recommendation
+  identity, removes repeated actions and treats stop/delete versus resize options as nonadditive.
+  Distinct supported actions are not automatically merged merely because their resource matches.
+  Headline-only waste cannot be added to rightsizing without evidence resolving overlap.
+  Generic savings need explicit USD currency to join USD spend; unsupported/candidate/
+  contradicted rightsizing rows do not enter the supported numerator. Preserve
+  `duplicates_removed`, `alternative_actions_not_added`, `unsupported_findings_excluded` and
+  any `detail.reason`.
+- **Anomaly overlap:** explicit `event_id`/`eventId` plus event dates/windows can identify the
+  same event across dimensions; repeated identical observations are deduplicated. Equal
+  monetary amounts alone do not prove identity. Native cross-dimensional observations without
+  shared event provenance leave the KPI and event-count/impact benchmarks unknown, with
+  `observed_impact_lower_bound_usd` / `observed_impact_upper_bound_usd` diagnostics. Do not call
+  raw detection rows distinct incidents.
 - `next_iteration_focus` lists up to 3 capabilities with failing, then warning, KPIs. Present them
   as candidates for the next FinOps iteration (see the practice guide).
 - `route_to_owners` checks the `owner`, `team`, `costCenter`, `service`, `app` tags (case-insensitive,
@@ -146,17 +259,21 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
 
 ### Step 3 — Report
 
-1. **Forecast**: month-to-date, month-end forecast with its band, budget status, next month,
-   confidence and method. Never present the forecast as a single exact number.
-2. **Scorecard**: one table row per KPI (value, target, status), the score and the maturity
-   indication, the ordered `actions` list (fail before warn), `benchmarks`, and
+1. **Forecast**: observed subtotal versus complete month-to-date, month-end forecast with its band
+   when available, matched budget status, next month, currency, scope, period, confidence and
+   method. Explain missing days and null totals; never replace them with zero or present the
+   forecast as a single exact number.
+2. **Scorecard**: one table row per KPI (value, target, status), **observed KPI health and evidence
+   coverage side by side**, unknown reasons, the ordered `actions` list (fail before warn), `benchmarks`, and
    `next_iteration_focus`.
 3. **Governance checks**: `governance_checks` (tag policy and budget coverage) with
    `uncovered_budget_scopes` listed by name.
 4. **Unit economics**: cost per unit, change vs previous period, and the interpretation. A rising
    total with a falling unit cost is healthy growth.
-5. **Owner action lists**: one section per owner with total monthly savings and items; then the
-   `unrouted` items as "needs an owner tag".
+5. **Owner action lists**: one section per owner and the `unrouted` items as "needs an owner tag".
+   `route_to_owners` groups inputs; it is not the scorecard's deduplication or currency-validation
+   engine. Route only same-currency, supported, nonoverlapping actions before presenting a
+   realizable monthly savings total; keep candidate alternatives and anomaly impacts separate.
 
 Report the excluded resources, missing inputs and warnings. Recommend only — read-only only.
 
@@ -166,7 +283,7 @@ After reporting, refresh the shared Live Report `FinOps: Monthly Review` so the 
 
 1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Monthly Review (<scope>)`. Skip when the user asks not to save.
 2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
-3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_monthly_review_model({"month": ..., "scorecard": kpi_scorecard_result, "forecast": ..., "month_over_month": ..., "routing": ..., "unit_economics": ...}, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, "finops-monthly-review.html")`.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. Reload results with `load_finops_input("scorecard", run_id=run_id)` and `load_finops_input("forecast", run_id=run_id)`. With `datetime.now(timezone.utc)`, call `build_monthly_review_model({"month": ..., "scorecard": kpi_scorecard_result, "forecast": ..., "month_over_month": ..., "routing": ..., "unit_economics": ...}, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, f"/mnt/data/finops-runs/{run_id}/finops-monthly-review.html")`.
 4. SaveReport the static file with `allowedTools: []`, name `FinOps: Monthly Review`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 
 ## Operating the practice with SRE Agent

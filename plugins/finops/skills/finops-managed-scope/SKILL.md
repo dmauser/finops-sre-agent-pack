@@ -176,7 +176,8 @@ subprocess (it has no Azure credentials). After the chain ends, rebuild every pa
 request URL in **one** Python call and let `usage.py` (code, not the model) validate continuity:
 
 Before the first `az rest` call of the run, record the run start in a Python step
-(`run_start = time.time()`, written to `tmp/finops-data/run_start.txt`). `tmp/ToolOutputs/`
+(`run_id = uuid.uuid4().hex`, `run_start = time.time()`, saved with
+`save_finops_input("run-start", {"timestamp": run_start}, run_id=run_id)`). `tmp/ToolOutputs/`
 persists across scheduled-task executions, so without it pages from earlier runs merge into the
 current chain (a live run assembled a 28-page chain of mixed dates instead of 4 pages).
 
@@ -296,17 +297,54 @@ analysis), save the response under a fixed name with `usage.py`:
 from usage import save_finops_input, load_finops_input
 
 # response saved by the runtime: pass the exact path it reported for that call
-save_finops_input("advisor", source_path="tmp/ToolOutputs/<file reported for the Advisor call>.json")
+save_finops_input("advisor", source_path="tmp/ToolOutputs/<file reported for the Advisor call>.json", run_id=run_id)
 # response shown inline: pass the JSON exactly as returned (string or parsed)
-save_finops_input("budgets", budgets_json)
-save_finops_input("inventory", inventory_json)   # Resource Graph inventory
-save_finops_input("tags", tags_json)             # resource / tag data
+save_finops_input("budgets", budgets_json, run_id=run_id)
+save_finops_input("inventory", inventory_json, run_id=run_id)   # Resource Graph inventory
+save_finops_input("tags", tags_json, run_id=run_id)             # resource / tag data
 # usage_data -> handled by find_usage_tool_output_chains / load_usage_tool_output_pages
 
 # later, in the analysis script
-advisor = load_finops_input("advisor", default=None)   # None when the call failed or was skipped
+advisor = load_finops_input("advisor", default=None, run_id=run_id)
 ```
 
-Files go to `tmp/finops-data/<name>.json` (`advisor.json`, `inventory.json`, `budgets.json`,
-`tags.json`). Delete `tmp/finops-data/` at the start of a scheduled run so stale inputs never leak
-in. A missing file means that source was unavailable; report it as a gap rather than guessing.
+Files go to `/mnt/data/finops-runs/<run_id>/<name>.json`. Writes use unique temporary files and
+atomic replacement. Never delete a shared scratch directory. A missing file means that source
+was unavailable; report it as a gap rather than guessing. For offline callers, an explicit
+isolated `directory=` remains supported. Serialize snapshot rows, not a `CostMap`: rebuild
+`costs_by_resource(snapshot["rows"])` so currency, billing tags and nonresource totals survive.
+
+## 7. Source selection and immutable financial snapshots
+
+Exports are opt-in. The operator must first provision the native export destination, grant only
+container-scoped Blob Data Reader to the agent, and prove that read-only tools can transfer
+complete files into its analysis sandbox. Python has no network access; never assume Azure SDK
+downloads work, enable write tools, use account keys/SAS, or print an entire ledger into chat.
+If the approved transport is unavailable, state that export ingestion is unavailable and use
+the complete UsageDetails fallback only for periods it actually covers.
+
+For a configured export, read its run history, choose the newest **Completed** generation for
+the exact scope, basis and period, and obtain its manifest, ETag and every referenced partition.
+Keep the manifest's blob-relative paths under this run's directory. Pass only that generation
+to `exports.read_export_snapshot`, with the configured dataset version, requested dates,
+expected basis, installed code version, run ID and manifest ETag. The dependency-free helper
+validates CSV/gzip, native EA/MCA/MOSA column aliases, byte and row counts, partition uniqueness,
+safe paths, schema, currency and managed scope. Missing files or mismatches fail explicitly.
+Do not concatenate cumulative MTD exports, use a partly written generation, or ingest FOCUS
+or Parquet through this native-CSV reader.
+
+For UsageDetails, use `make_cost_snapshot(coverage, managed_scopes=effective_scopes,
+requested_start=<YYYY-MM-DD>, requested_end=<YYYY-MM-DD>, run_id=run_id,
+code_version=<installed version/source SHA>)`. Its JSON-safe envelope includes source/basis,
+currency, exact costs, requested and observed dates, completeness, run and content identity.
+Set `coverage["coverage_period"]` only from verified source request/run coverage, not observed row
+dates; otherwise the snapshot remains partial. Persist it using `save_cost_snapshot(snapshot)` and pass
+`cost_context=snapshot` to every report adapter. Select ActualCost for cash-flow budgets and
+AmortizedCost for allocation and optimization, never mixing them. Reconcile resource costs plus
+included nonresource costs to included ledger spend; disclose unresolved observed charges
+separately. ARM resource IDs are case-insensitive; only presentation preserves spelling.
+
+Billing-time tags govern historical showback. Current Resource Graph tags are a separate
+current-governance view and must not rewrite earlier ownership. Missing closed-month exports
+mean unavailable monthly variance, not permission to relabel current MTD as a closed month.
+Data is still subject to settlement and revisions; refresh timestamps are not usage timestamps.

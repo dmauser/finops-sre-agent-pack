@@ -7,7 +7,7 @@
 #            for you, and read-only subscription RBAC for the agent identity
 #            (Reader, Monitoring Contributor, Log Analytics Reader, Cost Management Reader).
 #   Phase 2 (agent data plane, ../install-api.sh): the `finops` plugin (15 skills, installed
-#            from the GitHub URL with auto-update), the finops-investigator subagent, and the
+#            from the GitHub URL with auto-update off), the finops-investigator subagent, and the
 #            scheduled task(s) that keep the Live Report(s) refreshed.
 #
 # It only prompts for agent name, region and resource group (Enter keeps the default).
@@ -52,6 +52,11 @@ COST_OPT_CRON="${COST_OPT_CRON:-}"
 ASSUME_YES="${ASSUME_YES:-0}"
 DRY_RUN=0
 FORCE_INFRA="${FORCE_INFRA:-0}"
+ENABLE_COST_EXPORTS="${ENABLE_COST_EXPORTS:-0}"
+EXPORTS_ONLY="${EXPORTS_ONLY:-0}"
+EXPORT_DATA_VERSION="${EXPORT_DATA_VERSION:-}"
+EXPORT_SCHEDULE_START="${EXPORT_SCHEDULE_START:-}"
+EXPORT_STATUS="${EXPORT_STATUS:-Inactive}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
@@ -69,6 +74,8 @@ while [ $# -gt 0 ]; do
     --tasks) TASK_IDS="${2:?}"; shift 2;;
     -y|--yes) ASSUME_YES=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
+    --cost-exports) ENABLE_COST_EXPORTS=1; shift;;
+    --exports-only) ENABLE_COST_EXPORTS=1; EXPORTS_ONLY=1; shift;;
     -h|--help) usage;;
     *) die "Unknown argument: $1 (see --help)";;
   esac
@@ -89,11 +96,8 @@ if command -v cygpath >/dev/null 2>&1; then
   TASKS_DIR="$(cygpath -w "$TASKS_DIR")"
 fi
 az account show >/dev/null 2>&1 || die "Not logged in to Azure. Run 'az login' first."
-if [ -n "$SUBSCRIPTION_ID" ]; then
-  az account set --subscription "$SUBSCRIPTION_ID" || die "Cannot select subscription $SUBSCRIPTION_ID."
-fi
-SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
-SUBSCRIPTION_NAME="$(az account show --query name -o tsv)"
+SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
+SUBSCRIPTION_NAME="$(az account show --subscription "$SUBSCRIPTION_ID" --query name -o tsv)"
 ok "Subscription: $SUBSCRIPTION_NAME ($SUBSCRIPTION_ID)"
 
 interactive=0
@@ -121,7 +125,7 @@ LOCATION="$(printf '%s' "$LOCATION" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
   die "Invalid resource group name: $RESOURCE_GROUP"
 
 AGENT_RESOURCE_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/agents/$SRE_AGENT_NAME"
-printf '  Agent        : %s\n  Region       : %s\n  Resource grp : %s\n  Tasks        : %s\n  Plugin source: https://github.com/%s/plugins/finops (auto-update)\n' \
+printf '  Agent        : %s\n  Region       : %s\n  Resource grp : %s\n  Tasks        : %s\n  Plugin source: https://github.com/%s/plugins/finops (controlled updates)\n' \
   "$SRE_AGENT_NAME" "$LOCATION" "$RESOURCE_GROUP" "$TASK_IDS" "${REPO_SLUG:-dmauser/finops-sre-agent-pack}"
 
 # Fail fast on a bad task selection before touching Azure.
@@ -161,31 +165,59 @@ BICEP_PARAMS=(
 )
 
 agent_exists=0
-if az resource show --ids "$AGENT_RESOURCE_ID" -o none 2>/dev/null; then agent_exists=1; fi
+if az resource show --subscription "$SUBSCRIPTION_ID" --ids "$AGENT_RESOURCE_ID" -o none 2>/dev/null; then agent_exists=1; fi
+
+deploy_exports() {
+  local operation="$1" identity principal template="$SCRIPT_DIR/exports.bicep"
+  [ -n "$EXPORT_DATA_VERSION" ] || die "Set EXPORT_DATA_VERSION for the billing agreement (MCA/EA: 2021-01-01; MOSA: 2019-11-01)."
+  [ -n "$EXPORT_SCHEDULE_START" ] || die "Set EXPORT_SCHEDULE_START to a fixed future UTC recurrence start."
+  identity="$(az resource show --subscription "$SUBSCRIPTION_ID" --ids "$AGENT_RESOURCE_ID" --query properties.actionConfiguration.identity -o tsv)"
+  principal="$(az identity show --subscription "$SUBSCRIPTION_ID" --ids "$identity" --query principalId -o tsv)"
+  [ -n "$principal" ] || die "Cannot resolve existing agent identity for exports."
+  if command -v cygpath >/dev/null 2>&1; then template="$(cygpath -w "$template")"; fi
+  if [ "$operation" = "create" ]; then
+    az provider register --subscription "$SUBSCRIPTION_ID" --namespace Microsoft.CostManagementExports --wait -o none
+  fi
+  az deployment sub "$operation" --subscription "$SUBSCRIPTION_ID" --name finops-cost-exports \
+    --location "$LOCATION" --template-file "$template" \
+    --parameters resourceGroupName="$RESOURCE_GROUP" agentPrincipalId="$principal" \
+      location="$LOCATION" dataVersion="$EXPORT_DATA_VERSION" \
+      scheduleStart="$EXPORT_SCHEDULE_START" exportStatus="$EXPORT_STATUS" -o json
+}
 
 if [ "$DRY_RUN" = "1" ]; then
   say "Dry run: validating the infrastructure template (no changes)"
   if [ "$agent_exists" = "1" ]; then
     ok "Agent already exists — phase 1 would be skipped; phase 2 would upsert plugin, subagent and tasks."
   else
-    az deployment sub validate -l "$LOCATION" -f "$TEMPLATE" -p "${BICEP_PARAMS[@]}" -o none \
+    az deployment sub validate --subscription "$SUBSCRIPTION_ID" -l "$LOCATION" -f "$TEMPLATE" -p "${BICEP_PARAMS[@]}" -o none \
       || die "Template validation failed."
     ok "Template valid for a new agent '$SRE_AGENT_NAME' in $LOCATION"
+  fi
+  if [ "$ENABLE_COST_EXPORTS" = "1" ]; then
+    [ "$agent_exists" = "1" ] || die "Validate exports after the new agent identity exists."
+    deploy_exports what-if
   fi
   exit 0
 fi
 
 # ---- Phase 1: infrastructure ------------------------------------------------
 say "Phase 1 — infrastructure"
-az provider register --namespace Microsoft.App --wait -o none || die "Could not register Microsoft.App."
+az provider register --subscription "$SUBSCRIPTION_ID" --namespace Microsoft.App --wait -o none || die "Could not register Microsoft.App."
 if [ "$agent_exists" = "1" ] && [ "$FORCE_INFRA" != "1" ]; then
   ok "Agent $SRE_AGENT_NAME already exists — keeping its identity and settings (FORCE_INFRA=1 to redeploy)."
 else
   DEPLOYMENT_NAME="finops-sre-${SRE_AGENT_NAME}"
-  az deployment sub create -n "$DEPLOYMENT_NAME" -l "$LOCATION" -f "$TEMPLATE" \
+  az deployment sub create --subscription "$SUBSCRIPTION_ID" -n "$DEPLOYMENT_NAME" -l "$LOCATION" -f "$TEMPLATE" \
     -p "${BICEP_PARAMS[@]}" -o none || die "Infrastructure deployment failed (az deployment sub show -n $DEPLOYMENT_NAME)."
   ok "Deployed $DEPLOYMENT_NAME"
 fi
+
+# Independent of phase 1's existing-agent shortcut.
+if [ "$ENABLE_COST_EXPORTS" = "1" ]; then
+  deploy_exports create || die "Export deployment failed; report source selection was not changed."
+fi
+if [ "$EXPORTS_ONLY" = "1" ]; then exit 0; fi
 
 say "Waiting for the agent to be ready"
 ENDPOINT=""

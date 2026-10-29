@@ -7,3 +7,5 @@ FAIL CLOSED if discovery is unavailable, malformed, empty, or cannot fully expan
 Use only the resolved effective scopes. Follow the skill contract for independent scoped retrieval, complete pagination, overlap de-duplication, exact UsageDetails transport filtering, and disclosure of included, excluded, unattributed, unsupported, and partial/failed coverage. Never infer a parent or substitute scope.
 
 Azure operations are read-only: GET/read commands only; never use Azure POST, PUT, PATCH, DELETE, or a write tool.
+
+Follow managed-scope sections 6-7: unique `run_id`, isolated inputs, complete export generation or disclosed UsageDetails fallback, immutable ledger and `cost_context=snapshot` in every report builder. Never delete shared scratch, substitute a different month, treat unknown as zero, or promote unverified savings.

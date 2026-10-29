@@ -10,6 +10,47 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Auditable cost snapshots and native-export foundation**: run-isolated, write-once ledgers with
+  currency, basis, requested/observed coverage, source hashes and report provenance; offline
+  CSV/gzip manifest/partition validation and additive Hot ZRS export infrastructure. Export jobs
+  stay inactive until network, SRE Agent transport and real-ledger reconciliation gates pass.
+- **Production operations guide**: controlled upgrades, explicit source-SHA verification, rollback,
+  permissions, coverage limitations, and incremental storage/AAU validation costs.
+- **Blocked-transport alternative**: approval-only read-only MCP design, remote OAuth and complete-file
+  acceptance gates, and a separately priced component scenario accounting for connector heartbeats.
+  No additional connector or networking infrastructure is deployed implicitly.
+
+### Changed
+
+- **Evidence before savings**: distinguish supported, candidate and contradicted estimates;
+  require representative metrics and complete child inventory; deduplicate resource recommendations.
+- **Monthly Review**: KPI health and evidence coverage replace the organizational-maturity claim.
+  Incomplete history suppresses forecasts; comparison requires compatible budget context.
+- **Safer installation defaults**: Cost Optimization only, plugin auto-update off, preserved
+  existing task settings, explicit notification changes, and subscription Monitoring Reader
+  instead of pack-owned Monitoring Contributor. Existing platform resource-group roles stay intact.
+
+### Fixed
+
+- **Financial integrity**: canonical resource identities, mixed-currency/invalid-cost rejection,
+  nonresource reconciliation, billing-time allocation tags and distinct current-tag governance.
+- **Budget and commitment semantics**: missing measurements remain unknown, overlapping budgets
+  are not summed, notification rules stay distinct from analytical thresholds, and ineligible/
+  uncertain usage does not inflate commitment eligibility.
+- **Specialized evidence**: AI ancillary/unclassified meters are not assumed compute; unexplained
+  SRE AAUs remain unreconciled; unavailable reliability sources cannot imply no risk.
+- **Concurrent runs and portable generation**: isolated scratch and strict continuation boundaries
+  prevent cross-run contamination; generated task references use UTF-8 consistently.
+
+### Security
+
+- **Read-only export access**: Entra-only container reads, disabled shared keys/anonymous access,
+  explicit networking controls, and a guarded legacy monitoring-role migration with rollback.
+- **Release gates remain explicit**: storage provisioning and offline tests do not establish live
+  transport support or production readiness; no policy bypass or extra connector is added implicitly.
+
 ## [0.2.0] - 2026-10-29
 
 ### Added

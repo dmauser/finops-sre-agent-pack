@@ -234,3 +234,105 @@ def test_spend_period_is_reported_in_headline():
                                  spend_period=("2026-10-01", "2026-10-22T00:00:00"), as_of=AS_OF)
     assert out["headline"]["spend_period"] == {"from": "2026-10-01", "to": "2026-10-22"}
     assert "spend_period" not in summarize_optimization(as_of=AS_OF)["headline"]
+
+
+def test_regression_separate_supported_candidate_and_contradicted_savings():
+    findings = [_finding("supported", 20), _finding("candidate", 30, validated=None),
+                _finding("contradicted", 90, validated=False)]
+    out = summarize_optimization(rightsizing=findings, as_of=AS_OF)
+    assert out["headline"]["potential_monthly_savings"] == 20
+    roll = out["rightsizing"]
+    assert roll["supported_monthly_savings"] == 20
+    assert roll["candidate_monthly_savings"] == 30
+    assert roll["contradicted_monthly_savings"] == 90
+    assert not any("contradicted" in item["title"] for item in out["priorities"])
+    assert next(item for item in out["priorities"] if "candidate" in item["title"])["impact_type"] == "candidate savings"
+
+
+def test_regression_duplicate_rightsizing_resources_not_added_twice():
+    findings = [_finding("/resource/a", 20), _finding("/RESOURCE/A/", 20),
+                _finding("/resource/a", 40, validated=None)]
+    out = summarize_optimization(rightsizing=findings, as_of=AS_OF)
+    assert out["headline"]["potential_monthly_savings"] == 20
+    assert out["rightsizing"]["count"] == 1
+    assert out["rightsizing"]["deduplicated"] == 2
+    assert len(out["priorities"]) == 1
+
+
+def test_regression_unvalidated_rightsizing_does_not_hide_supported_waste():
+    for status in (None, False):
+        out = summarize_optimization(
+            rightsizing=[_finding("/resource/a", 90, validated=status)],
+            waste={"currency": "USD", "findings": [
+                {"resourceId": "/RESOURCE/A/", "kind": "orphan", "estMonthlySavings": 70},
+                {"resourceId": "/RESOURCE/A", "kind": "orphan", "estMonthlySavings": 70},
+            ]}, as_of=AS_OF)
+        assert out["headline"]["usage_optimization_monthly_savings"] == 70
+        assert out["waste"]["count"] == 1
+        assert len([item for item in out["priorities"] if item["impact_type"] == "savings"]) == 1
+
+
+def test_regression_mixed_currency_savings_are_not_summed_or_labelled_usd():
+    findings = [
+        dict(_finding("usd", 20), currency="USD", estMonthlySavings=20),
+        dict(_finding("eur", None), currency="EUR", estMonthlySavings=30),
+    ]
+    out = summarize_optimization(rightsizing=findings, as_of=AS_OF)
+    assert out["headline"]["potential_monthly_savings"] is None
+    assert out["rightsizing"]["savings_by_currency"]["supported"] == {"EUR": 30, "USD": 20}
+    euro = next(item for item in out["priorities"] if "eur" in item["title"])
+    assert euro["impact_usd"] is None
+    assert euro["impact"] == 30
+    assert euro["currency"] == "EUR"
+
+
+def test_unknown_currency_is_not_added_to_usd_waste():
+    out = summarize_optimization(
+        rightsizing=[dict(_finding("unknown", None), currency=None, estMonthlySavings=20)],
+        waste={"currency": "USD", "findings": [
+            {"resourceId": "known", "kind": "orphan", "estMonthlySavings": 30}]}, as_of=AS_OF)
+    assert out["headline"]["usage_optimization_monthly_savings"] is None
+    assert out["headline"]["usage_optimization_savings_by_currency"] == {"unknown": 20, "USD": 30}
+
+
+def test_contradictions_do_not_crowd_supported_priorities_out_of_top_eight():
+    rows = [_finding(f"bad{i}", 1000, validated=False) for i in range(10)]
+    rows.append(_finding("good", 10))
+    out = summarize_optimization(rightsizing=rows, as_of=AS_OF)
+    assert len(out["priorities"]) == 1
+    assert out["priorities"][0]["impact_usd"] == 10
+    assert out["headline"]["potential_monthly_savings"] == 10
+    assert out["rightsizing"]["contradicted_monthly_savings"] == 10000
+
+
+def test_explicitly_invalid_waste_is_not_actionable():
+    out = summarize_optimization(waste={"currency": "USD", "findings": [
+        {"resourceId": "invalid", "kind": "orphan", "estMonthlySavings": 100, "validated": False},
+        {"resourceId": "review", "kind": "idle", "estMonthlySavings": 50, "validated": None},
+    ]}, as_of=AS_OF)
+    assert out["headline"]["waste_monthly_savings"] == 0
+    assert out["waste"]["contradicted_monthly_savings"] == 100
+    assert out["waste"]["candidate_monthly_savings"] == 50
+    assert len(out["priorities"]) == 1
+    assert out["priorities"][0]["impact_type"] == "candidate savings"
+
+
+def test_regression_review_without_estimate_cannot_hide_quantified_candidate():
+    out = summarize_optimization(
+        rightsizing=[_finding("/resource/a", None, kind="review", validated=None)],
+        waste={"currency": "USD", "findings": [
+            {"resourceId": "/RESOURCE/A/", "kind": "idle", "estMonthlySavings": 70,
+             "validated": None}]}, as_of=AS_OF)
+    assert out["waste"]["candidate_monthly_savings"] == 70
+    assert out["rightsizing"]["count"] == 0
+    assert out["headline"]["usage_optimization_monthly_savings"] == 0
+
+
+def test_cross_analysis_alternatives_choose_larger_supported_saving_without_adding():
+    out = summarize_optimization(
+        rightsizing=[_finding("/resource/a", 40)],
+        waste={"currency": "USD", "findings": [
+            {"resourceId": "/resource/a", "kind": "idle", "estMonthlySavings": 70}]},
+        as_of=AS_OF)
+    assert out["headline"]["usage_optimization_monthly_savings"] == 70
+    assert len(out["priorities"]) == 1

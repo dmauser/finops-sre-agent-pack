@@ -33,7 +33,7 @@ _TEMPLATE_TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 
 
 def _load_manifest_data():
-    data = json.loads(MANIFEST.read_text())
+    data = json.loads(MANIFEST.read_text(encoding="utf-8"))
     tasks = data.get("tasks")
     retired = data.get("retiredTasks")
     if (
@@ -186,8 +186,8 @@ def render_task(task, reference=False):
             if reference
             else _env(task["reportNameEnv"], task["defaultReportName"]),
         )
-    scope = _substitute(SCOPE_PROMPT.read_text(), values)
-    prompt = _substitute((ROOT / task["prompt"]).read_text(), values)
+    scope = _substitute(SCOPE_PROMPT.read_text(encoding="utf-8"), values)
+    prompt = _substitute((ROOT / task["prompt"]).read_text(encoding="utf-8"), values)
     model_default = _env("MODEL_TIER", "ReasoningHeavy")
     name = _plain_value(
         task["nameEnv"],
@@ -280,10 +280,10 @@ def write_or_check(check):
         path = ROOT / task["yaml"]
         expected = render_yaml(task)
         if check:
-            if not path.is_file() or path.read_text() != expected:
+            if not path.is_file() or path.read_text(encoding="utf-8") != expected:
                 drift.append(str(path.relative_to(ROOT)))
         else:
-            path.write_text(expected)
+            path.write_bytes(expected.encode("utf-8"))
     for task in retired:
         path = ROOT / task["yaml"]
         if path.exists():
@@ -330,6 +330,16 @@ def write_install_plan(existing_path, output_dir):
         if len(matches) > 1:
             raise ValueError(f"Multiple scheduled tasks have canonical name: {payload['name']}")
         current = matches[0] if matches else {}
+        if current and os.environ.get("PRESERVE_TASK_SETTINGS", "true") == "true":
+            for key in ("modelTier", "agentMode", "status", "startTime", "endTime", "maxExecutions"):
+                if key in current:
+                    payload[key] = current[key]
+            if not os.environ.get(task["cronEnv"]) and "cronExpression" in current:
+                payload["cronExpression"] = current["cronExpression"]
+        if (current and "SendEmailToUser" in (current.get("agentPrompt") or "")
+                and not os.environ.get("ALERT_EMAIL")
+                and os.environ.get("DISABLE_NOTIFICATIONS") != "true"):
+            raise ValueError("Existing task uses email: supply its approved ALERT_EMAIL or explicitly set DISABLE_NOTIFICATIONS=true")
         current_id = _api_id(current.get("id"))
         if matches and not current_id:
             raise ValueError(f"Existing scheduled task has no id: {payload['name']}")
