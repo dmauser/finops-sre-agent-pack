@@ -22,6 +22,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-Astra plugin auto-update-on policy. See the onboarding rollback note for the live-state
   exceptions and baseline limitations.
 
+### Removed
+
+- Removed the lab-only `FinOps: Export transport canary` scheduled task. The twelve original
+  report tasks remain; retained export storage and its four Inactive export jobs are unchanged.
+
 ## [0.2.0] - 2026-10-29
 
 ### Added

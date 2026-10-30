@@ -50,6 +50,7 @@ provisioning definitions remain on the archive branch in `plugins/finops/deploy/
 and `export-storage.bicep`; do not delete their data or enable ingestion as part of redeployment.
 Disabled exports stop scheduled generation, not storage charges for retained data. No export
 connector is installed. Plugin **auto-update is on**, matching the original setup.
+The temporary `FinOps: Export transport canary` scheduled task is removed, not retained paused.
 
 The rollback restores the original investigator and twelve task definitions, preserving their
 IDs, schedules and recipients. A one-time run of those jobs regenerates the saved dashboards
