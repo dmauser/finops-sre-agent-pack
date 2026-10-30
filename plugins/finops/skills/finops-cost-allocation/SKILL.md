@@ -22,17 +22,6 @@ use `finops-rightsizing-advisor`.
 
 ## Scope
 
-Use the currency-aware `CostMap` rebuilt from snapshot rows for historical showback: every row's
-billing-time tags determine ownership. Never replace those tags with today's Resource Graph
-inventory. Pass current tags separately to populate `current_tag_governance`; this is a distinct
-current-inventory view, not a restatement of history. Resource counts coalesce case-insensitive
-ARM IDs while retaining all legitimate charges. Included nonresource cost remains unallocated.
-
-Current scope inheritance is ignored for billing rows unless `inherited_tags_are_historical=True`
-explicitly attests historical provenance. Legacy plain-dict inputs use current inventory tags and
-are labeled `allocation_basis="current_inventory"`. Historical comparisons require complete,
-same-basis periods; never substitute current-month rows for an unavailable closed month.
-
 Attributes any resource that lands a cost line item in Consumption UsageDetails — the allocation is
 **service-agnostic** (it works off cost + tags, not a hard-coded resource list). It is also
 **tag-generic**: it groups by whatever tag keys exist in your data (a **tag inventory**) and treats
@@ -71,11 +60,9 @@ trailing ~30 days. This skill's projection must explicitly retain `tags`:
 --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
-After managed-scope filtering and immutable snapshot creation, call
-`costs = costs_by_resource(snapshot["rows"])` from managed-scope `usage.py`.
-Pass this `CostMap` directly: a plain-dict or float-only conversion discards billing-time tags,
-currency and nonresource charges. Resource Graph in Step 2 remains the source only for the
-separate current-governance view.
+After managed-scope filtering, aggregate `cost` by resource id into
+`{resourceId: monthly_usd}` with case-insensitive ids. Resource Graph in Step 2 remains the source
+for the current resource tag map used by `allocate_costs`.
 
 Perform the page merge and managed-scope filtering with `finops-managed-scope`'s
 `prepare_usage_details(...)`, then pass only `included_rows` into the allocation input transform.
@@ -118,17 +105,12 @@ read_skill_file(skill_name="finops-cost-allocation", file_path="allocate.py")
 
 ```python
 from allocate import allocate_costs
-from usage import costs_by_resource
-costs = costs_by_resource(snapshot["rows"])
 result = allocate_costs(
-    costs=costs,               # Preserve CostMap metadata and billing-time rows.
+    costs=costs,               # from Step 1  {resourceId: monthly_usd}
     tags=tags,                 # from Step 2  {resourceId: {tagKey: tagVal}}
     dimension="team",          # or env / service / costCenter / app / owner
 )
 ```
-
-Keep the user's requested owner dimension even if it has no coverage. A scheduled team/owner
-review must not switch to `env` or the most-populated tag to hide an ownership gap.
 
 `allocate_costs` handles all grouping and governance:
 

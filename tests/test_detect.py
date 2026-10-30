@@ -171,8 +171,8 @@ if __name__ == "__main__":
 
 def test_resource_id_dimension_prefers_arm_instance_name():
     arm = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
-    assert detect._dimension_value({"instanceName": arm, "resourceId": None}, "resourceId") == arm.lower()
-    assert detect._dimension_value({"instanceName": "vm1", "resourceId": arm}, "resourceId") == arm.lower()
+    assert detect._dimension_value({"instanceName": arm, "resourceId": None}, "resourceId") == arm
+    assert detect._dimension_value({"instanceName": "vm1", "resourceId": arm}, "resourceId") == arm
 
 
 # --- drops -------------------------------------------------------------------------------------

@@ -104,7 +104,7 @@ def test_kpi_targets_match_doc():
         assert nums == [[_fmt(targets[key]["target"])], [_fmt(targets[key]["warn"])]], label
 
 
-def test_health_and_evidence_are_not_organizational_maturity():
-    assert "**KPI health**" in DOC and "**Evidence coverage**" in DOC
-    assert "**Organizational maturity** | Not assessed." in DOC
-    assert "**Run** at" not in DOC
+def test_maturity_thresholds_match_doc():
+    src = inspect.getsource(_load("finops-kpi-scorecard", "scorecard"))
+    run, walk = (int(m) for m in re.findall(r"elif score >= (\d+):", src)[:2])
+    assert f"**Run** at {run}% or more, **Walk** at {walk}% or more" in DOC

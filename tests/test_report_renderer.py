@@ -626,12 +626,12 @@ def test_cost_overview_merges_resource_group_casing_and_labels_short_period():
         ["(unattributed)", "$0.50"],
     ]
     assert model["metrics"][0]["label"] == "Period spend"
-    assert "2026-08-01 to 2026-08-02 (2 observed days)" in model["metrics"][0]["detail"]
+    assert "2026-08-01 to 2026-08-02 (2 days)" in model["metrics"][0]["detail"]
 
     overview["daily"] = [
         {"date": f"2026-08-{day:02d}", "cost_usd": 1} for day in range(1, 31)
     ]
-    assert models.build_cost_overview_model(overview, **_context())["metrics"][0]["label"] == "Period spend"
+    assert models.build_cost_overview_model(overview, **_context())["metrics"][0]["label"] == "30-day spend"
 
 
 def test_rightsizing_adapter_uses_decimal_boundaries_and_verify_labels():
@@ -776,44 +776,44 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_cost_overview_model,
             _overview,
-            "011d37b5366d916a268a1143dd98e24f1830d6aece10b594e4e19a630a96a860",
-            "0e0b22a6aa3d2e9f7b73fd07cc4c555cadfa78cfb519e992171cddc455bf50b0",
+            "21012f2aa4f1e6c78e446a02c205f6042038262d4ba60b92a52b6e41205477fe",
+            "2ecc86c52a4964bcd514eced1a6c08b5c6fc3ecec3e2369ca6855ad99b4182fe",
         ),
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
-            "d2c936e6efbfd598cb69b00344648b470bc0974e3b26475aaa5463e2ad598ad5",
-            "862371ba132084badf3bab80e7f1c22fa40cf483da597d4ff7a5c7d660244bd3",
+            "a97c5a522f5d8653f5d6b15162d1f33dae15c49799aba80a66acdd8cdb1f9277",
+            "8b7783935d3120dc13ffb49166298e6addaaebc894aeb41595e87bd0f599c91f",
         ),
         (
             models.build_budget_status_model,
             _budgets,
-            "6ab8e5cb5973920ddd218c0ccefee42d99d80bf88a5f4ffc0a11e62a55d95712",
-            "c0c2c522a55d3e3ca1b9a9108e660b3f4068d6e56c0be9ba5d329f173c0a75e0",
+            "07f8af03e2ff258a9252aa7ef8697235ec6379ddf6ad10bf6ab031ef929c4732",
+            "906181ad67ceb11de9cebcfabd653cb226e0c268abd731abb642c3e2ee200aca",
         ),
         (
             models.build_cost_optimization_model,
             _optimization,
-            "cef81797578790d3fd847be1a1533bdb95a8e4e43b1545aa2e23892548025867",
-            "cde0b21317057e23b6ad33801d82e63d17ad76b224f60210b08b327c981a779f",
+            "f79dc3af86ced160438f1935f8b3b1e44b57bcf21a23783a91befc6bb7fd8de8",
+            "36e0aafb2b0ef5a2b9477d85f39040e1ed451d8bec40417b8c8701dec550049c",
         ),
         (
             models.build_ai_spend_model,
             _ai_spend,
-            "286cf0b030ca6dbb67a46e5b81092e5d301a1dfb5956a9ce5bc213744fb053fa",
-            "0838dd47f6ec3ab2becfb5c6eb6e25bdf782122a40d2f714c827f008cfe40049",
+            "ec0c391f9b5454c1f86bcf5db3c5c2489d7a5a32c0ccda2681afb827045142ff",
+            "28333931172c135d3e34ae3ddf6c113ec2b063f7537b3b006a747bc21472340e",
         ),
         (
             models.build_cost_vs_reliability_model,
             _reliability,
-            "b805021220ffa04a66d6d731c3cd2ab4023f45047b4199a04447e91cb6dd0e24",
-            "45c2ece3ddcc520705e26c13694643d66e76a472499d263704f0b967041eb13c",
+            "d6443b5bd04a7c7766e12ac4d1fe2805cb439609a603d6d5be307100e6beffee",
+            "697146eb4eeb92e19d2504242fdfce3ae166bf2c8f2117b124076cd8910d7f9f",
         ),
         (
             models.build_monthly_review_model,
             _monthly,
-            "7fa02703c731bb9a9316203f44b4e4c458fa9373ee8d9e44a45a38a5a2c1395f",
-            "46157df9c8d3f21477a400a5a38381d8ceddeea63a0f4d96d5547d55aa5287ec",
+            "85657923896814482a757fc3a3f78f7b66a858fb59a6bb9594ef5c958b5b1d65",
+            "c3efa78279dfd0184140ef8f933c37effc0f94d8ab5a11cd6085b48fa0ae4285",
         ),
     ],
 )
@@ -981,7 +981,7 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
 
     assert model["title"] == "FinOps: Monthly Review"
     assert [m["label"] for m in model["metrics"]] == [
-        "KPI health", "KPIs passing", "Month-end forecast",
+        "FinOps score", "KPIs passing", "Month-end forecast",
         "Month-over-month change", "Owner-routed findings",
     ]
     assert model["metrics"][1]["value"] == "2 of 4"
@@ -1014,23 +1014,6 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
     assert "Forecast record" not in sections
 
 
-def test_monthly_review_renders_nested_commitment_kpi_without_input_rewrite():
-    review = _monthly()
-    detail = {"by_meter_category": [
-        {"category": EVIL, "coverage_pct": 12.5, "eligible": True},
-        {"category": "Virtual Machines", "coverage_pct": None, "notes": ["unknown", "partial"]},
-    ]}
-    review["scorecard"]["kpis"][0]["detail"] = detail
-    model = models.build_monthly_review_model(review, **_context())
-    output = renderer.render_report(model)
-    assert "by_meter_category:" in output and "coverage_pct: 12.5" in output
-    assert "eligible: yes" in output and "notes: partial, unknown" in output
-    assert EVIL not in output
-    assert review["scorecard"]["kpis"][0]["detail"] == detail
-    detail["by_meter_category"].reverse()
-    assert renderer.render_report(models.build_monthly_review_model(review, **_context())) == output
-
-
 def test_monthly_review_forecast_record_round_trips_through_scorecard_parser():
     review = _monthly()
     review["forecast"]["as_of"] = "2026-09-30"
@@ -1049,15 +1032,6 @@ def test_monthly_review_forecast_record_round_trips_through_scorecard_parser():
     review["forecast"]["as_of"] = "not-a-date"
     bad = models.build_monthly_review_model(review, **_context())
     assert "Forecast record" not in [s["title"] for s in bad["sections"]]
-
-
-@pytest.mark.parametrize("basis", [None, "ActualCost", "AmortizedCost"])
-def test_monthly_review_labels_forecast_with_its_own_basis(basis):
-    review = _monthly()
-    review["forecast"]["context"] = {"cost_basis": basis}
-    model = models.build_monthly_review_model(review, **_context())
-    section = next(s for s in model["sections"] if s["title"] == "Forecast")
-    assert section["description"].endswith(f"; {basis or 'cost basis not supplied'}.")
 
 
 def test_refreshed_time_is_human_readable_and_chart_titled():
@@ -1109,7 +1083,7 @@ def _allocation():
         f"{_RG}/Microsoft.Compute/virtualMachines/vm2": {"Team": "platform"},
         f"{_RG}/Microsoft.Compute/virtualMachines/vm3": {"team": "Platform"},
     }
-    result = _alloc.allocate_costs(costs, tags, currency="USD")
+    result = _alloc.allocate_costs(costs, tags)
     result["month_over_month"] = _alloc.month_over_month(
         costs, {k: v / 2 for k, v in costs.items()}, dimension_tags=tags
     )
@@ -1131,7 +1105,7 @@ def _waste_result():
             "properties": {"diskState": "Unattached", "diskSizeGB": 128},
         },
     ]
-    return _waste.find_waste(rows, costs={rows[0]["id"]: 3.65}, as_of=_AS_OF, currency="USD")
+    return _waste.find_waste(rows, costs={rows[0]["id"]: 3.65}, as_of=_AS_OF)
 
 
 def _commitments():

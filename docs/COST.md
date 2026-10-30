@@ -19,8 +19,6 @@ choose which ones to enable.
 - [Keep costs predictable](#keep-costs-predictable)
 - [What makes your cost different](#what-makes-your-cost-different)
 - [How these estimates were measured](#how-these-estimates-were-measured)
-- [Incremental cost of production hardening](#incremental-cost-of-production-hardening)
-- [Approval-required connector cost scenario](#approval-required-connector-cost-scenario)
 
 ## How SRE Agent is billed
 
@@ -82,7 +80,7 @@ You don't have to run every report. Enable only the ones that answer questions y
 
 - **`deploy.sh`** installs only **Cost Optimization** by default. Add more with
   `--tasks cost-optimization-report,waste-finder-report`, or use `--tasks all` for every report.
-- **`install-api.sh`** also defaults to Cost Optimization only. Select others with `TASK_IDS`, for example
+- **`install-api.sh`** installs all 12 by default. Limit it with `TASK_IDS`, for example
   `TASK_IDS=cost-overview-report,budget-status-report AGENT_RESOURCE_ID=<id> ./plugins/finops/install-api.sh`.
 - **After install**, pause or delete a task under **Scheduled tasks** in the SRE Agent portal. A paused
   task uses no active flow.
@@ -129,94 +127,3 @@ AAU consumption depends on the tokens each run uses, so your cost will vary with
 
 The sample is small, and a larger or busier environment will use more AAUs per run. Treat these numbers
 as a starting point and check your own consumption after the first runs.
-
-## Incremental cost of production hardening
-
-The optional native-export design reuses the existing agent and model. It adds one Central US
-StorageV2 account using **Hot Standard_ZRS**, not another agent or always-on compute service.
-Cost Management itself has no extra Azure-service fee; its storage destination is billed.
-
-Public retail rates checked 2026-10-29, USD consumption, Central US, General Block Blob v2 Hot ZRS:
-
-| Meter | Unit price |
-|---|---:|
-| Stored data, first tier | $0.023 / GB-month |
-| Read operations | $0.004 / 10,000 |
-| Write/list/create-container operations | $0.0625 / 10,000 |
-
-Illustration: **10 GB total retained**, 100,000 reads and 10,000 writes per month costs
-`10 × 0.023 + 10 × 0.004 + 1 × 0.0625 = $0.3325/month`.
-**$1–$5/month is a small-lab planning allowance, not a cap or forecast.** It excludes transfer,
-logs, taxes, extra services and larger retained datasets. Daily cumulative exports, 400-day closed
-history, soft-deleted blobs and revisions all consume storage; do not confuse daily file size with
-total retained capacity.
-
-If active AAUs stayed unchanged, the old all-report lab scenario would move from about
-**$787/month** ($292 always-on + $495 active) to about **$788–$792/month** with that storage allowance.
-This excludes the workloads being analyzed. Reconciliation, richer evidence and retries can
-increase active AAUs; exports may reduce paging but **no AAU saving is promised**.
-
-One run of each of the 12 reports at the earlier median rates totals **$53.70**. Cost Overview and
-Budget Status canaries add **$7.20**, giving **$60.90** for that validation sequence before transport
-smoke tests, retries and reruns. This is separate from ongoing schedules.
-
-Security-controlled networking can prevent direct export reads. A private endpoint, connector,
-private DNS or additional compute is **not included or automatically deployed**; price and approve
-that design separately. See [production gates](PRODUCTION.md).
-
-Sources: [Azure Retail Prices API](https://prices.azure.com/api/retail/prices),
-[Blob Storage pricing](https://azure.microsoft.com/pricing/details/storage/blobs/),
-[Cost Management pricing](https://azure.microsoft.com/pricing/details/cost-management/).
-
-## Approval-required connector cost scenario
-
-The direct-export transport failed in the reference runtime. The
-[alternative design](PRODUCTION.md#if-direct-transport-fails-approval-required-alternative) proposes
-a narrowly scoped, read-only remote MCP service; **it is not deployed or included in the $1-$5
-storage allowance**. A connector requires security/architecture approval and a working authentication
-flow before implementation.
-
-The following is a component-pricing scenario, **not a complete solution quote, forecast or cap**.
-Public USD consumption rates were checked on 2026-10-29 using the Azure Retail Prices API:
-Central US Container Apps Standard meters, global Private Link Standard first-tier meters, and
-Azure DNS Private first-tier meters. Assume 730 hours/month, one 1-vCPU/2-GiB replica billed active
-for the entire month, one storage private endpoint, one new private DNS zone, 10 GB of total
-private-endpoint data processing, 1,000 DNS queries and 53,800 HTTP requests.
-
-| Component | Rate and calculation | Illustrative monthly amount |
-|---|---|---:|
-| Container Apps active vCPU | $0.000024/vCPU-second x 1 x 2,628,000 seconds | $63.072 |
-| Container Apps active memory | $0.000003/GiB-second x 2 x 2,628,000 seconds | $15.768 |
-| HTTP requests | $0.40/million x 0.0538 million | $0.02152 |
-| Storage private endpoint | $0.01/hour x 730 hours | $7.30 |
-| Private Link data processing | $0.01/GB x 10 GB total ingress/egress | $0.10 |
-| Private DNS zone | $0.50/zone-month x 1 | $0.50 |
-| Private DNS queries | $0.40/million x 0.001 million | $0.0004 |
-| **Listed components only** | Sum, rounded | **$86.76** |
-
-Why show a full-month compute scenario? SRE Agent
-[pings remote MCP connectors every 60 seconds](https://learn.microsoft.com/azure/sre-agent/mcp-connectors#connection-health-monitoring):
-about 43,800 pings over 730 hours, plus the 10,000 application requests assumed above. These requests
-can prevent scale-to-zero. This scenario deliberately does not assume idle billing or unused free
-grants. Actual active/idle time, scaling, heartbeat behavior and shared subscription free-grant
-consumption must be measured; multiple replicas or heavier workloads can cost more.
-
-The subtotal **excludes** existing export storage/operations, SRE Agent AAUs, image registry,
-logging, authentication gateway/hosting, durable encrypted OAuth state, secret/signing-key
-management, NAT, bandwidth outside the stated data-processing
-assumption, taxes, and any extra environment features. Container Apps Environment Private Endpoint
-and Environment Management meters were each listed at $0.10/hour ($73 per 730-hour month) where
-applicable; do not confuse them with the $0.01/hour **storage** private endpoint above. Confirm the
-chosen environment's billable features before approval. A private endpoint on the MCP host does
-not by itself solve the documented public-endpoint requirement for remote OAuth.
-
-An existing approved hosting/authentication platform may avoid some new fixed charges, but its
-capacity and internal charges are not assumed free. Reprice the selected design and obtain
-approval rather than adding this scenario silently to the existing lab.
-For an OAuth proxy, ephemeral container storage is not a production persistence solution; the
-selected encrypted state backend and secret-management design must be priced separately.
-
-Sources: [Azure Retail Prices API](https://prices.azure.com/api/retail/prices),
-[Container Apps pricing](https://azure.microsoft.com/pricing/details/container-apps/),
-[Private Link pricing](https://azure.microsoft.com/pricing/details/private-link/),
-[Azure DNS pricing](https://azure.microsoft.com/pricing/details/dns/).

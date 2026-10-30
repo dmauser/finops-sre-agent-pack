@@ -1,6 +1,6 @@
 ---
 name: finops-cost-optimization-report
-description: Executive FinOps rollup for Azure — one report bundling cost anomalies, rightsizing and waste-cleanup savings, rate optimization (reservations, savings plans, Hybrid Benefit), Azure SRE Agent (AAU) spend, budget status, and governance (policy) findings. It orchestrates the existing read-only skills (finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-sre-agent, finops-cost-allocation, finops-budget-governance), then rolls their outputs up with the bundled summarize.py using the runtime's sandbox Python tool into evidence-separated savings headlines, currency-aware priorities, and per-section detail. Read-only — no writes; "policy findings" reuse existing tag-hygiene and budget-gate signals rather than a new data source. Use for a periodic FinOps review, a cost-optimization summary, or an executive "where should we act" briefing.
+description: Executive FinOps rollup for Azure — one report bundling cost anomalies, rightsizing and waste-cleanup savings, rate optimization (reservations, savings plans, Hybrid Benefit), Azure SRE Agent (AAU) spend, budget status, and governance (policy) findings. It orchestrates the existing read-only skills (finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-waste-finder, finops-commitment-advisor, finops-sre-agent, finops-cost-allocation, finops-budget-governance), then rolls their outputs up with the bundled summarize.py using the runtime's sandbox Python tool into an executive headline, a single dollar-ranked priorities list, and per-section detail. Read-only — no writes; "policy findings" reuse existing tag-hygiene and budget-gate signals rather than a new data source. Use for a periodic FinOps review, a cost-optimization summary, or an executive "where should we act" briefing.
 ---
 
 ## When to use this skill
@@ -36,8 +36,7 @@ underlying skill pulls and shapes its own data; this skill only aggregates their
 inherits their scope and caveats (e.g. `currentSpend` can lag on a fresh budget; a `run-rate` budget
 forecast is an estimate; rightsizing rows marked unvalidated need verification). Any analysis that
 can't run or returns nothing becomes an **empty section**, not a failure — a partial report still
-ships. Usage-optimization inputs may carry different currencies, but no exchange conversion is
-performed: totals are separated by currency, with mixed-currency scalar totals left unavailable.
+ships. Cross-currency portfolios are out of scope until needed.
 
 ## Procedure
 
@@ -89,20 +88,15 @@ run them in this order so the expensive evidence is never the part that gets cut
    413 fallbacks fail — never because the run moved on.
 2. **Utilization metrics for the top candidates.** Rank rightsizing/waste compute candidates
    (VMs, Container Apps, session pools) by monthly cost from step 1 and pull Azure Monitor metrics
-   (CPU **and memory**, request/session activity, and sample coverage) for at least the **top 15
-   by cost** before ranking. Collect independent background/workload activity before supporting
-   VM or Container App idle actions. CPU-only or zero-HTTP-request evidence remains a candidate,
-   even within the top 15; missing or sparse evidence must not be manufactured to meet the bound.
-   Follow the rightsizing skill's observed-days and completeness gates; report the number of
-   unvalidated findings and the actual missing signals.
+   (`Percentage CPU`; `Requests`; `SessionApiRequestCount`) for at least the **top 15 by cost**
+   before ranking. Only the remainder beyond that bound may be left unvalidated; say how many.
    Metrics need only **Reader** (or Monitoring Reader) on the managed scope.
 3. **Commitment inventory.** Try both tenant-level GETs; on 403 pass
    `inventory_unavailable=[...]` to `analyze_commitments` and keep coverage/unused cost from step 1.
 4. Advisor, Resource Graph, budgets, then the cores and `summarize.py`.
 
 In the report's data-quality notes, state each gap with its fix: partial cost → pages retrieved and
-`remaining_next_link`; unvalidated rightsizing → missing memory/background activity, incomplete
-sample/child-inventory coverage, count beyond the metric bound, or metric errors;
+`remaining_next_link`; unvalidated rightsizing → count beyond the metric bound or metric errors;
 commitment inventory → the Reservations Reader / Savings plan Reader grant.
 
 **Shared cost pull — exact shape.** One `az rest` GET per effective subscription (URL-encode `$` as
@@ -121,20 +115,13 @@ Then derive every core's input in the sandbox from the same `prepared = prepare_
 ```python
 from usage import costs_by_resource, ingestion_gb_per_day
 rows = prepared["included_rows"]
-costs = costs_by_resource(rows)                    # dict-compatible CostMap; retain .currency metadata
+costs = costs_by_resource(rows)                    # {resourceId: cost} for rightsizing/waste/allocation/AHB
 ingestion = ingestion_gb_per_day(rows, days=30)    # {workspaceId: GB/day}; Log Analytics + GB units only
 ```
 
 `ingestion_gb_per_day` sums `quantity` for rows with `meterCategory == "Log Analytics"` whose
 `unitOfMeasure` contains `GB` (retention `GB/Month` excluded; `100 GB` units scaled), keyed by
 workspace id, divided by the window length. Pass it to `find_waste(..., ingestion_gb_per_day=ingestion)`.
-
-Pass the same `CostMap` into rightsizing and waste without stripping its currency metadata.
-Canonical cost ids are additive; utilization/activity/ingestion dictionaries are not. Rightsizing
-uses `currentMonthlyCost` / `estMonthlySavings` with `currency`; its legacy `*Usd` aliases are
-populated only for confirmed USD. Waste uses `monthlyCost` / `estMonthlySavings` with currency at
-both result and finding level. Plain numeric cost dictionaries with no verified currency remain
-unknown; do not infer USD from account location, locale, or a historical field name.
 
 **Allocation dimension.** Run `allocate_costs(costs, tags, dimension="team")` first. Then pick the
 `recommended_coverage` entry with `present == True` and the highest `pct` (cost share); if it is not
@@ -183,57 +170,26 @@ report = summarize_optimization(
 
 `summarize_optimization` produces the executive rollup:
 
-- **headline**: `total_monthly_spend`, `potential_monthly_savings` (**supported rightsizing only**),
-  `rightsizing_candidate_monthly_savings`, `rightsizing_contradicted_monthly_savings`,
-  `rightsizing_currency`,
+- **headline**: `total_monthly_spend`, `potential_monthly_savings` (rightsizing only),
   `anomaly_count`, `top_anomaly_impact_usd`, budgets `over` / `forecast_over` / `at_risk` counts,
   `untagged_usd`, `unallocated_pct`, and `spend_period` `{from, to}` when supplied (the report
   shows it under "Spend analyzed", because Consumption can return only the current billing
   period). Anomalies keep their direction: a `drop` gets impact type `drop` and a "confirm it is
   expected" action, not the spike action. When waste is supplied: `waste_monthly_savings` and
-  `usage_optimization_monthly_savings` (supported rightsizing + supported waste, de-duplicated by
-  canonical resource id), plus `usage_optimization_savings_by_currency`. A mixed-currency scalar
-  is `None`, not zero or a converted value. When
+  `usage_optimization_monthly_savings` (rightsizing + waste, de-duplicated by resource id). When
   commitments are supplied: `rate_optimization_monthly_savings`, `commitment_coverage_pct`,
   `unused_commitment_cost`. When SRE Agent spend is supplied: `sre_agent_spend_usd`,
   `sre_agent_always_on_pct`, and `sre_agent_monthly_savings` (idle/stopped agents or
   consolidation, whichever is larger, never both; kept separate from usage optimization).
-- **priorities**: ONE action/review list across all sources. Each item carries an
-  **`impact_type`** — `savings` (supported rightsizing/waste or commitment purchase),
-  `candidate savings` (unvalidated rightsizing/waste; investigation only), `unused commitment`,
+- **priorities**: ONE dollar-ranked action list across all sources. Each item carries an
+  **`impact_type`** — `savings` (rightsizing, waste, commitment purchase), `unused commitment`,
   `risk` (expiring commitment), `overrun` (budget gate), `spike` (anomaly), `governance`
   (untagged spend / tag hygiene), or `upcoming cost` (SRE Agent trial waiver ending). SRE Agent
   items use category `sre_agent` — so amounts are never silently conflated. Only the headline
   commitment family (reservation **or** savings plan) is ranked; the other is an alternative.
-  Contradicted rightsizing/waste findings (`validated=False`) are excluded from priorities,
-  even when their claimed savings are large. Rightsizing/waste priorities expose generic
-  `impact` and `currency`; `impact_usd` is populated only for USD. Unknown/non-USD dollar impacts
-  sort after known USD impacts; do not mistake that ordering for an FX-adjusted comparison.
+  Unknown-dollar items are kept and sort last.
 - **rightsizing / waste / commitments / sre_agents / anomalies / budgets / governance**: the per-section detail
   for the dashboard.
-
-**Rightsizing/waste evidence totals.** Each of these sections exposes:
-
-| Field | Meaning |
-| --- | --- |
-| `potential_monthly_savings` | Backward-compatible name for **supported** estimates only |
-| `supported_monthly_savings`, `supported_count` | Evidence-backed opportunities for owner review |
-| `candidate_monthly_savings`, `candidate_count` | Unvalidated estimates, not actionable savings |
-| `contradicted_monthly_savings`, `contradicted_count` | Rejected estimates retained for diagnostics, never headline savings |
-| `savings_by_currency` | Separate `supported`, `candidate`, and `contradicted` maps, keyed by currency; `unknown` is its own bucket |
-| `deduplicated` | Removed duplicate/alternative findings within or across usage analyses |
-| `top` | Diagnostic findings including contradicted rows, independently of priority eligibility |
-
-A scalar bucket total is available only when its quantified amounts share one currency.
-An unknown-currency amount never gets combined with a known currency. Legacy externally supplied
-rightsizing rows containing only `estMonthlySavingsUsd` retain their explicitly USD-named contract;
-new generic fields with `currency=None` do not acquire USD from those aliases.
-
-Duplicate resource ids are matched case-insensitively with trailing slashes removed. Within an
-analysis, a known contradiction is not hidden by a stale duplicate. Across analyses, a supported
-waste finding is not hidden by an unvalidated rightsizing candidate/review. For alternatives with
-equal evidence strength and compatible currency, retain the larger estimate rather than summing
-both; a cost-only review without an estimate must not hide a quantified candidate.
 
 ### Step 3 — Report
 
@@ -242,10 +198,6 @@ table next (rank, category, impact, action) — this is the "where to act first"
 per analysis (rightsizing, waste cleanup, rate optimization, SRE Agent spend, anomalies, budget
 status, governance/policy findings). Label each priority by its `impact_type` and **never sum savings,
 overruns, spikes, and governance exposure into one number** — they are different kinds of dollars.
-Lead with **supported** usage optimization and show candidate/unvalidated estimates separately.
-Retain contradictions in a diagnostic section, explicitly labelled "do not act"; never include them
-in savings totals or recommended execution lists. Display generic amounts with their currency,
-and show currency buckets whenever the corresponding scalar total is unavailable.
 Report usage optimization (rightsizing + waste) and rate optimization (commitments) as separate
 numbers: committing to capacity that is about to be removed double-counts the same dollars, so
 recommend acting on usage first. Carry through the underlying caveats: mark `run-rate` budget

@@ -279,7 +279,7 @@ def analyze_sre_agent_costs(
 
     warnings = []
     if len(currencies) > 1:
-        raise ValueError("SRE Agent spend cannot aggregate mixed currencies")
+        warnings.append("SRE Agent rows span multiple currencies: " + ", ".join(sorted(currencies)))
     currency = next(iter(currencies)) if len(currencies) == 1 else "USD"
 
     by_agent = []
@@ -294,29 +294,16 @@ def analyze_sre_agent_costs(
         split = "measured" if key in measured else "estimated"
         always_on_aau = 0.0
         active_aau = 0.0
-        unreconciled_aau = 0.0
-        unmatched_active_aau = 0.0
         for day, (day_usd, day_aau) in days.items():
             daily_totals[day][0] += day_usd
             daily_totals[day][1] += day_aau
             if split == "measured":
                 day_active = min(active[key].get(day, 0.0), day_aau)
-                unmatched_active_aau += max(active[key].get(day, 0.0) - day_aau, 0.0)
             else:
                 day_active = max(day_aau - ALWAYS_ON_AAU_PER_DAY, 0.0)
             active_aau += day_active
-            remainder = max(day_aau - day_active, 0.0)
-            always_on_aau += min(remainder, ALWAYS_ON_AAU_PER_DAY)
-            unreconciled_aau += max(remainder - ALWAYS_ON_AAU_PER_DAY, 0.0)
+            always_on_aau += max(day_aau - day_active, 0.0)
         days_billed = len(days)
-        if unreconciled_aau > 0.01 or unmatched_active_aau > 0.01:
-            split = "unreconciled"
-            warnings.append(
-                f"{rid}: billing and activity dates/quantities do not reconcile; "
-                f"{unreconciled_aau:.1f} billed AAU remain unattributed and "
-                f"{unmatched_active_aau:.1f} observed active AAU exceed same-day billing. "
-                "Check settlement lag and source completeness; do not call the remainder always-on."
-            )
 
         month = monthly.get(key) or {}
         mtd_raw = _get(month, "currentValue")
@@ -344,9 +331,6 @@ def analyze_sre_agent_costs(
             "active_aau": _round(active_aau, 1),
             "always_on_usd": _round(always_on_aau * rate) if rate is not None else None,
             "active_usd": _round(active_aau * rate) if rate is not None else None,
-            "unreconciled_aau": _round(unreconciled_aau, 1),
-            "unreconciled_usd": _round(unreconciled_aau * rate) if rate is not None else None,
-            "unmatched_active_aau": _round(unmatched_active_aau, 1),
             "active_pct": _pct(active_aau, aau),
             "usd_per_aau": round(rate, 4) if rate is not None else None,
             "split": split,
@@ -445,8 +429,6 @@ def analyze_sre_agent_costs(
         "total_aau": _round(total_aau, 1),
         "always_on_usd": _round(always_on_usd),
         "active_usd": _round(active_usd),
-        "unreconciled_usd": _round(sum(r["unreconciled_usd"] or 0 for r in by_agent)),
-        "partial": any(r["split"] == "unreconciled" for r in by_agent),
         "always_on_pct": _pct(always_on_usd, always_on_usd + active_usd),
         "currency": currency,
         "agent_count": sum(1 for r in by_agent if r["billed_aau"]),
@@ -575,8 +557,7 @@ def _hints(by_agent, by_source, *, inventory_supplied, as_of_day, blended_rate):
                 "monthly_usd": row["active_usd"],
             })
 
-    paying = [r for r in by_agent if r["always_on_aau"] and r["status"] != "deleted"
-              and r["split"] == "measured"]
+    paying = [r for r in by_agent if r["always_on_aau"] and r["status"] != "deleted"]
     low_use = sorted(
         (r for r in paying if (r["active_pct"] or 0.0) < _CONSOLIDATE_ACTIVE_PCT),
         key=lambda r: (-(r["active_aau"] or 0.0), r["agentName"].casefold()),

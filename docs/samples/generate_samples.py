@@ -192,8 +192,9 @@ def budgets_result():
     return {
         "as_of": AS_OF.isoformat(), "budget_count": len(rows), "budgets": rows,
         "summary": {
-            "total_amount": None, "total_current": None, "total_forecast": None,
-            "aggregation_reason": "Subscription and resource-group budgets overlap; totals are not additive.",
+            "total_amount": sum(r["amount"] for r in rows),
+            "total_current": round(sum(r["current_spend"] for r in rows), 2),
+            "total_forecast": round(sum(r["forecast_spend"] for r in rows), 2),
             "over_budget": 0, "forecast_over": 1, "at_risk": 2, "on_track": 1,
         },
         "gates": [{"name": "rg-ai-prod-monthly", "status": "forecast_over",
@@ -208,7 +209,7 @@ def budgets():
 
 def allocation_result():
     inherited = {f"{SUB}/resourceGroups/rg-shared-network": {"team": "platform-shared"}}
-    result = allocate.allocate_costs(COSTS, TAGS, dimension="team", inherited_tags=inherited, currency="USD")
+    result = allocate.allocate_costs(COSTS, TAGS, dimension="team", inherited_tags=inherited)
     previous = {k: v * (0.82 if k in (AOAI, FOUNDRY) else 0.97) for k, v in COSTS.items()}
     result["month_over_month"] = allocate.month_over_month(
         COSTS, previous, dimension_tags=TAGS, dimension="team")
@@ -548,18 +549,12 @@ def monthly():
     review = {
         "month": "2026-10",
         "scorecard": {
-            "score_pct": round(100 * sum(r["status"] == "pass" for r in rows) / len(rows), 1),
-            "kpi_health_pct": round(100 * sum(r["status"] == "pass" for r in rows) / len(rows), 1),
-            "evidence_coverage_pct": 100.0,
-            "organizational_maturity": "not_assessed",
-            "maturity": "walk", "kpis": rows,
+            "score_pct": 61.1, "maturity": "walk", "kpis": rows,
             "actions": [{"kpi": r["id"], "status": r["status"], "action": r["action"]}
                         for r in rows if r["action"]],
         },
         "forecast": {
             "available": True, "month": "2026-10", "next_month": "2026-11",
-            "context": {"cost_basis": "ActualCost", "currency": "USD", "scope": SUB,
-                        "filter": {}, "period_start": "2026-10-01", "period_end_exclusive": "2026-11-01"},
             "month_to_date": TOTAL, "days_remaining": 9, "month_end_forecast": 58780.0,
             "month_end_low": 57200.0, "month_end_high": 60100.0,
             "next_month_forecast": 59900.0, "next_month_low": 56800.0,

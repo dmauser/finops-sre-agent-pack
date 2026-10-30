@@ -238,13 +238,6 @@ def analyze_cost_vs_reliability(
     drivers, advisory hints, unmatched reliability signals, and data-quality notes. Inputs are plain
     lists already fetched by the skill procedure; this function performs no I/O and never mutates them.
     """
-    sources_available = {
-        "usage_details": line_items is not None,
-        "alerts": alerts is not None,
-        "resource_health": health_events is not None,
-        "advisor_highavailability": advisor_recommendations is not None,
-    }
-    observable = all(sources_available.values())
     line_items = list(line_items or [])
     alerts = list(alerts or [])
     health_events = list(health_events or [])
@@ -255,9 +248,6 @@ def analyze_cost_vs_reliability(
     cost_by_id = defaultdict(float)
     meta_by_id = {}
     cost_keys = set()
-    currencies = {str(row["currency"]).upper() for row in line_items if row.get("currency")}
-    if len(currencies) > 1:
-        raise ValueError("reliability spend cannot aggregate mixed currencies")
 
     for item in line_items:
         cost = _cost(item)
@@ -388,7 +378,7 @@ def analyze_cost_vs_reliability(
             "advisor_reliability_count": row_stats["advisor_reliability_count"],
             "reliability_score": round(score, 2),
             "pain_per_1000_usd": pain,
-            "risk_band": _risk_band(score) if score or observable else "unknown",
+            "risk_band": _risk_band(score),
             "primary_signal": _primary_signal(alert_score, health_score, advisor_score),
         })
 
@@ -419,9 +409,7 @@ def analyze_cost_vs_reliability(
         row["monthly_usd"] = round(row["monthly_usd"], 2)
         row["reliability_score"] = round(row["reliability_score"], 2)
         row["pct"] = _pct(row["monthly_usd"], total)
-        row["risk_band"] = (
-            _risk_band(row["reliability_score"]) if row["reliability_score"] or observable else "unknown"
-        )
+        row["risk_band"] = _risk_band(row["reliability_score"])
         by_service.append(row)
     by_service.sort(key=lambda r: (r["reliability_score"], r["monthly_usd"]), reverse=True)
 
@@ -442,13 +430,8 @@ def analyze_cost_vs_reliability(
     top_drivers = top_drivers[:_TOP_DRIVERS]
 
     hints = _build_hints(by_resource, unmatched)
-    if not observable:
-        hints = [h for h in hints if h["type"] != "high_spend_no_pain"]
 
     return {
-        "currency": next(iter(currencies), None),
-        "partial": not observable,
-        "warnings": [] if observable else ["Reliability source coverage is incomplete; absence of observed events does not establish health."],
         "as_of": as_of,
         "total_usd": round(total, 2),
         "resource_count": len(cost_by_id),
@@ -467,7 +450,12 @@ def analyze_cost_vs_reliability(
         "unmatched_reliability": unmatched,
         "data_quality": {
             "cost_partial": _is_cost_partial(line_items),
-            "sources_used": sources_available,
+            "sources_used": {
+                "usage_details": bool(line_items),
+                "alerts": bool(alerts),
+                "resource_health": bool(health_events),
+                "advisor_highavailability": bool(advisor_recommendations),
+            },
             "limitations": [
                 "Cost comes from Consumption UsageDetails GET only; Cost Management Query POST is unavailable.",
                 "Alerts are weighted counts, not a complete incident system or duration measure.",

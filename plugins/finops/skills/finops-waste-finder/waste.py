@@ -240,8 +240,6 @@ def find_waste(resources, *, costs=None, ingestion_gb_per_day=None, managed_scop
     connections_queried  True when the Resource Graph query included microsoft.network/connections,
                          so zero connection rows means no gateway has a connection
     costs                {resourceId: monthly cost} from prepared UsageDetails (case-insensitive)
-                         Differently cased cost entries are summed; currency defaults to
-                         costs.currency when available. No currency conversion is performed.
     ingestion_gb_per_day {workspaceId: average billable GB/day} for Log Analytics workspaces
     managed_scopes       effective ARM scopes; rows outside are dropped defensively
     """
@@ -249,17 +247,7 @@ def find_waste(resources, *, costs=None, ingestion_gb_per_day=None, managed_scop
     today = as_of or date.today()
     managed = None if managed_scopes is None else [
         _norm_id(s) for s in managed_scopes if _text(s)]
-    source_currency = _text(getattr(costs, "currency", None)).upper() or None
-    currency = _text(currency).upper() or None
-    if currency and source_currency and currency != source_currency:
-        raise ValueError("currency conflicts with costs.currency; no currency conversion is performed")
-    currency = currency or source_currency
-    cost_map = {}
-    for rid, value in (costs or {}).items():
-        amount = _num(value)
-        if amount is not None and _norm_id(rid):
-            key = _norm_id(rid)
-            cost_map[key] = cost_map.get(key, 0.0) + amount
+    cost_map = {_norm_id(k): _num(v) for k, v in (costs or {}).items()}
     rows = [r for r in resources or [] if isinstance(r, dict) and _text(r.get("id"))]
 
     connected, connections_seen = set(), bool(connections_queried)
@@ -314,7 +302,6 @@ def find_waste(resources, *, costs=None, ingestion_gb_per_day=None, managed_scop
             "recommendedAction": action,
             "monthlyCost": round(monthly, 2) if monthly is not None else None,
             "estMonthlySavings": round(savings, 2) if savings is not None else None,
-            "currency": currency,
             "evidence": evidence,
             "tags": r.get("tags") if isinstance(r.get("tags"), dict) else {},
         })

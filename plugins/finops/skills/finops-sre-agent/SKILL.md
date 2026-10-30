@@ -34,14 +34,8 @@ Azure SRE Agent bills in **Azure Agent Units (AAU)** on one meter
 
 Cost data only has the **blended daily AAU** per agent, so it cannot tell always-on from active. The
 agent's own read-only ARM API has per-thread active AAU per day with its **source**. This skill joins
-both: for each billed day `always_on = min(max(billed AAU - active AAU, 0), 96)`. Excess billed
-units become `unreconciled_aau` / `unreconciled_usd`; activity above same-day billing becomes
-`unmatched_active_aau`. Billing and telemetry can arrive at different times. Never relabel that
-difference as always-on usage or supported idle/consolidation savings.
-
-Agents without per-thread data use a bounded estimate, labeled `estimated`, not a measured split.
-Only reconciled measured low-use agents support consolidation hints. Source/thread costs are
-rate-based estimates, not settled invoice amounts. Mixed billing currencies are rejected.
+both: for each billed day `always_on = billed AAU − active AAU`. Agents with no per-thread data (for
+example deleted agents) fall back to an estimate (96 AAU/day always-on), labelled `estimated`.
 
 ## Required access
 

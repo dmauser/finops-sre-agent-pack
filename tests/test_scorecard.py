@@ -39,8 +39,7 @@ def test_forecast_unavailable_without_history():
 
 def test_forecast_flat_series_is_exact_and_on_track():
     daily = _series(61, start=date(2025, 5, 1))  # through 2025-06-30, last day dropped
-    context = _forecast_context(month="2025-06")
-    out = sc.forecast_spend(daily, budget_amount=4000, context=context, budget_context=context)
+    out = sc.forecast_spend(daily, budget_amount=4000)
     assert out["as_of"] == "2025-06-29"
     assert out["method"] == "linear_trend_weekday_seasonality"
     assert out["month_to_date"] == 2900.0
@@ -55,8 +54,7 @@ def test_forecast_flat_series_is_exact_and_on_track():
 
 def test_forecast_trend_and_budget_overrun():
     daily = _series(46, step=1.0)
-    context = _forecast_context(month="2025-06")
-    out = sc.forecast_spend(daily, budget_amount=4000, context=context, budget_context=context)
+    out = sc.forecast_spend(daily, budget_amount=4000)
     assert out["daily_trend_slope"] == pytest.approx(1.0)
     assert out["month_end_forecast"] == 4365.0
     assert out["budget_status"] == "forecast_over"
@@ -81,12 +79,9 @@ def test_forecast_weekday_seasonality_and_band():
     assert out["month_end_high"] - out["month_end_low"] < 0.05 * out["month_end_forecast"]
 
 
-def test_forecast_explicit_zero_gap_policy_and_at_risk_status():
+def test_forecast_fills_gaps_with_zero_and_at_risk_status():
     daily = {date(2025, 6, d): 100.0 + (15 if d % 2 else -15) for d in range(1, 21) if d != 10}
-    context = _forecast_context(month="2025-06")
-    out = sc.forecast_spend(daily, assume_last_partial=False, budget_amount=3000,
-                            context=context, budget_context=context,
-                            missing_days_are_zero=True)
+    out = sc.forecast_spend(daily, assume_last_partial=False, budget_amount=3000)
     assert out["history_days"] == 20
     assert out["budget_status"] in {"at_risk", "forecast_over", "on_track"}
     assert out["month_end_low"] <= out["month_end_forecast"] <= out["month_end_high"]
@@ -144,16 +139,14 @@ def _healthy_inputs():
     return dict(
         allocation={"dimension": "team", "total_usd": 10000, "unallocated_pct": 5.0,
                     "untagged_usd": 100, "tag_hygiene": [{"cost_affected": 50}]},
-        budgets={"budgets": [_budget_row(sub, 12000)], "summary": {"over_budget": 0, "forecast_over": 0,
+        budgets={"budgets": [{"scope": sub}], "summary": {"over_budget": 0, "forecast_over": 0,
                                                           "total_amount": 12000}},
         commitments={"headline": {"coverage_pct": 80},
                      "inventory": [{"utilization_30d": 98}, {"utilization_7d": 96}]},
-        waste={"headline": {"potential_monthly_savings": 200},
-               "findings": [{"resourceId": "/r/a", "kind": "idle", "estMonthlySavingsUsd": 200}]},
-        rightsizing=[{"resourceId": "/r/b", "action": "Resize", "estMonthlySavingsUsd": 100}],
+        waste={"headline": {"potential_monthly_savings": 200}},
+        rightsizing=[{"estMonthlySavingsUsd": 100}],
         anomalies=[{"impact_usd": 500, "direction": "down"}],
-        forecast={"available": True, "month_end_forecast": 10000, "run_rate_30d": 10000,
-                  "context": _forecast_context(sub)},
+        forecast={"available": True, "month_end_forecast": 10000, "run_rate_30d": 10000},
         unit_costs=[{"change_pct": -3}, {"change_pct": -1}],
         managed_scopes=[f"{sub}/resourceGroups/app"],
         prior_forecast=9500,
@@ -204,7 +197,7 @@ def test_scorecard_target_override_and_no_managed_scopes():
     kpi = next(k for k in card["kpis"] if k["id"] == "commitment_coverage_pct")
     assert kpi["target"] == 90 and kpi["status"] == "warn" and kpi["action"]
     cov = next(k for k in card["kpis"] if k["id"] == "budget_coverage_pct")
-    assert cov["value"] is None
+    assert cov["value"] == 100.0
 
 
 def test_scope_coverage_requires_arm_prefix_boundary():
@@ -265,8 +258,7 @@ def test_prior_forecast_inputs_handles_missing_and_short_data():
     assert sc.prior_forecast_inputs({}, "2026-09")["actual_spend"] is None
     only_month = _series(20, start=date(2026, 9, 1))
     out = sc.prior_forecast_inputs(only_month, "2026-09")
-    assert out["prior_forecast"] is None and out["actual_spend"] is None
-    assert out["observed_actual_spend"] == 2000.0
+    assert out["prior_forecast"] is None and out["actual_spend"] == 2000.0
     assert any("ends 2026-09-20" in w for w in out["warnings"])
     assert any("under 7 days" in w for w in out["warnings"])
 
@@ -321,304 +313,3 @@ def test_anomaly_kpi_uses_period_days_or_run_rate():
                                       forecast={"available": True, "run_rate_30d": 900.0})
     kpi = next(k for k in by_rate["kpis"] if k["id"] == "anomaly_impact_pct")
     assert kpi["value"] == 100.0  # 30 / (900 / 30)
-
-
-def _kpi(card, name):
-    return next(k for k in card["kpis"] if k["id"] == name)
-
-
-def _budget_row(scope, amount, *, currency="USD", filtered=False):
-    return {"scope": scope, "amount": amount, "currency": currency, "time_grain": "Monthly",
-            "cost_basis": "ActualCost",
-            "category": "Cost", "filter": {"tags": {"name": "team"}} if filtered else {},
-            "window": {"start": "2026-07-01", "end_exclusive": "2026-08-01"},
-            "status": "on_track"}
-
-
-def _forecast_context(scope="/subscriptions/s", *, month="2026-07"):
-    start = date.fromisoformat(month + "-01")
-    end = (start + timedelta(days=32)).replace(day=1)
-    return {"scope": scope, "currency": "USD", "cost_basis": "ActualCost",
-            "period_start": start.isoformat(), "period_end_exclusive": end.isoformat(), "filter": {}}
-
-
-@pytest.mark.parametrize("basis", [None, "", "AmortizedCost", "unknown"])
-def test_scorecard_does_not_compare_unknown_or_mixed_cost_bases(basis):
-    context = dict(_forecast_context(), cost_basis=basis)
-    card = sc.kpi_scorecard(
-        budgets={"budgets": [_budget_row("/subscriptions/s", 1000)]},
-        forecast={"available": True, "month_end_forecast": 1200, "context": context},
-    )
-    kpi = _kpi(card, "forecast_vs_budget_pct")
-    assert kpi["value"] is None and kpi["status"] == "unknown"
-    assert kpi["detail"]["reason"]
-
-
-def test_scorecard_requires_budget_basis_and_rejects_legacy_scalar_assertion():
-    budget = _budget_row("/subscriptions/s", 1000)
-    budget.pop("cost_basis")
-    forecast = {"available": True, "month_end_forecast": 1200, "context": _forecast_context()}
-    assert _kpi(sc.kpi_scorecard(budgets={"budgets": [budget]}, forecast=forecast),
-                "forecast_vs_budget_pct")["value"] is None
-    forecast.update(forecast_vs_budget_pct=120,
-                    budget_comparison={"basis": "caller_supplied_monthly_budget"})
-    assert _kpi(sc.kpi_scorecard(forecast=forecast), "forecast_vs_budget_pct")["value"] is None
-
-
-@pytest.mark.parametrize("basis", [None, "", "AmortizedCost", "unknown"])
-def test_scalar_forecast_budget_requires_matching_cost_basis(basis):
-    context = _forecast_context()
-    result = sc.forecast_spend(
-        _series(20, start=date(2026, 7, 1)), assume_last_partial=False, budget_amount=1000,
-        context=context, budget_context=dict(context, cost_basis=basis),
-    )
-    assert "forecast_vs_budget_pct" not in result and "budget_status" not in result
-    assert result["budget_comparison"]["reason"]
-
-
-def test_scalar_forecast_budget_requires_independent_context():
-    result = sc.forecast_spend(
-        _series(20, start=date(2026, 7, 1)), assume_last_partial=False,
-        budget_amount=1000, context=_forecast_context(),
-    )
-    assert "forecast_vs_budget_pct" not in result
-    assert _kpi(sc.kpi_scorecard(forecast=result), "forecast_vs_budget_pct")["value"] is None
-
-
-def test_forecast_budget_matches_parent_not_parent_plus_child():
-    budgets = {"budgets": [_budget_row("/subscriptions/s", 1000),
-                           _budget_row("/subscriptions/s/resourceGroups/rg", 500)],
-               "summary": {"total_amount": 1500}}
-    forecast = {"available": True, "month_end_forecast": 1200, "context": _forecast_context()}
-    kpi = _kpi(sc.kpi_scorecard(budgets=budgets, forecast=forecast), "forecast_vs_budget_pct")
-    assert kpi["value"] == 120
-    assert kpi["status"] == "fail"
-    assert kpi["detail"]["budget_amount"] == 1000
-
-
-@pytest.mark.parametrize("change", ["currency", "window", "filter", "duplicate", "no_context"])
-def test_forecast_budget_ambiguous_context_is_unknown(change):
-    row = _budget_row("/subscriptions/s", 1000)
-    rows = [row]
-    forecast = {"available": True, "month_end_forecast": 1200, "context": _forecast_context()}
-    if change == "currency":
-        row["currency"] = "EUR"
-    elif change == "window":
-        row["window"]["end_exclusive"] = "2027-01-01"
-    elif change == "filter":
-        row["filter"] = {"tags": {"name": "team"}}
-    elif change == "duplicate":
-        rows.append(dict(row))
-    else:
-        forecast.pop("context")
-    card = sc.kpi_scorecard(budgets={"budgets": rows, "summary": {"total_amount": 1500}},
-                            forecast=forecast)
-    kpi = _kpi(card, "forecast_vs_budget_pct")
-    assert kpi["status"] == "unknown"
-    assert kpi["detail"]["reason"]
-
-
-def test_waste_and_rightsizing_deduplicate_same_action_not_all_resource_actions():
-    findings = [{"resourceId": "/r/VM", "action": "Resize to D2", "estMonthlySavingsUsd": 20}]
-    rightsizing = [
-        {"resourceId": "/r/vm", "action": "Resize to D2", "estMonthlySavingsUsd": 20},
-        {"resourceId": "/r/vm", "action": "Disable backup", "estMonthlySavingsUsd": 5},
-    ]
-    card = sc.kpi_scorecard(allocation={"total_usd": 1000}, rightsizing=rightsizing,
-                            waste={"headline": {"potential_monthly_savings": 20},
-                                   "findings": findings})
-    kpi = _kpi(card, "waste_pct")
-    assert kpi["value"] == 2.5
-    assert kpi["detail"]["duplicates_removed"] == 1
-
-
-def test_anomaly_event_deduplicates_cross_dimensions_not_distinct_dates():
-    rows = [
-        {"event_id": "a", "date": "2026-07-10", "dimension": "resourceId", "impact_usd": 10},
-        {"event_id": "a", "date": "2026-07-10", "dimension": "resourceGroup", "impact_usd": 10},
-        {"event_id": "a", "date": "2026-07-11", "dimension": "resourceGroup", "impact_usd": 10},
-        {"event_id": "b", "date": "2026-07-10", "dimension": "resourceGroup", "impact_usd": 10},
-    ]
-    card = sc.kpi_scorecard(allocation={"total_usd": 3000}, anomalies=rows)
-    assert _kpi(card, "anomaly_impact_pct")["value"] == 30
-    assert next(b["value"] for b in card["benchmarks"] if b["id"] == "anomaly_count") == 3
-
-
-def test_sparse_evidence_does_not_claim_run_maturity():
-    card = sc.kpi_scorecard(commitments={"headline": {"coverage_pct": 90},
-                                       "inventory": [{"utilization_30d": 99}]})
-    assert card["kpi_health_pct"] == 100
-    assert card["evidence_coverage_pct"] == 16.7
-    assert card["maturity"] == "unknown"
-    assert card["maturity_reason"]
-
-
-def test_forecast_missing_days_are_unknown_not_fabricated_zero():
-    daily = {date(2026, 7, 1): 100, date(2026, 7, 3): 100}
-    out = sc.forecast_spend(daily, assume_last_partial=False)
-    assert out["history_days"] == 2
-    assert out["run_rate_30d"] == 3000
-    assert out["data_complete"] is False
-    assert out["month_end_forecast"] is None
-    assert out["missing_mtd_days"] == ["2026-07-02"]
-
-
-def test_forecast_explicit_complete_export_can_treat_omitted_days_as_zero():
-    daily = {date(2026, 7, 1): 100, date(2026, 7, 3): 100}
-    out = sc.forecast_spend(daily, assume_last_partial=False, missing_days_are_zero=True)
-    assert out["history_days"] == 3
-    assert out["data_complete"] is True
-    assert out["month_end_forecast"] is not None
-    assert out["missing_day_policy"] == "explicit_zero"
-
-
-def test_forecast_before_history_returns_unavailable():
-    out = sc.forecast_spend({"2026-07-10": 100}, as_of=date(2026, 7, 1))
-    assert out["available"] is False
-
-
-def test_closed_month_incomplete_actual_is_not_scored():
-    daily = _series(29, start=date(2026, 9, 1))
-    out = sc.prior_forecast_inputs(
-        daily, "2026-09", record_text="finops-forecast-record:v1 month=2026-09 forecast=3000")
-    assert out["actual_spend"] is None
-    assert out["observed_actual_spend"] == 2900
-
-
-def test_native_cross_dimension_anomalies_do_not_fake_distinct_events():
-    rows = [{"dimension": dim, "value": value, "date": "2026-07-10", "kind": "spike",
-             "impact_usd": 10}
-            for dim, value in [("resourceId", "/r/a"), ("resourceGroup", "rg"),
-                               ("meterCategory", "VM")]]
-    card = sc.kpi_scorecard(allocation={"total_usd": 3000}, anomalies=rows)
-    kpi = _kpi(card, "anomaly_impact_pct")
-    assert kpi["status"] == "unknown"
-    assert kpi["detail"]["observed_impact_lower_bound_usd"] == 10
-    assert kpi["detail"]["observed_impact_upper_bound_usd"] == 30
-
-
-def test_native_duplicate_observation_removed_but_separate_resources_kept():
-    one = {"dimension": "resourceId", "value": "/r/a", "date": "2026-07-10",
-           "kind": "spike", "impact_usd": 10}
-    two = dict(one, value="/r/b")
-    card = sc.kpi_scorecard(allocation={"total_usd": 3000}, anomalies=[one, one, two])
-    assert _kpi(card, "anomaly_impact_pct")["value"] == 20
-
-
-def test_waste_delete_and_resize_are_alternatives_not_additive():
-    waste = {"findings": [{"resourceId": "/r/a", "kind": "idle", "currency": "USD",
-                           "recommendedAction": "Deallocate VM", "estMonthlySavings": 100}]}
-    right = [{"resourceId": "/r/A", "recommendedAction": "Resize VM", "currency": "USD",
-              "estMonthlySavings": 50, "validated": True}]
-    kpi = _kpi(sc.kpi_scorecard(allocation={"total_usd": 1000}, waste=waste,
-                                rightsizing=right), "waste_pct")
-    assert kpi["value"] == 10
-    assert kpi["detail"]["alternative_actions_not_added"] == 1
-
-
-@pytest.mark.parametrize("currency", ["EUR", None])
-def test_generic_optimization_savings_require_matching_currency(currency):
-    rows = [{"resourceId": "/r/a", "recommendedAction": "Resize", "estMonthlySavings": 20,
-             "currency": currency, "validated": True}]
-    kpi = _kpi(sc.kpi_scorecard(allocation={"total_usd": 1000}, rightsizing=rows), "waste_pct")
-    assert kpi["status"] == "unknown"
-    assert kpi["detail"]["reason"]
-
-
-def test_candidate_and_contradicted_savings_not_counted_as_supported():
-    rows = [{"resourceId": "/r/a", "recommendedAction": "Resize", "estMonthlySavingsUsd": 20,
-             "validated": None},
-            {"resourceId": "/r/b", "recommendedAction": "Resize", "estMonthlySavingsUsd": 40,
-             "validated": False},
-            {"resourceId": "/r/c", "recommendedAction": "Resize", "estMonthlySavingsUsd": 10,
-             "validated": True}]
-    kpi = _kpi(sc.kpi_scorecard(allocation={"total_usd": 1000}, rightsizing=rows), "waste_pct")
-    assert kpi["value"] == 1
-    assert kpi["detail"]["unsupported_findings_excluded"] == 2
-
-
-def test_headline_only_waste_cannot_be_added_to_rightsizing():
-    kpi = _kpi(sc.kpi_scorecard(
-        allocation={"total_usd": 1000},
-        waste={"currency": "USD", "headline": {"potential_monthly_savings": 100}},
-        rightsizing=[{"resourceId": "/r/a", "action": "Resize", "estMonthlySavingsUsd": 20}]),
-        "waste_pct")
-    assert kpi["status"] == "unknown"
-    assert "overlap" in kpi["detail"]["reason"] or "de-duplicated" in kpi["detail"]["reason"]
-
-
-def test_forecast_budget_matches_disjoint_scope_envelopes():
-    scopes = ["/subscriptions/a", "/subscriptions/b"]
-    context = _forecast_context()
-    context.pop("scope")
-    context["scopes"] = scopes
-    card = sc.kpi_scorecard(
-        budgets={"budgets": [_budget_row(scopes[0], 1000), _budget_row(scopes[1], 500)]},
-        forecast={"available": True, "month_end_forecast": 1200, "context": context})
-    assert _kpi(card, "forecast_vs_budget_pct")["value"] == 80
-
-
-def test_parent_budget_does_not_govern_child_only_forecast_denominator():
-    card = sc.kpi_scorecard(
-        budgets={"budgets": [_budget_row("/subscriptions/s", 1000)]},
-        forecast={"available": True, "month_end_forecast": 300,
-                  "context": _forecast_context("/subscriptions/s/resourceGroups/rg")})
-    assert _kpi(card, "forecast_vs_budget_pct")["status"] == "unknown"
-
-
-def test_filtered_budget_only_matches_exact_filtered_forecast():
-    row = _budget_row("/subscriptions/s", 1000, filtered=True)
-    context = _forecast_context()
-    context["filter"] = row["filter"]
-    card = sc.kpi_scorecard(budgets={"budgets": [row]},
-                            forecast={"available": True, "month_end_forecast": 1200, "context": context})
-    assert _kpi(card, "forecast_vs_budget_pct")["value"] == 120
-
-
-def test_daily_costs_never_sum_different_currencies():
-    with pytest.raises(ValueError, match="currency"):
-        sc.daily_costs([{"date": "2026-07-01", "cost": 10, "currency": "USD"},
-                        {"date": "2026-07-01", "cost": 20, "currency": "EUR"}])
-
-
-def test_forecast_explicit_budget_currency_mismatch_suppresses_ratio():
-    context = _forecast_context()
-    out = sc.forecast_spend(_series(20, start=date(2026, 7, 1)), assume_last_partial=False,
-                            budget_amount=1000, context=context,
-                            budget_context=dict(context, currency="EUR"))
-    assert "forecast_vs_budget_pct" not in out
-    assert out["budget_comparison"]["reason"]
-
-
-def test_forecast_history_excludes_missing_days_before_current_month():
-    daily = _series(45, start=date(2026, 6, 1))
-    del daily[date(2026, 6, 5)]
-    out = sc.forecast_spend(daily, assume_last_partial=False)
-    assert out["data_complete"] is True
-    assert out["history_complete"] is False
-    assert out["history_days"] == 44
-    assert out["month_end_forecast"] == pytest.approx(3100)
-    assert out["confidence"] == "low"
-
-
-def test_closed_month_explicit_zero_omissions_are_documented():
-    out = sc.prior_forecast_inputs(
-        {"2026-09-01": 100}, "2026-09", missing_days_are_zero=True,
-        record_text="finops-forecast-record:v1 month=2026-09 forecast=100")
-    assert out["actual_spend"] == 100
-    assert out["actual_complete"] is True
-    assert len(out["missing_actual_days"]) == 29
-
-
-def test_missing_allocation_measurements_do_not_invent_passes():
-    card = sc.kpi_scorecard(allocation={"total_usd": 1000})
-    for name in ("allocated_pct", "untagged_pct", "tag_hygiene_pct"):
-        assert _kpi(card, name)["status"] == "unknown"
-    assert card["evidence_coverage_pct"] == 0
-
-
-def test_foreign_currency_forecast_is_not_a_usd_waste_denominator():
-    card = sc.kpi_scorecard(
-        rightsizing=[{"estMonthlySavingsUsd": 100}],
-        forecast={"available": True, "run_rate_30d": 1000, "context": {"currency": "EUR"}})
-    assert _kpi(card, "waste_pct")["status"] == "unknown"

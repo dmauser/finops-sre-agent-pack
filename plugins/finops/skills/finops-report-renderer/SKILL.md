@@ -44,20 +44,19 @@ from render import write_report
 
 model = build_budget_status_model(
     evaluate_budgets_result,
-    cost_context=budget_snapshot,  # Saved make_budget_snapshot output from the same API inputs.
     refreshed_at="2026-08-07T01:30:00Z",
     scope_summary=["/subscriptions/.../resourceGroups/managed"],
-    partial=budget_or_scope_pull_was_partial,
+    partial=cost_or_scope_pull_was_partial,
     warnings=["One managed scope failed after retries."],
     scope_coverage=[{
         "scope": "/subscriptions/.../resourceGroups/managed",
         "status": "partial",
-        "included": 4,
+        "included": 42,
         "excluded": 3,
         "unattributed": 1,
         "cost_usd": 123.45,
         "partial": True,
-        "detail": "One budget scope could not be retrieved.",
+        "detail": "UsageDetails pagination stopped early.",
     }],
 )
 path = write_report(model, "finops-budget-status.html")
@@ -67,18 +66,10 @@ All twelve functions have the same keyword-only context arguments:
 
 ```text
 (*, refreshed_at, scope_summary=None, partial=False,
-    warnings=None, scope_coverage=None, cost_context=None)
+    warnings=None, scope_coverage=None)
 ```
 
 - `refreshed_at` is required and must be supplied by the caller; adapters never read the clock.
-- Supply `cost_context` from the saved same-run source snapshot. Missing or incomplete source,
-  snapshot, code-version or run provenance is explicitly warned and marks the report partial.
-  Budget Status uses `make_budget_snapshot` rather than a usage ledger: its panel shows the
-  evaluation date, API retrieval timestamp and unknown billing-data freshness, not invented
-  usage dates. All ledger-backed reports, including Monthly Review, retain requested and
-  observed periods even when historical coverage is unavailable.
-- Cost Overview labels the headline **Period spend** with the observed usage-date range and
-  count, never inferring a complete 30-day window from 28 or 29 observed days.
 - `scope_summary`, `warnings`, and `scope_coverage` are sorted and de-duplicated deterministically.
 - Input-level `partial`, `warnings`, `scope_summary`, and `scope_coverage` fields are also preserved
   when present. Any partial coverage row makes the report partial.

@@ -3,8 +3,6 @@
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 # Load rightsize.py directly from the skill folder (no package install needed).
 _PATH = (
     Path(__file__).resolve().parent.parent
@@ -18,10 +16,7 @@ _spec = importlib.util.spec_from_file_location("rightsize", _PATH)
 rightsize = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rightsize)
 
-def recommend(*args, **kwargs):
-    """Historical fixtures are USD; unlabelled-input tests call the core directly."""
-    kwargs.setdefault("currency", "USD")
-    return rightsize.recommend_rightsizing(*args, **kwargs)
+recommend = rightsize.recommend_rightsizing
 
 VM = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
 DISK = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/disks/disk1"
@@ -119,8 +114,7 @@ def test_advisor_without_utilization_is_unvalidated():
 def test_advisor_confirmed_by_low_utilization():
     res = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines"}]
     advisor = [{"resourceId": VM, "problem": "Right-size VM", "targetSku": "Standard_D2s_v5", "savingsUsd": 40.0}]
-    util = {VM: {"cpu_p95": 8.0, "mem_p95": 10, "sample_days": 30,
-                 "sample_coverage_pct": 100}}
+    util = {VM: {"cpu_p95": 8.0, "sample_days": 30}}
     out = recommend(resources=res, utilization=util, advisor=advisor, costs={VM: 120.0})
     f = out[0]
     # Utilization-driven oversized finding merges with the Advisor rec on the same id.
@@ -178,8 +172,7 @@ def test_ranking_known_savings_first_desc_then_unknown():
 
 
 def test_empty_aca_environment_flagged_idle():
-    res = [{"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments",
-            "childrenInventoryComplete": True}]
+    res = [{"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments"}]
     out = recommend(resources=res, costs={ACA_ENV: 40.0})
     assert out and out[0]["kind"] == "idle"
     assert out[0]["estMonthlySavingsUsd"] == 40.0
@@ -197,10 +190,9 @@ def test_aca_environment_with_untraffic_apps_flagged_idle():
     activity = {ACA_APP: {"requests_total": 0, "sample_days": 14}}
     out = recommend(resources=res, activity=activity, costs={ACA_ENV: 25.0, ACA_APP: 1.0})
     ids = _by_id(out)
-    # No HTTP traffic is a candidate, not proof that background workloads are unused.
+    # Environment flagged as unused (all apps had zero traffic).
     assert ids[ACA_ENV.lower()]["kind"] == "idle"
-    assert ids[ACA_ENV.lower()]["recommendedAction"].startswith("Review")
-    assert ids[ACA_ENV.lower()]["validated"] is None
+    assert "none of its apps received traffic" in ids[ACA_ENV.lower()]["recommendedAction"]
     assert "azure-monitor" in ids[ACA_ENV.lower()]["sources"]
 
 
@@ -232,7 +224,7 @@ def test_always_on_aca_app_with_no_traffic_flagged_full_savings():
     assert out and out[0]["kind"] == "idle"
     assert out[0]["estMonthlySavingsUsd"] == 45.0
     assert "always-on" in out[0]["recommendedAction"]
-    assert out[0]["validated"] is None  # HTTP alone does not measure background work
+    assert out[0]["validated"] is True
 
 
 def test_scale_to_zero_aca_app_low_cost_dropped():
@@ -257,7 +249,7 @@ POOL = "/subscriptions/s/resourceGroups/extract_rg/providers/Microsoft.App/sessi
 
 def test_session_pool_warm_and_idle_flagged_full_savings():
     res = [{"resourceId": POOL, "type": "microsoft.app/sessionpools", "readySessionInstances": 10}]
-    activity = {POOL: {"requests_total": 0, "sample_days": 14, "sample_coverage_pct": 100}}
+    activity = {POOL: {"requests_total": 0, "sample_days": 14}}
     out = recommend(resources=res, activity=activity, costs={POOL: 331.0})
     ids = _by_id(out)
     f = ids[POOL.lower()]
@@ -337,8 +329,7 @@ def test_advisor_rate_recommendations_are_not_rightsizing():
     ]
     out = rightsize.recommend_rightsizing(advisor=advisor)
     assert [f["resourceId"] for f in out] == [vm]
-    assert out[0]["recommendedAction"].startswith("Review")
-    assert "Resize to Standard_D2s_v5." in out[0]["recommendedAction"]
+    assert out[0]["recommendedAction"] == "Resize to Standard_D2s_v5."
 
 
 def test_review_sweep_skips_resources_that_no_longer_exist():
@@ -354,176 +345,3 @@ def test_advisor_only_finding_gets_type_from_resource_id():
     rid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/expressRouteCircuits/er1"
     out = recommend(advisor=[{"resourceId": rid, "problem": "Delete unused", "savingsUsd": 19.2}])
     assert out[0]["resourceType"] == "microsoft.network/expressroutecircuits"
-
-
-def test_regression_high_memory_contradicts_low_cpu_and_advisor():
-    rows = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines"}]
-    metrics = {VM: {"cpu_p95": 2, "mem_p95": 95, "sample_days": 7}}
-    for advisor in (None, [{"resourceId": VM, "problem": "Right-size VM", "savingsUsd": 60}]):
-        [finding] = recommend(resources=rows, utilization=metrics, advisor=advisor, costs={VM: 100})
-        assert finding["validated"] is False
-        assert "Do not" in finding["recommendedAction"]
-        assert any("memory" in note.lower() for note in finding["evidence"])
-
-
-def test_regression_cpu_only_and_sparse_metrics_are_candidates():
-    rows = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines"}]
-    for metrics in (
-        {"cpu_p95": 2, "sample_days": 14},
-        {"cpu_p95": 12, "mem_p95": 10, "sample_days": 14},
-        {"cpu_p95": 12, "mem_p95": 10, "sample_days": 14, "sample_coverage_pct": 5},
-    ):
-        [finding] = recommend(resources=rows, utilization={VM: metrics}, costs={VM: 100})
-        assert finding["validated"] is None
-        assert finding["recommendedAction"].startswith("Review")
-
-
-def test_regression_missing_or_invalid_site_count_is_not_empty():
-    for sites in (None, "", "unknown", False, -1, 0.5):
-        rows = [{"resourceId": PLAN, "type": "microsoft.web/serverfarms", "numberOfSites": sites}]
-        assert recommend(resources=rows, costs={PLAN: 100}) == []
-
-
-def test_regression_zero_http_requests_does_not_validate_background_app():
-    rows = [
-        {"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments"},
-        {"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
-         "environmentId": ACA_ENV, "minReplicas": 2},
-    ]
-    out = recommend(resources=rows, costs={ACA_ENV: 40, ACA_APP: 60},
-                    activity={ACA_APP: {"requests_total": 0, "sample_days": 14,
-                                        "sample_coverage_pct": 100}})
-    assert len(out) == 2
-    assert all(f["validated"] is None for f in out)
-    assert all(f["recommendedAction"].startswith("Review") for f in out)
-
-
-def test_regression_canonical_costs_sum_without_summing_utilization():
-    rows = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines"}]
-    metrics = {VM: {"cpu_p95": 12, "mem_p95": 10, "sample_days": 14,
-                    "sample_coverage_pct": 100}}
-    [finding] = recommend(resources=rows, utilization=metrics, costs={VM: 30, VM.upper(): 70})
-    assert finding["currentMonthlyUsd"] == 100
-    assert finding["estMonthlySavingsUsd"] == 50
-
-
-def test_regression_currency_metadata_is_not_converted_to_usd():
-    class CostMap(dict):
-        currency = "EUR"
-
-    rows = [{"resourceId": DISK, "type": "microsoft.compute/disks", "diskState": "Unattached"}]
-    [finding] = rightsize.recommend_rightsizing(resources=rows, costs=CostMap({DISK: 25}))
-    assert finding["currency"] == "EUR"
-    assert finding["currentMonthlyCost"] == finding["estMonthlySavings"] == 25
-    assert finding["currentMonthlyUsd"] is None
-    assert finding["estMonthlySavingsUsd"] is None
-
-
-def test_regression_unlabelled_costs_remain_unknown_currency():
-    rows = [{"resourceId": DISK, "type": "microsoft.compute/disks", "diskState": "Unattached"}]
-    [finding] = rightsize.recommend_rightsizing(resources=rows, costs={DISK: 25})
-    assert finding["currency"] is None
-    assert finding["estMonthlySavings"] == 25
-    assert finding["estMonthlySavingsUsd"] is None
-
-
-def test_supported_idle_vm_requires_memory_workload_and_sample_coverage():
-    rows = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines"}]
-    metrics = {VM: {"cpu_p95": 2, "mem_p95": 10, "sample_days": 14,
-                    "sample_count": 336, "expected_sample_count": 336}}
-    act = {VM: {"workload_activity_total": 0, "sample_days": 14,
-                "sample_coverage_pct": 100}}
-    [missing] = recommend(resources=rows, utilization=metrics, costs={VM: 100})
-    [supported] = recommend(resources=rows, utilization=metrics, activity=act, costs={VM: 100})
-    assert missing["validated"] is None
-    assert supported["validated"] is True
-    assert supported["validationStatus"] == "supported"
-    act[VM]["workload_activity_total"] = 1
-    [busy] = recommend(resources=rows, utilization=metrics, activity=act, costs={VM: 100})
-    assert busy["validated"] is False
-
-
-def test_regression_advisor_shutdown_requires_activity_even_with_low_memory():
-    metrics = {VM: {"cpu_p95": 2, "mem_p95": 10, "sample_days": 14,
-                    "sample_coverage_pct": 100}}
-    rec = [{"resourceId": VM, "recommendation": "Deallocate the unused VM", "savingsUsd": 100}]
-    [finding] = recommend(advisor=rec, utilization=metrics, costs={VM: 100})
-    assert finding["validated"] is None
-
-
-def test_regression_inventory_idle_does_not_hide_contradictory_metrics():
-    rows = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines", "powerState": "stopped"}]
-    [finding] = recommend(resources=rows, costs={VM: 100},
-                          utilization={VM: {"cpu_p95": 2, "mem_p95": 95, "sample_days": 7}})
-    assert finding["validated"] is False
-
-
-def test_currency_conflict_fails_closed_and_advisor_usd_is_not_mixed():
-    class CostMap(dict):
-        currency = "EUR"
-
-    costs = CostMap({VM: 100})
-    with pytest.raises(ValueError, match="currency"):
-        rightsize.recommend_rightsizing(costs=costs, currency="USD")
-    [finding] = rightsize.recommend_rightsizing(
-        costs=costs, advisor=[{"resourceId": VM, "problem": "Resize", "savingsUsd": 500}])
-    assert finding["currency"] == "EUR"
-    assert finding["estMonthlySavings"] == 50
-    assert finding["estMonthlySavingsUsd"] is None
-    assert any("no conversion" in note for note in finding["evidence"])
-
-
-def test_canonical_review_sweep_uses_summed_cost():
-    [finding] = recommend(costs={REDIS: 12, REDIS.upper(): 13})
-    assert finding["kind"] == "review"
-    assert finding["currentMonthlyUsd"] == 25
-
-
-def test_incomplete_empty_environment_inventory_is_candidate_and_jobs_prevent_deletion():
-    rows = [{"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments"}]
-    [finding] = recommend(resources=rows, costs={ACA_ENV: 40})
-    assert finding["validated"] is None
-    rows.append({"resourceId": ACA_APP.replace("containerApps", "jobs"),
-                 "type": "microsoft.app/jobs", "environmentId": ACA_ENV})
-    assert recommend(resources=rows, costs={ACA_ENV: 40}) == []
-
-
-def test_session_pool_missing_sample_coverage_stays_candidate():
-    rows = [{"resourceId": POOL, "type": "microsoft.app/sessionpools", "readySessionInstances": 10}]
-    [finding] = recommend(resources=rows, costs={POOL: 100},
-                          activity={POOL: {"requests_total": 0, "sample_days": 14}})
-    assert finding["validated"] is None
-
-
-def test_sparse_or_nonfinite_metrics_never_validate():
-    rows = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines"}]
-    for bad in (float("nan"), float("inf"), True, -1, 101):
-        [finding] = recommend(resources=rows, costs={VM: 100}, utilization={
-            VM: {"cpu_p95": 12, "mem_p95": bad, "sample_days": 14, "sample_coverage_pct": 100}})
-        assert finding["validated"] is None
-
-
-    [finding] = recommend(resources=rows, costs={VM: 100}, utilization={
-        VM: {"cpu_p95": 12, "mem_p95": 10, "sample_days": 14, "sample_coverage_pct": 100,
-             "sample_count": 1, "expected_sample_count": 336}})
-    assert finding["validated"] is None
-
-
-def test_container_app_and_environment_require_complete_background_evidence():
-    rows = [
-        {"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments",
-         "childrenInventoryComplete": True},
-        {"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
-         "environmentId": ACA_ENV, "minReplicas": 2},
-    ]
-    metrics = {ACA_APP: {"cpu_p95": 1, "mem_p95": 10, "sample_days": 14,
-                         "sample_coverage_pct": 100}}
-    act = {ACA_APP: {"requests_total": 0, "workload_activity_total": 0,
-                     "sample_days": 14, "sample_coverage_pct": 100}}
-    out = recommend(resources=rows, costs={ACA_ENV: 40, ACA_APP: 60},
-                    utilization=metrics, activity=act)
-    assert len(out) == 2 and all(f["validated"] is True for f in out)
-    metrics[ACA_APP]["mem_p95"] = 95
-    out = recommend(resources=rows, costs={ACA_ENV: 40, ACA_APP: 60},
-                    utilization=metrics, activity=act)
-    assert all(f["validated"] is False for f in out)

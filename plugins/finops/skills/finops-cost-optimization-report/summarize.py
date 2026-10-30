@@ -28,7 +28,6 @@ governance exposure are never silently conflated), and per-section detail for th
 """
 
 from datetime import date
-from math import isfinite
 
 # How many rows each detail section and the blended priorities list keep.
 _TOP_PRIORITIES = 10
@@ -39,7 +38,7 @@ def _num(value):
     """Return value as float, or None if it isn't a real number."""
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)) and isfinite(value):
+    if isinstance(value, (int, float)):
         return float(value)
     return None
 
@@ -51,101 +50,19 @@ def _short_id(resource_id):
     return str(resource_id).rstrip("/").split("/")[-1]
 
 
-def _resource_key(finding):
-    return str(finding.get("resourceId") or "").strip().rstrip("/").casefold()
-
-
-def _finding_currency(finding, default=None):
-    if "currency" in finding:
-        return str(finding.get("currency") or "").strip().upper() or None
-    if "estMonthlySavings" not in finding and "estMonthlySavingsUsd" in finding:
-        return "USD"  # old caller explicitly supplied a USD-named field
-    return str(default or "").strip().upper() or None
-
-
-def _savings(finding):
-    value = (finding.get("estMonthlySavings") if "estMonthlySavings" in finding
-             else finding.get("estMonthlySavingsUsd"))
-    number = _num(value)
-    return max(number, 0.0) if number is not None else None
-
-
-def _validation_bucket(finding, *, waste=False):
-    if finding.get("validated") is False:
-        return "contradicted"
-    if waste and finding.get("kind") in _WASTE_ACTIONABLE and "validated" not in finding:
-        return "supported"  # inventory-backed legacy waste output
-    return "supported" if finding.get("validated") is True else "candidate"
-
-
-def _deduplicate(findings, *, waste=False):
-    """Keep one alternative per resource, not a sum of mutually exclusive savings."""
-    def score(f):
-        return (
-            {"contradicted": 3, "supported": 2, "candidate": 1}[
-                _validation_bucket(f, waste=waste)],
-            _savings(f) or 0.0,
-        )
-
-    picked = {}
-    for index, finding in enumerate(findings or []):
-        key = _resource_key(finding) or ("missing-id", index)
-        previous = picked.get(key)
-        # A known contradiction within one analysis must not be hidden by a stale duplicate.
-        if previous is None or score(finding) > score(previous):
-            picked[key] = finding
-    return list(picked.values())
-
-
-def _currency_total(amounts):
-    """A scalar is meaningful only if all contributing amounts share a currency."""
-    return round(sum(amounts.values()), 2) if len(amounts) <= 1 else None
-
-
-def _savings_breakdown(findings, *, waste=False, currency=None):
-    by_currency = {"supported": {}, "candidate": {}, "contradicted": {}}
-    counts = dict.fromkeys(by_currency, 0)
-    for f in findings:
-        if waste and f.get("kind") not in _WASTE_ACTIONABLE:
-            continue
-        bucket = _validation_bucket(f, waste=waste)
-        counts[bucket] += 1
-        savings = _savings(f)
-        if savings is not None:
-            unit = _finding_currency(f, currency) or "unknown"
-            by_currency[bucket][unit] = by_currency[bucket].get(unit, 0.0) + savings
-    return {
-        **{f"{bucket}_monthly_savings": _currency_total(amounts)
-           for bucket, amounts in by_currency.items()},
-        **{f"{bucket}_count": count for bucket, count in counts.items()},
-        "savings_by_currency": {
-            bucket: {unit: round(amount, 2) for unit, amount in sorted(amounts.items())}
-            for bucket, amounts in by_currency.items()
-        },
-    }
-
-
-def _finding_sort_key(f):
-    savings = _savings(f)
-    return (savings is None, -(savings or 0), _resource_key(f))
-
-
-def _rightsizing_rollup(findings, *, deduplicated=0):
-    """Supported savings only in the headline; candidates/contradictions stay separate."""
+def _rightsizing_rollup(findings):
+    """Total quantified savings, count, and the top findings from recommend_rightsizing()."""
     findings = findings or []
-    breakdown = _savings_breakdown(findings)
-    currencies = {_finding_currency(f) for f in findings if _savings(f) is not None}
-    top = sorted(findings, key=_finding_sort_key)[:_TOP_PER_SECTION]
+    total = 0.0
+    for f in findings:
+        savings = _num(f.get("estMonthlySavingsUsd"))
+        if savings:
+            total += savings
+    top = findings[:_TOP_PER_SECTION]  # already sorted by savings desc by the core
     return {
-        **breakdown,
-        "potential_monthly_savings": breakdown["supported_monthly_savings"],
-        "currency": next(iter(currencies)) if len(currencies) == 1 else None,
+        "potential_monthly_savings": round(total, 2),
         "count": len(findings),
-        "deduplicated": deduplicated,
         "top": top,
-        "priority_findings": sorted(
-            (f for f in findings if f.get("validated") is not False),
-            key=_finding_sort_key)[:_TOP_PER_SECTION],
     }
 
 
@@ -218,55 +135,29 @@ def _governance_rollup(allocation, budget_roll):
 _WASTE_ACTIONABLE = ("orphan", "idle", "stale")
 
 
-def _waste_rollup(waste, findings, *, deduplicated=0):
-    """Roll up de-duplicated inventory waste using the same evidence/currency buckets."""
+def _waste_rollup(waste, rightsizing_findings):
+    """Waste findings not already reported by rightsizing (joined case-insensitively)."""
     waste = waste or {}
+    taken = {str(f.get("resourceId") or "").rstrip("/").casefold()
+             for f in rightsizing_findings or []}
+    all_findings = waste.get("findings") or []
+    findings = [f for f in all_findings
+                if str(f.get("resourceId") or "").rstrip("/").casefold() not in taken]
+    total = 0.0
     by_kind = {}
     for f in findings:
         by_kind[f.get("kind")] = by_kind.get(f.get("kind"), 0) + 1
-    breakdown = _savings_breakdown(findings, waste=True, currency=waste.get("currency"))
+        savings = _num(f.get("estMonthlySavings"))
+        if f.get("kind") in _WASTE_ACTIONABLE and savings:
+            total += savings
     return {
-        **breakdown,
-        "potential_monthly_savings": breakdown["supported_monthly_savings"],
+        "potential_monthly_savings": round(total, 2),
         "count": len(findings),
-        "deduplicated": deduplicated,
+        "deduplicated": len(all_findings) - len(findings),
         "by_kind": dict(sorted((str(k), v) for k, v in by_kind.items())),
         "currency": waste.get("currency"),
-        "top": sorted(findings, key=_finding_sort_key)[:_TOP_PER_SECTION],
-        "priority_findings": sorted(
-            (f for f in findings if f.get("validated") is not False),
-            key=_finding_sort_key)[:_TOP_PER_SECTION],
+        "top": findings[:_TOP_PER_SECTION],  # already sorted by savings desc by the core
     }
-
-
-def _usage_findings(rightsizing, waste):
-    """Prefer supported evidence across analyses; never let a review hide real waste."""
-    rs = _deduplicate(rightsizing)
-    ws = _deduplicate((waste or {}).get("findings"), waste=True)
-    rs_by_id = {_resource_key(f): f for f in rs if _resource_key(f)}
-    drop_rs, drop_ws = set(), set()
-    for f in ws:
-        key = _resource_key(f)
-        previous = rs_by_id.get(key)
-        if previous is None or f.get("kind") not in _WASTE_ACTIONABLE:
-            continue
-        rs_status = _validation_bucket(previous)
-        ws_status = _validation_bucket(f, waste=True)
-        if rs_status == "contradicted" or ws_status == "contradicted":
-            # Retain diagnostic contradictions, but they never consume the savings budget.
-            continue
-        confidence = {"supported": 2, "candidate": 1}
-        ws_savings, rs_savings = _savings(f), _savings(previous)
-        same_currency = _finding_currency(previous) == _finding_currency(f, (waste or {}).get("currency"))
-        better_estimate = ws_savings is not None and (
-            rs_savings is None or same_currency and ws_savings > rs_savings)
-        if (confidence[ws_status] > confidence[rs_status] or
-                confidence[ws_status] == confidence[rs_status] and better_estimate):
-            drop_rs.add(key)
-        else:
-            drop_ws.add(key)
-    return ([f for f in rs if _resource_key(f) not in drop_rs],
-            [f for f in ws if _resource_key(f) not in drop_ws])
 
 
 def _commitment_rollup(commitments):
@@ -294,21 +185,17 @@ _FAMILY_LABEL = {"reservation": "reservation", "savings_plan": "savings plan"}
 
 def _waste_priorities(waste_roll):
     items = []
-    for f in waste_roll["priority_findings"]:
+    for f in waste_roll["top"]:
         if f.get("kind") not in _WASTE_ACTIONABLE:
             continue
-        currency = _finding_currency(f, waste_roll["currency"])
-        status = _validation_bucket(f, waste=True)
         items.append({
             "category": "waste",
-            "impact_type": "savings" if status == "supported" else "candidate savings",
-            "impact": _savings(f),
-            "currency": currency,
-            "impact_usd": _savings(f) if currency == "USD" else None,
+            "impact_type": "savings",
+            "impact_usd": _num(f.get("estMonthlySavings")),
             "title": f"{f.get('reason') or 'Waste'} — {_short_id(f.get('resourceId'))}",
             "detail": f.get("kind"),
             "action": f.get("recommendedAction"),
-            "validated": True if status == "supported" else None,
+            "validated": None,
         })
     return items
 
@@ -430,14 +317,11 @@ def _priorities(rightsizing, anomalies, budget_roll, governance, extra=()):
     savings, overruns, spikes, and governance exposure are comparable but never conflated."""
     items = list(extra)
 
-    for f in rightsizing["priority_findings"]:
-        currency = _finding_currency(f)
+    for f in rightsizing["top"]:
         items.append({
             "category": "rightsizing",
-            "impact_type": "savings" if f.get("validated") is True else "candidate savings",
-            "impact": _savings(f),
-            "currency": currency,
-            "impact_usd": _savings(f) if currency == "USD" else None,
+            "impact_type": "savings",
+            "impact_usd": _num(f.get("estMonthlySavingsUsd")),
             "title": f"{f.get('recommendedAction') or 'Rightsize'} — {_short_id(f.get('resourceId'))}",
             "detail": f.get("kind"),
             "action": f.get("recommendedAction"),
@@ -523,15 +407,7 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
     rate_optimization_monthly_savings, commitment_coverage_pct, unused_commitment_cost.
     `sre_agents` adds an `sre_agents` section and headline.sre_agent_spend_usd,
     sre_agent_always_on_pct, sre_agent_monthly_savings (kept separate from usage optimization).
-    headline.potential_monthly_savings stays rightsizing-only, but includes only supported
-    findings (validated=True). Candidate and contradicted estimates are separate, never
-    actionable totals. Contradicted rows are omitted from priorities.
-
-    Both rightsizing and waste expose supported/candidate/contradicted_monthly_savings,
-    matching *_count keys, and savings_by_currency. A mixed-currency scalar is None;
-    amounts in different currencies (including unknown) are never added or converted.
-    Generic priority `impact` is labelled with `currency`; `impact_usd` is null for
-    non-USD or unknown-currency findings. Legacy USD-only inputs remain supported.
+    headline.potential_monthly_savings stays rightsizing-only for backward compatibility.
 
     Returns a dict:
       {
@@ -550,16 +426,11 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
     today = as_of or date.today()
     alloc = allocation or {}
 
-    rs_findings, ws_findings = _usage_findings(rightsizing, waste)
-    rightsizing_roll = _rightsizing_rollup(
-        rs_findings, deduplicated=len(rightsizing or []) - len(rs_findings))
+    rightsizing_roll = _rightsizing_rollup(rightsizing)
     anomaly_roll = _anomaly_rollup(anomalies)
     budget_roll = _budget_rollup(budgets)
     governance_roll = _governance_rollup(alloc, budget_roll)
-    waste_roll = (_waste_rollup(
-        waste, ws_findings,
-        deduplicated=len(waste.get("findings") or []) - len(ws_findings))
-        if waste is not None else None)
+    waste_roll = _waste_rollup(waste, rightsizing) if waste is not None else None
     rate_roll = _commitment_rollup(commitments) if commitments is not None else None
     sre_roll = _sre_agent_rollup(sre_agents) if sre_agents is not None else None
     extra = []
@@ -571,17 +442,11 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
         extra += _sre_agent_priorities(sre_roll)
         del sre_roll["ranked_hints"]
     priorities = _priorities(rightsizing_roll, anomaly_roll, budget_roll, governance_roll, extra)
-    del rightsizing_roll["priority_findings"]
-    if waste_roll is not None:
-        del waste_roll["priority_findings"]
 
     summary = budget_roll["summary"]
     headline = {
         "total_monthly_spend": _num(alloc.get("total_usd")),
         "potential_monthly_savings": rightsizing_roll["potential_monthly_savings"],
-        "rightsizing_candidate_monthly_savings": rightsizing_roll["candidate_monthly_savings"],
-        "rightsizing_contradicted_monthly_savings": rightsizing_roll["contradicted_monthly_savings"],
-        "rightsizing_currency": rightsizing_roll["currency"],
         "anomaly_count": anomaly_roll["count"],
         "top_anomaly_impact_usd": anomaly_roll["top_impact_usd"],
         "budgets_over": summary.get("over_budget", 0),
@@ -596,11 +461,9 @@ def summarize_optimization(*, anomalies=None, rightsizing=None, allocation=None,
         headline["spend_period"] = {"from": str(start)[:10], "to": str(end)[:10]}
     if waste_roll is not None:
         headline["waste_monthly_savings"] = waste_roll["potential_monthly_savings"]
-        usage_by_currency = dict(rightsizing_roll["savings_by_currency"]["supported"])
-        for unit, amount in waste_roll["savings_by_currency"]["supported"].items():
-            usage_by_currency[unit] = round(usage_by_currency.get(unit, 0.0) + amount, 2)
-        headline["usage_optimization_monthly_savings"] = _currency_total(usage_by_currency)
-        headline["usage_optimization_savings_by_currency"] = usage_by_currency
+        headline["usage_optimization_monthly_savings"] = round(
+            rightsizing_roll["potential_monthly_savings"]
+            + waste_roll["potential_monthly_savings"], 2)
     if rate_roll is not None:
         headline["rate_optimization_monthly_savings"] = rate_roll["potential_monthly_savings"]
         headline["commitment_coverage_pct"] = rate_roll["coverage_pct"]

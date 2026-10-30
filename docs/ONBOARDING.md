@@ -26,13 +26,36 @@ against it: the script detects the existing agent and adds only what is missing.
 | Agent identity RBAC (subscription) | Reader, Monitoring Reader, Log Analytics Reader, **Cost Management Reader** |
 | Agent identity RBAC (agent resource) | Reader, so every run can read the managed scope |
 | Your RBAC | **SRE Agent Administrator** on the agent (data-plane access) |
-| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update off**, 15 skills |
+| Plugin `finops` | Installed from `https://github.com/dmauser/finops-sre-agent-pack`, path `plugins/finops`, **auto-update on**, 15 skills |
 | Subagent `finops-investigator` | Instructions, exactly five read-only tools, the FinOps skills plus `live_report_authoring` |
 | Scheduled task | `FinOps: Cost Optimization (Live Report, Weekly)`, Mondays 17:00 UTC, **Autonomous**, response agent `finops-investigator` |
 | Live Report | `FinOps: Cost Optimization` in Operations Hub. Created on the task's first run and refreshed on every run after that |
 
 > **A Live Report refreshes only while its scheduled task exists and is Active.** A report saved
 > from chat is a one-time snapshot. Both paths below create the task.
+
+### Lab rollback and deferred hardening (2026-10-30)
+
+The FinOps implementation is restored to the pre-Astra v0.2.0 baseline
+(`d586b1bb67855fe34d70c49a9cf2303b968795f3`) using normal reverts, not rewritten Git history.
+The deferred hardening remains on
+[`archive/astra-hardening-20261030`](https://github.com/dmauser/finops-sre-agent-pack/tree/archive/astra-hardening-20261030)
+at `8406d70788cda188cb156cc82ac6fa2f4a89fdd3` for report-by-report review. Baseline limitations
+return with this rollback; the archived production-hardening claims do not describe this version.
+
+The retained exceptions are deliberate: subscription monitoring stays **Monitoring Reader**
+(including in `deploy/main.bicep`), and the existing lab export storage, containers, read access
+and four export schedules remain deployed with every export schedule **Inactive**. Their
+provisioning definitions remain on the archive branch in `plugins/finops/deploy/exports.bicep`
+and `export-storage.bicep`; do not delete their data or enable ingestion as part of redeployment.
+Disabled exports stop scheduled generation, not storage charges for retained data. No export
+connector is installed. Plugin **auto-update is on**, matching the original setup.
+
+The rollback restores the original investigator and twelve task definitions, preserving their
+IDs, schedules and recipients. A one-time run of those jobs regenerates the saved dashboards
+using the restored code and current data, retaining report IDs and version/execution history.
+Those runs consume normal SRE Agent AAUs. Private live backups are operational evidence, not
+repository fixtures.
 
 ---
 
@@ -67,7 +90,7 @@ It then runs two phases:
    [`agent.bicep`](../plugins/finops/deploy/agent.bicep) create the resource group, identity,
    monitoring, the agent, and the RBAC grants.
 2. **Agent configuration.** [`install-api.sh`](../plugins/finops/install-api.sh) runs with
-   `PLUGIN_SOURCE=direct`. It installs the plugin from the GitHub URL with auto-update off, upserts
+   `PLUGIN_SOURCE=direct`. It installs the plugin from the GitHub URL with auto-update on, upserts
    `finops-investigator`, and creates the scheduled task(s) as Autonomous on that subagent.
 
 Re-running is safe. An existing agent is never re-provisioned, so its identity and settings are
@@ -238,12 +261,9 @@ Both paths install the reports. To run FinOps as a monthly operating rhythm, als
 When `main` gains skills, subagent changes or tasks, bring an agent up to date the same way you
 onboarded it.
 
-**Automated.** Follow [production operations](PRODUCTION.md) before upgrading. Freeze auto-update,
-capture rollback settings and explicitly approve the source SHA. The default-branch source must
-match `EXPECTED_SOURCE_COMMIT`; a GitHub `/tree/<sha>` URL is not supported. The installer upserts
-only selected tasks, preserving existing scheduling/model/status fields unless explicitly overridden.
-For an existing email task, supply its approved `ALERT_EMAIL`; clearing delivery requires
-`DISABLE_NOTIFICATIONS=true`. It never adds recipients implicitly.
+**Automated.** Rerun the deploy script against the existing agent. It skips the infrastructure,
+refreshes the plugin to the latest commit, upserts `finops-investigator`, and upserts the tasks you
+list (existing tasks with the same name are updated in place):
 
 ```bash
 ./plugins/finops/deploy/deploy.sh -n sre-finops-demo -g SRE-FinOps-Demo \
@@ -252,9 +272,9 @@ For an existing email task, supply its approved `ALERT_EMAIL`; clearing delivery
 
 **Manual (portal).**
 
-1. **Skills**: leave auto-update off for controlled environments. Reinstall only an approved source
-   and confirm the installed `sourceCommit`, not just the skill count. Branch promotion and a
-   deployment are separate actions; neither is implied by a local commit.
+1. **Skills**: with auto-update on, the plugin follows `main`. To pull immediately, reinstall the
+   plugin from the same URL; the installation is refreshed in place and reports the new skill
+   count.
 2. **Subagent**: open `finops-investigator`, paste the current instructions from
    [`finops-investigator.yaml`](../plugins/finops/agents/finops-investigator.yaml) (replace the
    agent resource ID placeholder), and add any new skill (for example `finops-kpi-scorecard`) to

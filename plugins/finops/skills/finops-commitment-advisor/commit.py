@@ -238,40 +238,13 @@ def _best_per_group(recs):
     return result
 
 
-def _coverage(rows, currency=None):
-    """Cost-weighted coverage of a conservative, evidenced eligible subset (not all spend).
-
-    Applied Reservation/SavingsPlan pricing proves eligibility. Uncovered OnDemand usage is
-    included only for Virtual Machines compute meters (not license/software meters), or when
-    the collector supplies boolean commitmentEligible from validated meter-level evidence.
-    Storage/SQL/service names alone do not prove eligibility; keep them unknown. Spot and a
-    narrow noneligible service list are excluded. Credits/adjustments are separate. No FX
-    conversion is performed; heterogeneous currency totals are unavailable.
-    """
-    rows = list(rows)
-    groups = {}
-    for row in rows:
-        r = _lower_keys(row)
-        code = _text(r.get("billingcurrency") or r.get("billingcurrencycode") or r.get("currency")
-                     or currency).upper() or "UNKNOWN"
-        groups.setdefault(code, []).append(row)
-    if len(groups) > 1:
-        by_currency = {code: _coverage(items, code) for code, items in sorted(groups.items())}
-        out = {key: None for key in ("covered_cost", "on_demand_cost", "eligible_cost",
-                                    "coverage_pct", "unused_commitment_cost", "ineligible_cost",
-                                    "unknown_eligibility_cost", "excluded_adjustment_cost")}
-        return dict(out, currency=None, by_currency=by_currency, by_meter_category=[],
-                    row_count=len(rows), reason="multiple or unknown currencies; no conversion",
-                    eligibility_basis="See per-currency conservative eligibility basis")
-    covered = on_demand = unused = ineligible = unknown = adjustments = 0.0
+def _coverage(rows):
+    covered = on_demand = unused = 0.0
     by_category = {}
     for row in rows:
         r = _lower_keys(row)
         cost = _num(r.get("cost") if r.get("cost") is not None else r.get("costinbillingcurrency"))
         if cost is None:
-            continue
-        if cost < 0:
-            adjustments += cost
             continue
         charge = _text(r.get("chargetype")).casefold()
         if charge in _UNUSED_CHARGE_TYPES:
@@ -281,30 +254,13 @@ def _coverage(rows, currency=None):
             continue
         pricing = _text(r.get("pricingmodel")).casefold().replace(" ", "")
         category = _text(r.get("metercategory")) or "(unknown)"
-        known_noneligible = category.casefold() in {
-            "bandwidth", "support", "azure dns", "azure monitor", "log analytics",
-            "microsoft defender for cloud", "azure bastion", "traffic manager",
-        }
-        license_meter = any(word in _text(r.get("metersubcategory")).casefold() + " "
-                            + _text(r.get("metername")).casefold()
-                            for word in ("license", "software"))
-        eligible = r.get("commitmenteligible")
-        known_vm = category.casefold() == "virtual machines" and not license_meter
+        bucket = by_category.setdefault(category, {"covered": 0.0, "on_demand": 0.0})
         if pricing in _COMMITMENT_PRICING:
             covered += cost
-            kind = "covered"
-        elif pricing == "spot" or eligible is False or known_noneligible or license_meter:
-            ineligible += cost
-            continue
-        elif pricing == "ondemand" and (eligible is True or known_vm):
+            bucket["covered"] += cost
+        elif pricing in {"ondemand", ""}:
             on_demand += cost
-            kind = "on_demand"
-        else:
-            unknown += cost
-            continue
-        bucket = by_category.setdefault(category.casefold(),
-                                        {"name": category, "covered": 0.0, "on_demand": 0.0})
-        bucket[kind] += cost
+            bucket["on_demand"] += cost
     total = covered + on_demand
     categories = []
     for name, b in by_category.items():
@@ -312,7 +268,7 @@ def _coverage(rows, currency=None):
         if subtotal <= 0:
             continue
         categories.append({
-            "meter_category": b["name"],
+            "meter_category": name,
             "covered_cost": round(b["covered"], 2),
             "on_demand_cost": round(b["on_demand"], 2),
             "coverage_pct": round(100.0 * b["covered"] / subtotal, 1),
@@ -321,17 +277,6 @@ def _coverage(rows, currency=None):
     return {
         "covered_cost": round(covered, 2),
         "on_demand_cost": round(on_demand, 2),
-        "eligible_cost": round(total, 2),
-        "ineligible_cost": round(ineligible, 2),
-        "unknown_eligibility_cost": round(unknown, 2),
-        "excluded_adjustment_cost": round(adjustments, 2),
-        "currency": next(iter(groups), _text(currency).upper() or "UNKNOWN"),
-        "eligibility_basis": (
-            "Cost-weighted evidenced subset: applied Reservation/SavingsPlan pricing plus "
-            "OnDemand Virtual Machines compute meters or explicit boolean commitmentEligible. "
-            "Other service/SKU eligibility is unknown unless supplied; Spot and known "
-            "noneligible meters are excluded. Not a complete catalog eligibility assessment."
-        ),
         "coverage_pct": round(100.0 * covered / total, 1) if total > 0 else None,
         "unused_commitment_cost": round(unused, 2),
         "by_meter_category": categories[:10],
@@ -340,13 +285,7 @@ def _coverage(rows, currency=None):
 
 
 def _hybrid_benefit(vms, sql_vms, costs, managed_scopes):
-    normalized_costs = {}
-    for key, value in (costs or {}).items():
-        number = _num(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-        if number is not None:
-            rid = _norm_id(key)
-            normalized_costs[rid] = normalized_costs.get(rid, 0.0) + number
-    costs = normalized_costs
+    costs = {_norm_id(k): v for k, v in (costs or {}).items()}
     candidates = []
     for vm in vms or []:
         rid = _text(vm.get("id") or vm.get("resourceId"))
@@ -505,12 +444,7 @@ def analyze_commitments(*, reservations=None, savings_plans=None,
         warnings.append("Reservation and savings plan recommendations cover the same usage; they "
                         "are alternatives, so the headline uses the larger family, not the sum")
 
-    coverage = _coverage(usage_rows, currency) if usage_rows is not None else None
-    if coverage and coverage.get("unknown_eligibility_cost"):
-        warnings.append("Some usage has unknown commitment eligibility; coverage is for the "
-                        "evidenced eligible subset only (see coverage.eligibility_basis).")
-    if coverage and coverage.get("reason"):
-        warnings.append(coverage["reason"])
+    coverage = _coverage(usage_rows) if usage_rows is not None else None
     hub = _hybrid_benefit(vms, sql_vms, costs, managed_scopes)
     if hub:
         warnings.append("Azure Hybrid Benefit requires eligible licenses with Software Assurance "

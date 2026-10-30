@@ -4,9 +4,6 @@ import glob
 import json
 import os
 import re
-import hashlib
-import tempfile
-from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from html import unescape
 from urllib.parse import parse_qsl, urlsplit
@@ -61,64 +58,21 @@ def resolve_resource_id(row):
     return candidates[0] if candidates else None
 
 
-class CostMap(dict):
-    """Compatibility view of one normalized ledger; serialize the snapshot, not this view."""
-
-    def __init__(self, values, *, currency, nonresource_cost, billing_rows):
-        super().__init__(values)
-        self.currency = currency
-        self.nonresource_cost = nonresource_cost
-        self.billing_rows = billing_rows
-
-
 def costs_by_resource(rows):
-    """Sum normalized costs case-insensitively without discarding nonresource charges.
+    """Sum normalized `cost` per resolved resource id -> {resourceId: float}.
 
     Use on prepare_usage_details(...)["included_rows"] for a ~30-day window to build the
-    compatibility map. Currency, billing-time tags and nonresource totals accompany the map.
-    Rebuild it from snapshot rows after JSON serialization.
+    `costs=` map that rightsize.py, waste.py, allocate.py, and commit.py expect.
     """
 
     totals = {}
-    display = {}
-    currencies = set()
-    billing_rows = []
-    nonresource = Decimal("0")
     for row in rows or ():
-        if not isinstance(row, dict):
-            raise ValueError("cost row must be an object")
         rid = resolve_resource_id(row)
-        cost = _decimal_or_none(row.get("cost"))
-        if cost is None:
-            if _present(row.get("cost")):
-                raise ValueError("cost must be a finite number")
+        cost = _decimal_or_none(row.get("cost")) if isinstance(row, dict) else None
+        if not rid or cost is None:
             continue
-        if row.get("currency"):
-            currencies.add(str(row["currency"]).upper())
-        if not rid:
-            nonresource += cost
-            continue
-        key = rid.rstrip("/").casefold()
-        display.setdefault(key, rid)
-        totals[key] = totals.get(key, Decimal("0")) + cost
-        tags = row.get("tags") or {}
-        if isinstance(tags, str):
-            text = tags.strip()
-            try:
-                tags = json.loads(text if text.startswith("{") else "{" + text + "}")
-            except json.JSONDecodeError as exc:
-                raise ValueError("billing tags must be valid JSON") from exc
-        if not isinstance(tags, dict):
-            raise ValueError("billing tags must be an object")
-        billing_rows.append({"resourceId": rid, "cost": str(cost), "tags": tags})
-    if len(currencies) > 1:
-        raise ValueError("cannot aggregate multiple currencies")
-    return CostMap(
-        {display[key]: float(total) for key, total in totals.items()},
-        currency=next(iter(currencies), None),
-        nonresource_cost=float(nonresource),
-        billing_rows=billing_rows,
-    )
+        totals[rid] = totals.get(rid, Decimal("0")) + cost
+    return {rid: float(round(total, 2)) for rid, total in totals.items()}
 
 
 def ingestion_gb_per_day(rows, days):
@@ -151,7 +105,6 @@ def ingestion_gb_per_day(rows, days):
         head = unit.split("gb")[0].strip()
         if head:
             factor = _decimal_or_none(head) or Decimal("1")
-        rid = rid.rstrip("/").casefold()
         totals[rid] = totals.get(rid, Decimal("0")) + quantity * factor
     return {rid: float(round(total / Decimal(str(days)), 3)) for rid, total in totals.items()}
 
@@ -235,8 +188,6 @@ def normalize_usage_costs(rows):
                 "account separately"
             )
         currency = currencies[0] if currencies else None
-        if currency is None or any(billing is not None and not code for _, billing, code, _ in fields):
-            raise ValueError("billing cost requires an explicit currency on every costed row")
         cost_source = "billing_currency"
     else:
         currency = "USD"
@@ -257,17 +208,7 @@ def normalize_usage_costs(rows):
             value = usd
         if value is None:
             missing += 1
-        elif _decimal_or_none(value) is None:
-            raise ValueError("UsageDetails cost must be a finite number")
         out = dict(row)
-        props = row.get("properties")
-        if isinstance(props, dict):
-            for key, field_value in props.items():
-                out.setdefault(key, field_value)
-            meter = props.get("meterDetails")
-            if isinstance(meter, dict):
-                for key, field_value in meter.items():
-                    out.setdefault(key, field_value)
         out["cost"] = value
         out["currency"] = currency
         resolved_id = resolve_resource_id(out)
@@ -329,8 +270,6 @@ def prepare_usage_details(
             raise ValueError(f"UsageDetails page {index} is missing request_url")
         request_url = unescape(request_url)
 
-        if index and expected_request_url is None:
-            raise ValueError("UsageDetails page follows a terminal page")
         if expected_request_url is not None and request_url != expected_request_url:
             raise ValueError(
                 f"UsageDetails page {index} does not continue the preceding nextLink"
@@ -398,138 +337,6 @@ def prepare_usage_details(
         "remaining_next_link": expected_request_url,
         "partial": not chain_complete,
     }
-
-
-def make_cost_snapshot(prepared, *, managed_scopes, requested_start, requested_end,
-                       run_id, code_version, source="consumption", source_version=None):
-    """Create the JSON-safe ledger passed between analysis and rendering steps."""
-    start, end = date.fromisoformat(requested_start), date.fromisoformat(requested_end)
-    if start > end:
-        raise ValueError("requested cost period is reversed")
-    if not managed_scopes or not run_id or not code_version:
-        raise ValueError("managed scopes, run_id and code_version are required")
-    currency = prepared.get("currency")
-    if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
-        raise ValueError("snapshot requires an explicit three-letter currency")
-    basis = prepared.get("cost_metric")
-    if basis not in ("ActualCost", "AmortizedCost"):
-        raise ValueError("snapshot requires an explicit supported cost basis")
-    rows = []
-    obtained = []
-    for row in prepared.get("included_rows", []):
-        day = row.get("date") or (row.get("properties") or {}).get("date")
-        if not day:
-            raise ValueError("cost snapshot row has no usage date")
-        day = date.fromisoformat(str(day)[:10])
-        if start <= day <= end:
-            rows.append(row)
-            obtained.append(day.isoformat())
-    costs = costs_by_resource(rows)
-    if costs.currency and costs.currency != currency:
-        raise ValueError("snapshot currency does not match ledger rows")
-    total = sum((_decimal_or_none(row.get("cost")) or Decimal(0) for row in rows), Decimal(0))
-    coverage = prepared.get("coverage_period")
-    coverage_complete = bool(
-        coverage
-        and date.fromisoformat(coverage["start"]) <= start
-        and date.fromisoformat(coverage["end"]) >= end
-    )
-    warnings = list(prepared.get("warnings", []))
-    if not coverage_complete:
-        warnings.append("Requested-period coverage is unverified; observed row dates are not proof of complete history.")
-    payload = {
-        "schema_version": 1,
-        "source": source,
-        "source_version": source_version,
-        "currency": currency,
-        "cost_basis": basis,
-        "managed_scopes": sorted({str(s).rstrip("/").casefold() for s in managed_scopes}),
-        "requested_period": {"start": requested_start, "end": requested_end},
-        "obtained_period": {"start": min(obtained), "end": max(obtained)} if obtained else None,
-        "coverage_period": coverage,
-        "rows": rows,
-        "included_cost": str(total),
-        "nonresource_cost": str(sum(
-            (_decimal_or_none(row.get("cost")) or Decimal(0)
-             for row in rows if not resolve_resource_id(row)), Decimal(0)
-        )),
-        "unresolved_observed_cost": str(prepared.get("unattributed_cost", 0)),
-        "missing_cost_count": prepared.get("missing_cost_count", 0),
-        "partial": bool(prepared.get("partial") or prepared.get("missing_cost_count") or not coverage_complete),
-        "warnings": warnings,
-    }
-    return _seal_snapshot(payload, run_id=run_id, code_version=code_version)
-
-
-def make_budget_snapshot(budgets, *, managed_scopes, run_id, code_version,
-                         as_of, retrieved_at, partial, warnings=None):
-    """Preserve budget API evidence without inventing a usage ledger or billing cutoff."""
-    if not isinstance(budgets, list) or any(not isinstance(row, dict) for row in budgets):
-        raise ValueError("budget snapshot requires a list of source budget objects")
-    if not managed_scopes or not run_id or not code_version:
-        raise ValueError("managed scopes, run_id and code_version are required")
-    if type(partial) is not bool:
-        raise ValueError("budget retrieval completeness must be explicit")
-    as_of = date.fromisoformat(as_of).isoformat()
-    retrieved = datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
-    if retrieved.utcoffset() is None:
-        raise ValueError("budget retrieval timestamp must include a timezone")
-    currencies = set()
-    missing_currency = False
-    for row in budgets:
-        properties = row.get("properties") or row
-        currency = (properties.get("currentSpend") or {}).get("unit")
-        if not currency:
-            missing_currency = True
-        elif not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
-            raise ValueError("budget source requires a three-letter billing currency")
-        else:
-            currencies.add(currency)
-    notices = list(warnings or [])
-    if missing_currency:
-        notices.append("Some budgets do not report a currentSpend billing currency.")
-    payload = {
-        "schema_version": 1,
-        "source_kind": "budget",
-        "source": "Microsoft.Consumption/budgets",
-        "cost_basis": "ActualCost",
-        "currency": next(iter(currencies)) if len(currencies) == 1 else None,
-        "currencies": sorted(currencies),
-        "managed_scopes": sorted({str(s).rstrip("/").casefold() for s in managed_scopes}),
-        "as_of": as_of,
-        "retrieved_at": retrieved.astimezone(timezone.utc).isoformat(),
-        "billing_data_as_of": None,
-        "budgets": budgets,
-        "partial": partial or missing_currency,
-        "warnings": notices,
-    }
-    return _seal_snapshot(payload, run_id=run_id, code_version=code_version)
-
-
-def _seal_snapshot(payload, *, run_id, code_version):
-    encoded = json.dumps(payload, sort_keys=True, default=str, allow_nan=False)
-    result = json.loads(encoded)
-    result["snapshot_id"] = hashlib.sha256(encoded.encode()).hexdigest()
-    result["run_id"] = run_id
-    result["code_version"] = code_version
-    return result
-
-
-def save_cost_snapshot(snapshot, *, directory=None):
-    """Write once per run; refuse a second writer rather than replacing evidence."""
-    expected = snapshot["snapshot_id"]
-    payload = {key: value for key, value in snapshot.items()
-               if key not in ("snapshot_id", "run_id", "code_version")}
-    encoded = json.dumps(payload, sort_keys=True, default=str, allow_nan=False)
-    if hashlib.sha256(encoded.encode()).hexdigest() != expected:
-        raise ValueError("snapshot content hash mismatch")
-    root = _input_directory(directory, snapshot["run_id"])
-    os.makedirs(root, exist_ok=True)
-    filename = "budget-snapshot.json" if snapshot.get("source_kind") == "budget" else "cost-snapshot.json"
-    path = os.path.join(root, filename)
-    with open(path, "x", encoding="utf-8") as handle:
-        json.dump(snapshot, handle, allow_nan=False)
-    return path
 
 
 _USAGE_ROW_KEYS = {"date", "cost", "costinbillingcurrency", "billingcost"}
@@ -721,18 +528,7 @@ _INPUT_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _MISSING = object()
 
 
-def _input_directory(directory, run_id):
-    if directory is None and not run_id:
-        raise ValueError("run_id is required unless an isolated directory is explicitly supplied")
-    base = os.fspath(directory) if directory is not None else "/mnt/data/finops-runs"
-    if run_id is not None:
-        if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run_id):
-            raise ValueError("invalid run_id")
-        base = os.path.join(base, run_id)
-    return base
-
-
-def save_finops_input(name, data=None, *, source_path=None, directory=None, run_id=None):
+def save_finops_input(name, data=None, *, source_path=None, directory="tmp/finops-data"):
     """Persist one Azure response to `<directory>/<name>.json` for a later analysis step.
 
     Pass either the parsed/inline response as `data` (a JSON string is parsed), or the exact
@@ -755,26 +551,21 @@ def save_finops_input(name, data=None, *, source_path=None, directory=None, run_
             raise ValueError(f"tool output holds no JSON response (failed call?): {source_path}")
     elif isinstance(data, str):
         data = json.loads(data)
-    directory = _input_directory(directory, run_id)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, f"{name}.json")
-    descriptor, temp = tempfile.mkstemp(prefix=f".{name}-", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, default=str, allow_nan=False)
-        os.replace(temp, path)
-    finally:
-        if os.path.exists(temp):
-            os.remove(temp)
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, default=str)
+    os.replace(temp, path)
     return path
 
 
-def load_finops_input(name, directory=None, default=_MISSING, *, run_id=None):
+def load_finops_input(name, directory="tmp/finops-data", default=_MISSING):
     """Load an input written by `save_finops_input`; return `default` (when given) if absent."""
 
     if not isinstance(name, str) or not _INPUT_NAME.match(name):
         raise ValueError(f"invalid input name {name!r}")
-    path = os.path.join(_input_directory(directory, run_id), f"{name}.json")
+    path = os.path.join(directory, f"{name}.json")
     if not os.path.exists(path):
         if default is _MISSING:
             raise FileNotFoundError(path)

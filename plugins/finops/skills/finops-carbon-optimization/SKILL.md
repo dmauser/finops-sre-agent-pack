@@ -89,7 +89,7 @@ example `carbon-overall`, `carbon-monthly`, `carbon-top-resources`), then load t
 from usage import load_finops_input        # finops-managed-scope/usage.py
 from carbon import analyze_carbon
 result = analyze_carbon(
-    {name: load_finops_input(name, run_id=run_id) for name in saved_names},
+    {name: load_finops_input(name) for name in saved_names},
     managed_scopes=effective_scopes,
 )
 ```

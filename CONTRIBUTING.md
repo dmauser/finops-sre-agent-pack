@@ -26,20 +26,5 @@ summary, then say what changed and why it matters to someone reading a report.
    gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <section.md>
    ```
 
-Production installations default to `autoUpdate: false`. Promote a reviewed commit explicitly,
-verify its installed `sourceCommit`, then run canaries before restoring scheduled tasks. A GitHub
-tag records a release; it does not pin the direct installation API by itself. See
-[production operations](docs/PRODUCTION.md).
-
-## Correctness checks
-
-Run `python -m pytest tests evals` using Linux/WSL with Python 3 and Bash; shell tests use Unix
-temporary paths. Set `PYTHONDONTWRITEBYTECODE=1` for clean working trees. Regenerate task YAML with
-`python plugins/finops/scheduled-tasks/render_tasks.py write` after editing canonical prompts.
-The generator writes UTF-8 consistently on Windows and Linux.
-
-Add financial regressions for missing, mixed-currency, overlapping, incomplete and contradictory
-inputs. Prove a guard detects the fault (fail-before or a temporary mutation), then restore the
-implementation. Do not refresh renderer golden hashes until changed labels, amounts and confidence
-semantics have been reviewed. Samples must remain fictional; never commit live ledgers, customer
-resource IDs, credentials or deployment evidence.
+Agents installed with `autoUpdate: true` pick up `main` automatically; the tag and release record what
+shipped and when.

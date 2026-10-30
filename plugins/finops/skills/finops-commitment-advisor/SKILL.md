@@ -1,6 +1,6 @@
 ---
 name: finops-commitment-advisor
-description: Rate optimization for Azure, read-only. Inventories reservations and savings plans, flags underutilized and expiring commitments, normalizes purchase recommendations to monthly savings as alternatives rather than additive savings, and measures cost-weighted coverage of a conservative evidenced eligible subset. Keeps unknown eligibility, excluded charges and currencies separate; lists Azure Hybrid Benefit candidates. Uses bundled commit.py with the runtime's sandbox Python tool. Use for "should we buy reservations or a savings plan", "are our reservations being used", "what expires soon", and quarterly rate-optimization reviews.
+description: Rate optimization for Azure, read-only. Inventories existing reservations and savings plans (utilization, expiry, auto-renew), flags underutilized and expiring commitments, normalizes reservation and savings plan purchase recommendations to estimated monthly savings (as alternatives, never summed), measures commitment coverage from amortized cost, and lists Azure Hybrid Benefit candidates, using the bundled commit.py with the runtime's sandbox Python tool. Use for "should we buy reservations or a savings plan", "are our reservations being used", "what expires soon", and quarterly rate-optimization reviews.
 ---
 
 ## When to use this skill
@@ -146,10 +146,7 @@ read_skill_file(skill_name="finops-commitment-advisor", file_path="commit.py")
 
 ```python
 from commit import analyze_commitments
-from usage import load_finops_input, save_finops_input
-
-# Reuse the unique run_id from managed-scope resolution.
-inputs = dict(
+result = analyze_commitments(
     reservations=reservations,                 # Step 1
     savings_plans=savings_plans,               # Step 1
     reservation_recommendations=ri_recs,       # Step 2
@@ -160,15 +157,7 @@ inputs = dict(
     managed_scopes=effective_scopes,
     inventory_unavailable=inventory_unavailable,  # Step 1 kinds that returned 403/error
 )
-save_finops_input("commitment-inputs", inputs, run_id=run_id)
-result = analyze_commitments(**load_finops_input("commitment-inputs", run_id=run_id))
-save_finops_input("commitment-analysis", result, run_id=run_id)
 ```
-
-Inputs/results live only in `/mnt/data/finops-runs/<run_id>/`. Carry the same unique `run_id`
-through collection, analysis and rendering. Do not recover missing inputs from another run or
-reuse a shared scratch directory. Keep source failures in `inventory_unavailable` rather than
-replacing a failed query with an apparently successful empty inventory.
 
 `analyze_commitments` handles the normalization so the model does not do arithmetic:
 
@@ -181,35 +170,12 @@ replacing a failed query with an apparently successful empty inventory.
   `headline.potential_monthly_savings` is the **larger family, never the sum**.
 - `underutilized` uses 30-day utilization (falls back to 7-day) below `low_utilization_pct` (80).
 - `expiring` lists commitments within `expiry_window_days` (60) with auto-renew off.
-- `coverage` reports **cost-weighted coverage of an evidenced eligible subset**, not the share
-  of all services covered by commitments. Its denominator is `eligible_cost = covered_cost +
-  on_demand_cost`; `coverage_pct` is null when that denominator is unavailable or zero.
-- The helper's conservative policy counts rows with applied `Reservation`/`SavingsPlan` pricing
-  as covered. For uncovered usage it includes `OnDemand` **Virtual Machines** compute meters,
-  excluding identified license/software meters, or an explicit boolean `commitmentEligible`
-  supplied from validated meter-level evidence. This is a local classification policy, **not**
-  a complete service/SKU eligibility catalog or a promise that a purchase is available.
-- Unknown pricing/eligibility remains in `unknown_eligibility_cost`. Service names such as
-  Storage alone do not prove eligibility or ineligibility. Spot, explicit ineligibility and the
-  helper's narrow excluded-meter/service classifications contribute to `ineligible_cost`.
-  Negative adjustments remain in `excluded_adjustment_cost`; unused commitment charges remain
-  separately in `unused_commitment_cost`. These buckets do not dilute the coverage denominator.
-- Preserve `eligibility_basis`, `currency`, `by_meter_category` and `row_count` alongside the
-  percentage. If currencies differ, `by_currency` holds separate results and aggregate monetary
-  metrics/coverage are null with `reason`; unknown denomination is not silently treated as USD.
-  Supply a verified `currency` for rows without a denomination. No currency conversion occurs.
-- Hybrid Benefit cost mappings combine numeric values for case-insensitive resource-ID
-  variants. Strings, booleans and nonfinite values are not monetary contributions; do not
-  perform a lossy lowercasing dictionary rewrite before passing `costs`.
-
-For example, with 50 of covered VM usage, 50 of eligible on-demand VM usage and 1,000 of
-excluded service usage in the same currency, the eligible-subset coverage is **50%**, not
-4.5%. Additional unknown-eligibility spend is disclosed separately, never counted as zero
-coverage or silently assumed eligible.
+- `coverage` reports covered vs. on-demand amortized cost by meter category and the
+  `UnusedReservation` / `UnusedSavingsPlan` charges (money already wasted).
 
 ### Step 6 — Report
 
-Lead with the headline: **eligible-subset commitment coverage %**, unused commitment cost, the larger purchase family
+Lead with the headline: commitment coverage %, unused commitment cost, the larger purchase family
 and its estimated monthly savings, and counts of underutilized / expiring commitments. Then:
 
 1. **Fix waste in what you own** — underutilized commitments (exchange, widen scope to Shared /
@@ -223,12 +189,6 @@ State that reservation and savings plan options are alternatives, that shared co
 reported for context only, and any excluded commitments or inventory permission gaps. Recommend
 only — do not purchase, exchange, renew, or change licensing.
 
-Always show the eligible denominator, excluded and unknown-eligibility amounts, currency and
-`eligibility_basis` next to coverage. If a substantial share is unknown, explain that the reported
-percentage describes only the evidenced subset. Do not label null coverage as 0%, turn a mixed-
-currency total into a single amount, or present an unweighted all-service percentage as eligible
-compute coverage.
-
 Read-only only. Do not use any write/POST Azure operations.
 
 ### Step 7 — Save the Live Report
@@ -237,7 +197,7 @@ After reporting, refresh the shared Live Report `FinOps: Commitments` so the res
 
 1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Commitments (<scope>)`. Skip when the user asks not to save.
 2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
-3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. Reload the same-run result with `load_finops_input("commitment-analysis", run_id=run_id)`. With `datetime.now(timezone.utc)`, call `build_commitment_model(analyze_commitments_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Pass any 403 inventory kinds to `analyze_commitments(inventory_unavailable=...)` first so the report says `unknown`, not "no commitments". Run `write_report(model, f"/mnt/data/finops-runs/{run_id}/finops-commitments.html")`.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_commitment_model(analyze_commitments_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Pass any 403 inventory kinds to `analyze_commitments(inventory_unavailable=...)` first so the report says `unknown`, not "no commitments". Run `write_report(model, "finops-commitments.html")`.
 4. SaveReport the static file with `allowedTools: []`, name `FinOps: Commitments`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 ## Notes
 

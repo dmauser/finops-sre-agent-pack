@@ -8,33 +8,6 @@ All reports are **read-only and advisory**. They recommend actions; they never c
 Each report also shows a data-quality panel and a refresh time, so you can tell how complete and how
 current the data is.
 
-## Financial evidence and confidence
-
-The provenance panel identifies **currency, ActualCost or AmortizedCost, managed scopes, requested
-and observed dates, source generation, snapshot ID, code version and run ID** when a cost snapshot
-is supplied. ActualCost is the invoice/cash view; AmortizedCost spreads commitment purchases across
-benefiting usage. Never add or compare them as though they were the same measure.
-
-Missing or incomplete source provenance marks a report **partial** with an explicit warning.
-Budget Status uses an immutable snapshot of the original budget API objects rather than a usage
-ledger. It shows the evaluation date and API retrieval timestamp; neither proves how current
-Azure's asynchronously updated `currentSpend` is. Its billing-data freshness stays unknown.
-Cost Overview's **Period spend** reports the observed date range and count; 29 observed days are
-never labeled a complete 30-day total. Missing closed-month history remains unavailable, while
-any current operational metrics must identify their distinct period.
-
-One complete export generation is one ledger, not an increment to yesterday's cumulative export.
-If export transport is unavailable, reports disclose the UsageDetails fallback and historical
-limitations. A successful API response or dates on a few rows do **not** prove full-period coverage.
-Unavailable inputs remain **unknown**, not zero; closed-month reports must not substitute this month.
-Nonresource charges stay in reconciliation rather than disappearing from resource lists.
-Threshold examples below use USD; monetary figures carry their actual currency. Different currencies
-are separated or rejected, never silently relabeled or converted.
-
-Supported savings, review candidates and contradicted estimates are different evidence classes.
-None is permission to change infrastructure. See [production operations](PRODUCTION.md) for gates,
-limitations and rollback.
-
 ## Contents
 
 - [Cost Overview](#cost-overview)
@@ -85,9 +58,8 @@ it costs.
 
 **Question it answers:** Are we going to stay within budget?
 
-Reads each budget's identity, cost category, filter, currency, time grain, effective period and
-configured notifications. A run-rate fallback applies only to a compatible current monthly window;
-annual, expired or otherwise mismatched windows are not projected as monthly budgets.
+Reads your Azure budgets and projects month-end spend (Azure's forecast when available, otherwise
+the current run rate). Each budget gets one status:
 
 | Status | Rule |
 |---|---|
@@ -95,12 +67,8 @@ annual, expired or otherwise mismatched windows are not projected as monthly bud
 | **Forecast over** | Projected month-end spend reaches the budget amount |
 | **At risk** | 80% or more of the budget is used, or one of the budget's own "actual" alert thresholds was crossed |
 | **On track** | None of the above |
-| **Unknown** | Spend, currency or applicable period is missing or incompatible; not a zero-spend success |
 
 **Gated budgets** are the ones over or forecast over. They need a human decision before more is spent.
-Overlapping subscription and resource-group budgets are shown separately, not summed into a portfolio
-allowance. Analytical alert thresholds are not proof that Azure email/action-group delivery is configured;
-check enabled actual versus forecast rules, operators, contacts and notification type.
 
 **Why it matters:** budgets only help if someone acts before the money is gone.
 
@@ -112,34 +80,28 @@ Combines Azure Advisor recommendations with real utilization and real cost.
 
 | Term | Meaning |
 |---|---|
-| **Idle** | Candidate when VM p95 CPU is below 5% over at least 7 days of metrics; CPU alone is not sufficient evidence |
-| **Oversized** | Candidate when VM p95 CPU is below 20% over at least 7 days of metrics; assess memory, disk, network and criticality |
-| **Validated** | Sufficient representative utilization or complete inventory evidence supports further owner review, not automatic safety |
+| **Idle** | VM p95 CPU below 5% over at least 7 days of metrics |
+| **Oversized** | VM p95 CPU below 20% over at least 7 days of metrics |
+| **Validated** | Real utilization or inventory data backs the recommendation |
 | **Verify first** | Not enough data to confirm; check with the owner before acting |
 | **Estimated monthly savings** | Advisor's estimate when available; otherwise about 50% of current cost for a one-size-down change, or the full cost for idle resources |
 
 Items below $5 a month in savings are left out.
-Sparse samples, CPU-only readings and HTTP-only App Service evidence remain review candidates.
-Contradictory memory evidence excludes the estimate from supported totals. Candidates and supported
-amounts are shown separately; duplicate Advisor recommendations for one resource are not stacked.
 
 **Why it matters:** rightsizing is one of the fastest savings, but cutting the wrong resource causes
-incidents. The supported / verify-first split identifies what evidence still needs review.
+incidents. The validated / verify-first split tells you which ones are safe to move on.
 
 ## Cost Allocation
 
 **Question it answers:** Which team owns this spend?
 
 Groups cost by the best-populated ownership tag (for example `team`, `owner`, or `costCenter`).
-Historical showback uses **each billing row's tags**, so changing today's owner cannot rewrite last
-month. Current inventory tags form a separate governance view. Inheritance is applied to historical
-rows only when its historical provenance is explicitly confirmed.
 
 | Term | Meaning |
 |---|---|
 | **Allocated** | Cost with an owner tag value |
 | **Unallocated** | Cost with no owner tag; this is the tagging backlog |
-| **Via tag inheritance** | Cost where a historically attested tag came from the resource group or subscription; current tags alone do not prove historical ownership |
+| **Via tag inheritance** | Cost where the tag came from the resource group or subscription, matching Azure Cost Management tag inheritance (a resource's own tag always wins) |
 | **Fully loaded cost** | A team's direct cost plus its share of shared costs, when a split rule is supplied |
 | **Tag hygiene** | One owner spelled several ways (for example `Payments` and `payments`), which splits their spend |
 
@@ -160,9 +122,6 @@ Savings are the resource's full current monthly cost. **Hygiene** items (detache
 items (Log Analytics workspaces that may need a commitment tier or a retention review) carry no
 claimed saving. Idle VMs, unattached disks, and empty App Service plans are covered by
 [Rightsizing Savings](#rightsizing-savings), so nothing is counted twice.
-Deletion-oriented findings require complete attachment/connection/child inventory. Missing fields are
-not empty inventory. Age alone makes a snapshot a candidate, not proof it is disposable. Supported
-savings and candidate estimates are separate, and duplicate resources are counted once.
 
 **Why it matters:** waste is pure cost with no value, and it's usually the easiest money to recover.
 
@@ -189,10 +148,6 @@ overlap. For example, deleting a VM and buying a reservation for it can't both b
 | **Potential monthly savings** | From Azure's purchase recommendations. Reservation and savings plan options are alternatives, so they're never added together |
 | **Hybrid Benefit candidates** | Pay-as-you-go Windows or SQL licensing; enable only if you own eligible licenses |
 
-Coverage excludes known-ineligible usage and negative credits/refunds from its eligible denominator.
-Uncertain service/meter eligibility is reported separately. An arbitrary `OnDemand` row is not proof
-that a reservation or savings plan can cover it. Eligibility and ownership must be verified before buying.
-
 **Why it matters:** rate optimization lowers the price of what you already use without changing
 workloads. Unused commitments are money already spent for nothing.
 
@@ -202,8 +157,6 @@ workloads. Unused commitments are money already spent for nothing.
 
 Splits AI cost by resource, model, and meter, and separates **model-token spend** (pay per token) from
 **compute spend** (hosted capacity and infrastructure).
-Security, storage, network and support meters are ancillary. Unknown Machine Learning meters remain
-unclassified, not automatically compute.
 
 **Why it matters:** AI costs grow fast and are driven by usage patterns (prompt size, caching, model
 choice) that engineering can change.
@@ -215,9 +168,6 @@ choice) that engineering can change.
 Splits Azure Agent Unit (AAU) cost per agent into **always-on flow** (a fixed 4 AAUs per agent-hour
 while the agent exists) and **active flow** (tokens used while the agent works), and shows headroom
 under the monthly AAU limit. See [Estimated cost of running the FinOps reports](COST.md).
-The inferred always-on component is capped at 96 AAU per billed day. Excess unexplained billed units
-remain **unreconciled**, not idle-agent savings. Raw activity cost is a rate-based estimate and may
-not match the billing window because usage and invoices arrive at different times.
 
 **Why it matters:** the tool that watches your spend should be accountable for its own.
 
@@ -244,10 +194,10 @@ signals over the report period:
 
 | Term | Meaning |
 |---|---|
-| **Risk band** | High: 10 or more. Medium: 5 to under 10. Low: above 0. None: 0 with complete sources; otherwise unknown |
+| **Risk band** | High: 10 or more. Medium: 5 to under 10. Low: above 0. None: 0 |
 | **Pain per $1K** | Score divided by monthly cost in thousands of dollars; finds cheap resources that cause a lot of trouble. Blank under $10 a month |
 | **Invest list** | Score of 10 or more on a resource under $100 a month. Consider investing in resilience before cutting cost |
-| **Verify-before-cutting list** | $1,000 or more a month with a score of 0 and complete source coverage. Check utilization and business criticality first |
+| **Verify-before-cutting list** | $1,000 or more a month with a score of 0. A safer place to optimize, but check utilization and business criticality first |
 | **Join coverage** | Share of costed resources whose signals could be matched by resource ID |
 
 The score is a relative ranking within your environment, not an SLA or uptime metric. Advisor
@@ -278,21 +228,17 @@ Scores a set of FinOps KPIs as **pass**, **warn**, or **fail** against default t
 | Unit cost change | 0% or less | 10% or less |
 | Forecast accuracy (error) | Under 12% | 20% or less |
 
-KPIs with no data are **unknown** and excluded from observed health, but reduce evidence coverage.
-Budget comparisons require matching scope, filter, currency and period. Missing historical days
-suppress a forecast unless a verified complete source establishes that those days truly had zero cost.
-Service/resource/RG anomaly views cannot simply be summed without common event provenance.
+KPIs with no data are **unknown** and not counted.
 
 | Term | Meaning |
 |---|---|
-| **KPI health** | Percentage of known KPIs that pass; can look high with very little evidence |
-| **Evidence coverage** | Percentage of configured KPIs with usable evidence; always read alongside health |
-| **Organizational maturity** | Not assessed. Crawl/Walk/Run requires a separate capability-based assessment, not a financial KPI percentage |
+| **FinOps score** | Percentage of known KPIs that pass |
+| **Maturity** | **Run** at 80% or more, **Walk** at 50% or more, otherwise **Crawl** |
 | **Forecast** | Linear trend with day-of-week seasonality and an 80% confidence band |
 | **Next iteration focus** | Up to 3 capabilities with failing, then warning, KPIs to work on next |
 
-Targets can be changed to match what your organization has agreed. Legacy helper `maturity` fields
-are compatibility-only labels; Live Reports do not present them as organizational maturity.
+Targets can be changed to match what your organization has agreed. The maturity indication is a
+quick signal, not a replacement for a formal FinOps assessment.
 
 **Why it matters:** FinOps is an iterative practice. A monthly scorecard shows progress, and routing
 each finding to an owner turns the review into action.

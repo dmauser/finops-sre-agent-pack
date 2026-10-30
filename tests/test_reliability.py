@@ -136,7 +136,7 @@ def test_high_incident_low_spend_hint_fires():
 
 
 def test_high_spend_no_pain_hint_fires():
-    out = analyze_cost_vs_reliability([_line(1500.0, rid=A)], alerts=[], health_events=[], advisor_recommendations=[])
+    out = analyze_cost_vs_reliability([_line(1500.0, rid=A)])
     assert {h["type"] for h in out["hints"]} == {"high_spend_no_pain"}
 
 
@@ -198,7 +198,7 @@ def test_risk_band_thresholds():
     assert bands["a"] == "high"
     assert bands["b"] == "medium"
     assert bands["c"] == "low"
-    assert bands["d"] == "unknown"
+    assert bands["d"] == "none"
 
 
 def test_inputs_are_not_mutated():

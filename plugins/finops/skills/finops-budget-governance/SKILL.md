@@ -1,6 +1,6 @@
 ---
 name: finops-budget-governance
-description: Proactive budget governance for Azure, read-only. Reads native Azure Cost Management budgets and evaluates their amount, spend, forecast and configured notification thresholds. Computes a labeled run-rate projection only when spend and an active calendar window are known; otherwise reports unknown. Preserves scope, filters, period and currency, never adds overlapping budget envelopes, and distinguishes analytical warnings from configured notifications. Uses bundled budget.py with the runtime's sandbox Python tool. Use for "are we on budget", burn-rate / forecast checks, and month-end overrun early warning.
+description: Proactive budget governance for Azure, read-only. Reads native Azure Cost Management budgets (GET Microsoft.Consumption/budgets — amount, currentSpend, and forecastSpend when present) and evaluates each against its amount and its own notification thresholds; where Azure supplies no forecast it computes a linear run-rate month-end projection in-sandbox, so every budget gets a landing estimate. Surfaces budgets that are over, forecast-to-exceed, or at-risk, ranks them by severity, and flags the ones that warrant a process gate (a human decision before more is spent) — using the bundled budget.py with the runtime's sandbox Python tool. Use for "are we on budget", burn-rate / forecast checks, and month-end overrun early warning.
 ---
 
 ## When to use this skill
@@ -31,9 +31,8 @@ resource list. A budget with **no budgets defined** is a first-class result: the
 budgets defined" and points to `finops-budget-editor`, which can recommend a budget or generate a
 reviewable create plan and human-run script, rather than failing silently. Azure's
 own `forecastSpend` is preferred when present; when it is absent (it often is on the GET response)
-the skill computes a **linear run-rate** forecast only when current spend and an active calendar
-window are known, and labels the source. It evaluates currencies separately without converting or
-combining them. A configured management-group scope is queried directly
+the skill computes a **linear run-rate** month-end forecast in-sandbox and labels the source.
+Multi-currency portfolios are out of scope. A configured management-group scope is queried directly
 for budgets defined at that management group; those budgets are evaluated alongside budgets from the
 expanded descendant effective scopes.
 
@@ -107,54 +106,21 @@ read_skill_file(skill_name="finops-budget-governance", file_path="budget.py")
 
 ```python
 from budget import evaluate_budgets
-from datetime import date
-from usage import load_finops_input, save_finops_input
-
-# Reuse the unique run_id established during managed-scope resolution.
-# Persist every collected scope's original budget objects, with id/properties intact.
-save_finops_input("budgets", budgets, run_id=run_id)
-raw_budgets = load_finops_input("budgets", run_id=run_id)
-result = evaluate_budgets(raw_budgets, as_of=date.fromisoformat(evaluation_day))
-save_finops_input("budget-evaluation", result, run_id=run_id)
+result = evaluate_budgets(budgets)   # the value[] array from Step 1
 ```
-
-These files are isolated under `/mnt/data/finops-runs/<run_id>/`. Reuse the same `run_id` across
-collection, analysis and rendering; do not load another execution's inputs or use a shared scratch
-directory. A failed budget query is a coverage gap, not an empty successful response.
 
 `evaluate_budgets` handles all math and classification:
 
-- **budgets**: per-budget evaluation ranked by severity. Each entry retains `id`, `scope`,
-  `category`, `filter`, `time_grain`, `time_period`, `notifications`, and the resolved
-  `window: {"start": "YYYY-MM-DD", "end_exclusive": "YYYY-MM-DD"}`. Monetary fields are
-  `amount`, `current_spend`, `forecast_spend`, `currency`, `current_currency` and
-  `forecast_currency`; percentages are `pct_used` and `pct_forecast`. `forecast_source` is
-  `azure`, `run-rate` or `unavailable`.
+- **budgets**: per-budget evaluation ranked by severity — `current_spend`, `pct_used`,
+  `forecast_spend` + `forecast_source` (`azure` when Azure supplied it, else `run-rate`), `pct_forecast`,
+  `status`, and the budget's own **breached_notifications**.
 - **status** buckets: `over_budget` (already ≥ amount) → `forecast_over` (projected ≥ amount) →
-  `at_risk` (≥ 80% used or an Actual threshold breached) → `on_track`, plus **`unknown`** when
-  the evidence cannot establish a classification. A known actual/forecast breach can still be
-  reported when another measurement is unavailable. `unknown_reasons` explains missing spend,
-  amount, currency, incompatible currency, unsupported category or unresolved window.
-- **Missing is not zero.** Missing/non-numeric `currentSpend.amount` remains `current_spend: null`;
-  it cannot generate a zero run-rate or an on-track result. Do not format null amounts as zero or
-  invent a currency. A numeric zero is different from a missing observation; disclose any known
-  freshness concern separately.
-- **Configured notifications versus analysis:** `notifications` preserves the complete original
-  metadata. `breached_notifications` contains only enabled, configured rules evaluated with their
-  supported operator and type, labeled `source: "configured"`; it is not evidence that an alert
-  was delivered. `analytical_thresholds` uses `source: "analysis_only"` for independent spend/
-  forecast checks. Never present these analytical checks as configured customer alerts.
-- **summary**: `total_amount`, `total_current`, `total_forecast`, `currency`, status counts
-  (including `unknown`) and `totals_by_currency`. Totals require disjoint, unfiltered cost-budget
-  scopes with the same resolved window/time grain and known currency. Parent plus child budgets,
-  duplicate scope envelopes, different periods and ambiguous filters are **not additive**:
-  affected totals are null and `aggregation_reason` explains why. Each currency bucket is subject
-  to the same checks; splitting by currency alone does not establish a valid total. Missing
-  measurements also leave the corresponding total null.
-- **Window limitations:** run-rate estimates use actual calendar day counts for the helper's
-  supported Monthly/Quarterly/Annual windows, anchored at `timePeriod.startDate`. Inactive,
-  malformed or unresolved windows remain unknown. The helper does not infer a calendar window
-  for `BillingMonth`/other billing-period grains.
+  `at_risk` (≥ 80% used or an Actual threshold breached) → `on_track`.
+- **summary**: portfolio totals (`total_amount`, `total_current`, `total_forecast`, `currency`) and a
+  count of each status. Totals are never summed across currencies: when budgets use more than one
+  currency the `total_*` fields are `null` and `totals_by_currency` carries one total per currency.
+  Run-rate forecasts use the real calendar length of the budget's current Monthly/Quarterly/Annual
+  reset window, anchored at `timePeriod.startDate`.
 - **gates**: the budgets in `over_budget` / `forecast_over` — the ones that warrant a **process gate**
   (a human decision before more is spent), each with a one-line reason.
 - **no_budgets**: `True` when nothing is defined — report it and recommend creating a budget.
@@ -162,20 +128,12 @@ directory. A failed budget query is a coverage gap, not an empty successful resp
 ### Step 3 — Report
 
 Produce a **budget status table** (name, scope, amount, spent + `pct_used`, forecast + `pct_forecast`
-+ source, status), with a totals row **only where aggregation is valid** and any **gated** budgets
-called out at the top as action items (with their reason). Otherwise explain why a portfolio total
-is unavailable and show the individual envelopes. Preserve filters, period and currency in the
-table or its context. Show unknown values as unknown, with `unknown_reasons`.
-List **configured breached notification thresholds** separately from **analytical warnings**. If a
++ source, status), with the **portfolio totals** row and any **gated** budgets called out at the top as
+the action items (with their reason). List each budget's **breached notification thresholds**. If a
 forecast is `run-rate` (not Azure's), say so — it is an estimate. If a budget's `current_spend` is `0`
 on a newly created budget, note it may be an unsynced value rather than real zero spend. If **no
 budgets are defined**, say that plainly and point to `finops-budget-editor` for a recommendation or
 a deterministic create plan and human-run script. If every budget is `on_track`, say so in one line.
-
-When passing results to `finops-kpi-scorecard`, preserve the whole evaluation, not only
-`summary.total_amount`. A subscription forecast of 1,200 compared with a subscription budget of
-1,000 is 120%; a separate 500 resource-group budget must not turn it into 80%. The scorecard matches
-exact scope, monthly window, filter and currency; missing or duplicate matches produce unknown.
 
 ### Step 4 — Save the Live Report
 
@@ -183,9 +141,8 @@ After reporting, refresh the shared Live Report `FinOps: Budget Status` so the r
 
 1. Save only when the run covered the full effective managed scope without a user scope override. Otherwise say the shared report was not refreshed and offer to save under a distinct name such as `FinOps: Budget Status (<scope>)`. Skip when the user asks not to save.
 2. Call ListReports; call GetReport and reuse the exact-name report's `reportId`, or create it if absent.
-3. Reload the exact same-run budget API objects and preserve them with managed-scope `make_budget_snapshot(budgets, managed_scopes=effective_scopes, run_id=run_id, code_version=<installed source SHA>, as_of=<evaluation YYYY-MM-DD>, retrieved_at=<timezone-qualified source retrieval timestamp>, partial=<retrieval incomplete>)`. Persist with `save_cost_snapshot(budget_snapshot)`. This is a budget-source record, not a usage ledger; budget windows stay in the original objects and billing-data freshness remains unknown.
-4. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. Reload the same-run evaluation with `load_finops_input("budget-evaluation", run_id=run_id)`. With `datetime.now(timezone.utc)`, call `build_budget_status_model(evaluate_budgets_result, cost_context=budget_snapshot, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, f"/mnt/data/finops-runs/{run_id}/finops-budget-status.html")`. Confirm the Data provenance section includes the source hash, installed code version and run.
-5. SaveReport the static file with `allowedTools: []`, name `FinOps: Budget Status`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
+3. Load `finops-report-renderer`, its SKILL.md, exact `models.py`, and exact `render.py`. With `datetime.now(timezone.utc)`, call `build_budget_status_model(evaluate_budgets_result, ...)` with `partial`, warnings, and scope coverage; do not construct the model or HTML by hand. Run `write_report(model, "finops-budget-status.html")`.
+4. SaveReport the static file with `allowedTools: []`, name `FinOps: Budget Status`, and the reused `reportId`. Return the saved report id and version. A report-tool failure never suppresses the analysis result.
 
 ## How Azure evaluates budgets (Microsoft guidance)
 

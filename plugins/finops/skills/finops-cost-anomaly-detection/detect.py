@@ -80,10 +80,7 @@ def _dimension_value(item: dict, dimension: str):
         # Modern billing carries the full ARM id in instanceName; prefer it when projected.
         instance = str(item.get("instanceName") or "").strip()
         if instance.lower().startswith("/subscriptions/"):
-            return instance.rstrip("/").casefold()
-    if dimension in ("resourceId", "resourceGroup"):
-        value = item.get(dimension)
-        return str(value).strip().rstrip("/").casefold() if value is not None else None
+            return instance
     return item.get(dimension)
 
 

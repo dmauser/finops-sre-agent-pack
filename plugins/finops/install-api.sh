@@ -25,7 +25,7 @@
 #     ./install-api.sh
 #   # private repo clone (until the repo is public) needs a GitHub PAT:
 #   GITHUB_PAT=<pat> AGENT_RESOURCE_ID=<id> ./install-api.sh
-#   # "Install from URL" with controlled updates instead of a marketplace, one task only:
+#   # portal-equivalent "Install from URL" (auto-update) instead of a marketplace, one task only:
 #   PLUGIN_SOURCE=direct TASK_IDS=cost-optimization-report AGENT_RESOURCE_ID=<id> ./install-api.sh
 #   # to create the agent resource itself as well, use deploy/deploy.sh
 #
@@ -44,9 +44,7 @@ MARKETPLACE_NAME="${MARKETPLACE_NAME:-finops-pack}"
 PLUGIN_NAME="${PLUGIN_NAME:-finops}"
 PLUGIN_SOURCE="${PLUGIN_SOURCE:-marketplace}"     # marketplace | direct (portal "Install from URL")
 PLUGIN_PATH="${PLUGIN_PATH:-plugins/finops}"      # plugin folder inside the repo (direct mode)
-TASK_IDS="${TASK_IDS:-cost-optimization-report}"  # explicit opt-in for the full schedule
-PLUGIN_AUTO_UPDATE="${PLUGIN_AUTO_UPDATE:-false}"
-EXPECTED_SOURCE_COMMIT="${EXPECTED_SOURCE_COMMIT:-}" # require this exact installed revision
+TASK_IDS="${TASK_IDS:-all}"                       # comma-separated task ids from task-manifest.json, or "all"
 SKILL_NAME="${SKILL_NAME:-finops-cost-anomaly-detection}"
 REPO_SLUG="${REPO_SLUG:-dmauser/finops-sre-agent-pack}"   # owner/repo (marketplace sourceUrl)
 SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
@@ -77,13 +75,6 @@ command -v az     >/dev/null 2>&1 || die "az (Azure CLI) not found."
 command -v curl   >/dev/null 2>&1 || die "curl not found."
 command -v python3 >/dev/null 2>&1 || die "python3 not found."
 command -v mktemp >/dev/null 2>&1 || die "mktemp not found."
-if [ -n "$EXPECTED_SOURCE_COMMIT" ]; then
-  [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[[:xdigit:]]{40}$ ]] || die "EXPECTED_SOURCE_COMMIT must be a full commit SHA."
-  command -v git >/dev/null 2>&1 || die "git is required to verify a controlled source revision."
-  source_head="$(GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code "https://github.com/$REPO_SLUG.git" HEAD | cut -f1)"
-  [ "${source_head,,}" = "${EXPECTED_SOURCE_COMMIT,,}" ] || \
-    die "The direct-install API clones the repository default branch. Promote the reviewed commit first; expected $EXPECTED_SOURCE_COMMIT, source HEAD is $source_head. Nothing installed."
-fi
 az account show >/dev/null 2>&1 || die "Not logged in to Azure. Run 'az login' first."
 [ -f "$FINOPS_AGENT_MANIFEST" ] || die "Agent manifest not found: $FINOPS_AGENT_MANIFEST"
 [ -f "$TASK_RENDERER" ] || die "Scheduled-task renderer not found: $TASK_RENDERER"
@@ -495,16 +486,12 @@ if [ -n "$existing_install" ]; then
   ok "Plugin '$PLUGIN_NAME' already installed from a marketplace: $existing_install — skipping install"
 else
   direct_body="$INSTALL_WORK_DIR/install-direct.json"
-  REPO_SLUG="$REPO_SLUG" PLUGIN_PATH="$PLUGIN_PATH" GITHUB_PAT="$GITHUB_PAT" PLUGIN_AUTO_UPDATE="$PLUGIN_AUTO_UPDATE" python3 - "$direct_body" <<'PY'
+  REPO_SLUG="$REPO_SLUG" PLUGIN_PATH="$PLUGIN_PATH" GITHUB_PAT="$GITHUB_PAT" python3 - "$direct_body" <<'PY'
 import json, os, sys
-auto_update = os.environ["PLUGIN_AUTO_UPDATE"]
-if auto_update not in ("true", "false"):
-    raise SystemExit("PLUGIN_AUTO_UPDATE must be true or false")
-url = "https://github.com/" + os.environ["REPO_SLUG"]
 doc = {
-    "sourceUrl": url,
+    "sourceUrl": "https://github.com/" + os.environ["REPO_SLUG"],
     "pathInRepo": os.environ["PLUGIN_PATH"],
-    "autoUpdate": auto_update == "true",
+    "autoUpdate": True,
 }
 pat = os.environ.get("GITHUB_PAT") or ""
 if pat:
@@ -522,53 +509,16 @@ PY
     200|201|202)
       printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if d.get("success") else 1)' 2>/dev/null \
         || die "Direct plugin install failed: $resp"
-      ok "Plugin installed or refreshed from URL (auto-update=$PLUGIN_AUTO_UPDATE, HTTP $HTTP_CODE)";;
+      ok "Plugin installed or refreshed from URL with auto-update (HTTP $HTTP_CODE)";;
     *) die "Direct plugin install failed (HTTP $HTTP_CODE): $resp";;
   esac
 fi
 fi
 
-say "Applying plugin auto-update policy"
-policy_body="$INSTALL_WORK_DIR/plugin-policy.json"
-for i in $(seq 1 60); do
-  api GET /api/v2/plugins/installations
-  [ "$HTTP_CODE" = 200 ] || die "Could not read plugin update policy (HTTP $HTTP_CODE)"
-  installation_name="$(printf '%s' "$RESP_BODY" | PLUGIN_NAME="$PLUGIN_NAME" PLUGIN_AUTO_UPDATE="$PLUGIN_AUTO_UPDATE" python3 -c '
-import json, os, sys
-from urllib.parse import quote
-data = json.load(sys.stdin)
-items = data if isinstance(data, list) else data.get("value", [])
-matches = [item for item in items if (item.get("spec") or {}).get("pluginName") == os.environ["PLUGIN_NAME"]]
-if len(matches) > 1:
-    raise SystemExit("Multiple installations match; select and resolve them before upgrading.")
-if matches:
-    item = matches[0]
-    name = item["metadata"]["name"]
-    fields = ("marketplaceName", "pluginName", "description", "version", "source", "importedSkills")
-    spec = {key: item["spec"][key] for key in fields if key in item["spec"]}
-    value = os.environ["PLUGIN_AUTO_UPDATE"]
-    if value not in ("true", "false"):
-        raise SystemExit("PLUGIN_AUTO_UPDATE must be true or false")
-    spec["autoUpdate"] = value == "true"
-    with open(sys.argv[1], "w", encoding="utf-8") as handle:
-        json.dump({"metadata": {"name": name}, "spec": spec}, handle)
-    print(quote(name, safe=""))
-' "$policy_body")" || die "Could not prepare plugin update policy."
-  if [ -n "$installation_name" ]; then
-    api PUT "/api/v2/plugins/installations/$installation_name" "$policy_body"
-    case "$HTTP_CODE" in
-      200|201|202) break;;
-      *) die "Could not set plugin auto-update policy (HTTP $HTTP_CODE)";;
-    esac
-  fi
-  [ "$i" -lt 60 ] || die "Timed out waiting for installation to set update policy."
-  sleep 2
-done
-
 say "Waiting for all FinOps skills"
 for i in $(seq 1 60); do
   api GET /api/v2/plugins/installations
-  if printf '%s' "$RESP_BODY" | PLUGIN_SOURCE="$PLUGIN_SOURCE" MARKETPLACE_NAME="$MARKETPLACE_NAME" PLUGIN_NAME="$PLUGIN_NAME" EXPECTED_SOURCE_COMMIT="$EXPECTED_SOURCE_COMMIT" PLUGIN_AUTO_UPDATE="$PLUGIN_AUTO_UPDATE" python3 -c '
+  if printf '%s' "$RESP_BODY" | PLUGIN_SOURCE="$PLUGIN_SOURCE" MARKETPLACE_NAME="$MARKETPLACE_NAME" PLUGIN_NAME="$PLUGIN_NAME" python3 -c '
 import json, os, sys
 expected = {
     "finops-cost-anomaly-detection",
@@ -599,10 +549,7 @@ for item in installations:
         or spec.get("marketplaceName") == os.environ["MARKETPLACE_NAME"]
     ):
         imported = {skill.get("skillName") for skill in spec.get("importedSkills", [])}
-        wanted = os.environ.get("EXPECTED_SOURCE_COMMIT")
-        revision_ok = not wanted or spec.get("sourceCommit", "").casefold() == wanted.casefold()
-        updates_ok = os.environ["PLUGIN_SOURCE"] != "direct" or spec.get("autoUpdate", False) == (os.environ["PLUGIN_AUTO_UPDATE"] == "true")
-        raise SystemExit(0 if expected <= imported and revision_ok and updates_ok else 1)
+        raise SystemExit(0 if expected <= imported else 1)
 raise SystemExit(1)
 '; then
     ok "All fifteen FinOps skills ready"
@@ -893,7 +840,7 @@ ok "all $EXPECTED_TASK_COUNT selected scheduled task(s) verified on $TASK_AGENT_
 say "Done — FinOps pack installed via the agent API."
 printf '  • Package: 15 skills, 1 agent, %s task(s) (TASK_IDS=%s), %s Live Report(s)\n' "$EXPECTED_TASK_COUNT" "$TASK_IDS" "$(grep -c . "$INSTALL_WORK_DIR/reports.txt" || true)"
 if [ "$PLUGIN_SOURCE" = "direct" ]; then
-  plugin_origin="direct install https://github.com/$REPO_SLUG/$PLUGIN_PATH (auto-update=$PLUGIN_AUTO_UPDATE)"
+  plugin_origin="direct install https://github.com/$REPO_SLUG/$PLUGIN_PATH (auto-update)"
 else
   plugin_origin="marketplace $MARKETPLACE_NAME -> $REPO_SLUG"
 fi
