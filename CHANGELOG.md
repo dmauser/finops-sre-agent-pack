@@ -33,6 +33,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   inheritance. The Monthly Review and Cost Allocation tasks use it instead of a fixed `team` tag
   that reported 0% allocated when the organization tags by `owner`. `month_over_month` accepts
   the same `inherited_tags`, so variance by owner matches the allocation view.
+- **Cost Optimization allocation**: the weekly Cost Optimization report uses `choose_dimension`
+  with the same resource-group tag inheritance. Its older rule ranked every recommended tag,
+  including `env`, by each resource's own tags only. On the lab that picked `env` (16.2%) over
+  `owner` (14.8%), grouping spend by environment rather than by owner.
 - **Unit economics source**: the KPI scorecard documents Azure OpenAI/Foundry `TotalCalls` and
   `TotalTokens` platform metrics as a real unit metric for AI spend.
 
