@@ -129,7 +129,10 @@ result = attribute_ai_costs(
 - **total_ai_usd**, **resource_count**, **model_count**, **as_of** (latest line-item date).
 - **by_service_family** — Cognitive Services / OpenAI vs Machine Learning, ranked.
 - **by_meter_type** — `model_token` (LLM/embedding tokens), `compute` (managed endpoints / training),
-  `other_cognitive` (Speech/Vision/Language transactions) — the key "what kind of AI spend" split.
+  `other_cognitive` (Speech/Vision/Language transactions), `platform` (security and networking
+  add-ons billed to the AI resource: Defender for AI Services, private endpoints, private DNS,
+  data transfer) — the key "what kind of AI spend" split. Platform spend is never model usage,
+  even when Defender bills per token.
 - **by_resource** — per account/workspace, with `kind` (if provided), `service_family`, and its
   `top_model`.
 - **by_model** — per model (model_token lines only), with `resource_count`.

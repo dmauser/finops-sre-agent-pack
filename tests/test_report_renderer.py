@@ -658,6 +658,12 @@ def test_budget_adapter_gates_first_and_labels_estimates():
     assert "Run-rate forecasts are estimates" in " ".join(model["warnings"])
     assert "asynchronously" in " ".join(model["warnings"])
     assert model["chart"]["label"].endswith("(100% = budget limit)")
+    assert model["metrics"][0]["detail"] == "Configured amount"
+
+    nested = _budgets()
+    nested["summary"]["nested_excluded"] = 3
+    detail = models.build_budget_status_model(nested, **_context())["metrics"][0]["detail"]
+    assert detail == "Top-level budgets only; 3 nested budgets not double-counted"
 
 
 def test_cost_optimization_adapter_keeps_impact_types_separate():
@@ -814,8 +820,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_monthly_review_model,
             _monthly,
-            "fa0b607480d3a50735bdb88e34139643ca31bbc7c5940edf45dd36cf0989aaf5",
-            "4bb91ce6cef62225ca7d866acd5c3d6f5137d674e3d908b3adb95a68a814da97",
+            "432427964c61b4fa04bc98b604d76b7d27bf5e4a26fa8f0ca36c580269d431db",
+            "779fd8e74b43c76a76c6371b6358610830340758c0ca75dd464b097f0366d574",
         ),
     ],
 )
@@ -1014,6 +1020,39 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
     assert sections["Next FinOps iteration"]["rows"] == [["1", "Allocation"], ["2", "Forecasting"]]
     assert sections["Benchmarks"]["rows"][0] == ["Impact", "$40.00"]
     assert "Forecast record" not in sections
+
+
+def test_monthly_review_owner_actions_label_daily_impact_and_scope_level_rows():
+    review = _monthly()
+    vm = "/subscriptions/0/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm1"
+    review["routing"] = {
+        "owners": [{"owner": "web", "total_usd": 30.0, "items": [
+            {"resourceId": vm, "source": "spike", "amount_usd": 12.5, "amount_basis": "daily",
+             "action": "Investigate"},
+            {"resourceId": vm, "source": "idle + rightsizing", "amount_usd": 30.0,
+             "amount_basis": "monthly", "action": "Resize"},
+        ]}],
+        "unrouted": [{"resourceId": "", "source": "orphan", "amount_usd": 5.0, "action": None}],
+        "scope_level": [{"resourceId": "rg-app", "dimension": "resourceGroup", "source": "spike",
+                         "amount_usd": 40.0, "amount_basis": "daily", "action": "Investigate"}],
+        "unrouted_usd": 5.0,
+        "routed_pct": 85.7,
+    }
+    model = models.build_monthly_review_model(review, **_context())
+    section = {s["title"]: s for s in model["sections"]}["Owner actions"]
+    assert section["columns"][-1] == "Est. impact"
+    assert section["rows"] == [
+        ["web", "idle + rightsizing", "vm1 (rg-app)", "Resize", "$30.00"],
+        ["web", "spike", "vm1 (rg-app)", "Investigate", "$12.50/day"],
+        ["needs an owner tag", "orphan", "(unknown)", "", "$5.00"],
+        ["resourceGroup-level (no single owner)", "spike", "rg-app", "Investigate", "$40.00/day"],
+    ]
+    metric = next(m for m in model["metrics"] if m["label"] == "Owner-routed findings")
+    assert metric["detail"] == "$5.00/month needs an owner tag"
+
+    review["routing"]["owners"][0]["items"][0]["amount_basis"] = "weekly"
+    with pytest.raises(ValueError, match="amount_basis"):
+        models.build_monthly_review_model(review, **_context())
 
 
 def test_monthly_review_actions_show_kpi_names_not_ids():

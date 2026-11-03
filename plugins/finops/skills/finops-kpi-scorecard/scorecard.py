@@ -420,6 +420,43 @@ def _finding_amount(finding):
     return None
 
 
+def _is_anomaly(finding):
+    """detect_anomalies output: a per-day cost delta on one dimension, not a monthly saving."""
+    return (
+        "dimension" in finding
+        and finding.get("impact_usd") is not None
+        and finding.get("estMonthlySavingsUsd") is None
+        and finding.get("estMonthlySavings") is None
+    )
+
+
+def _rid_key(resource_id):
+    return str(resource_id or "").strip().rstrip("/").casefold()
+
+
+_WASTE_ACTIONABLE = ("orphan", "idle", "stale")
+
+
+def _waste_not_rightsized(waste, rightsizing):
+    """Waste savings for resources rightsizing did not already report (as Cost Optimization does).
+
+    The same resource can be flagged by both (e.g. an idle gateway); counting it twice inflates
+    waste_pct. With no per-finding detail, fall back to the waste headline.
+    """
+    waste = waste or {}
+    findings = waste.get("findings")
+    if not isinstance(findings, list):
+        return _num((waste.get("headline") or {}).get("potential_monthly_savings")) or 0.0
+    taken = {_rid_key(r.get("resourceId")) for r in rightsizing or [] if isinstance(r, dict)}
+    taken.discard("")
+    return sum(
+        _num(f.get("estMonthlySavings")) or 0.0
+        for f in findings
+        if isinstance(f, dict) and f.get("kind") in _WASTE_ACTIONABLE
+        and _rid_key(f.get("resourceId")) not in taken
+    )
+
+
 def _default_action(finding):
     """Fallback action text so routed findings never show an empty Action cell."""
     kind = str(finding.get("kind") or "").strip().lower()
@@ -442,24 +479,54 @@ def route_to_owners(findings, *, tags=None, owner_keys=OWNER_TAG_KEYS, source=No
     source      optional label stamped on each routed item (e.g. "waste")
 
     Findings without an owner land in `unrouted`, itself a governance action: tag them.
+
+    Each item carries `amount_basis`: "monthly" for savings, "daily" for detect_anomalies rows
+    (their impact_usd is a one-day delta). Totals, unrouted_usd and routed_pct count monthly
+    amounts only, so a $X/day spike never inflates a $/month action list. The same resource
+    reported by several sources (waste + rightsizing) becomes one item with the larger amount.
+    Anomalies on a resourceGroup or meterCategory dimension have no single resource to tag, so
+    they go to `scope_level` instead of `unrouted`.
     """
     tag_index = {str(k).strip().lower(): v for k, v in (tags or {}).items()}
-    groups = {}
-    unrouted = []
+    merged = {}
+    scope_level = []
     for finding in findings or ():
         if not isinstance(finding, dict):
             continue
         rid = finding.get("resourceId") or finding.get("value") or ""
-        own_tags = finding.get("tags") or tag_index.get(str(rid).strip().lower())
-        key, owner = _owner_of(own_tags, owner_keys)
+        anomaly = _is_anomaly(finding)
         item = {
             "resourceId": rid,
             "source": source or finding.get("source") or finding.get("kind") or finding.get("category"),
             "amount_usd": _finding_amount(finding),
+            "amount_basis": "daily" if anomaly else "monthly",
             "action": (finding.get("action") or finding.get("recommendedAction")
                        or finding.get("recommendation") or finding.get("reason")
                        or _default_action(finding)),
         }
+        if anomaly and str(finding.get("dimension") or "").casefold() != "resourceid":
+            item["dimension"] = finding.get("dimension")
+            scope_level.append(item)
+            continue
+        key = (_rid_key(rid) or f"#{len(merged)}", item["amount_basis"])
+        prior = merged.get(key)
+        if prior is None:
+            merged[key] = (item, finding)
+            continue
+        kept, kept_finding = prior
+        sources = [s for s in str(kept["source"] or "").split(" + ") if s]
+        if item["source"] and item["source"] not in sources:
+            sources.append(item["source"])
+        if (item["amount_usd"] or 0.0) > (kept["amount_usd"] or 0.0):
+            kept, kept_finding = item, finding
+        kept["source"] = " + ".join(sources) or None
+        merged[key] = (kept, kept_finding)
+
+    groups = {}
+    unrouted = []
+    for item, finding in merged.values():
+        own_tags = finding.get("tags") or tag_index.get(str(item["resourceId"]).strip().lower())
+        key, owner = _owner_of(own_tags, owner_keys)
         if owner is None:
             unrouted.append(item)
             continue
@@ -467,10 +534,14 @@ def route_to_owners(findings, *, tags=None, owner_keys=OWNER_TAG_KEYS, source=No
             owner.lower(), {"owner": owner, "owner_tag": key, "total_usd": 0.0, "items": []}
         )
         group["items"].append(item)
-        group["total_usd"] += item["amount_usd"] or 0.0
+        if item["amount_basis"] == "monthly":
+            group["total_usd"] += item["amount_usd"] or 0.0
 
     def order(i):
-        return (i["amount_usd"] is None, -(i["amount_usd"] or 0.0))
+        return (i["amount_basis"] != "monthly", i["amount_usd"] is None, -(i["amount_usd"] or 0.0))
+
+    def monthly(items):
+        return sum(i["amount_usd"] or 0.0 for i in items if i["amount_basis"] == "monthly")
 
     owners = []
     for group in groups.values():
@@ -480,14 +551,16 @@ def route_to_owners(findings, *, tags=None, owner_keys=OWNER_TAG_KEYS, source=No
         owners.append(group)
     owners.sort(key=lambda g: g["total_usd"], reverse=True)
     unrouted.sort(key=order)
+    scope_level.sort(key=order)
     routed_total = sum(g["total_usd"] for g in owners)
-    unrouted_total = round(sum(i["amount_usd"] or 0.0 for i in unrouted), 2)
+    unrouted_total = round(monthly(unrouted), 2)
     return {
         "owner_keys": list(owner_keys),
         "owners": owners,
         "unrouted": unrouted,
         "unrouted_usd": unrouted_total,
         "routed_pct": _pct(routed_total, routed_total + unrouted_total),
+        "scope_level": scope_level,
     }
 
 
@@ -693,7 +766,7 @@ def kpi_scorecard(
     monthly_total = (total / days * 30.0) if (total and days and days > 0) else total
     waste_usd = None
     if waste is not None or rightsizing is not None:
-        waste_usd = _num(((waste or {}).get("headline") or {}).get("potential_monthly_savings")) or 0.0
+        waste_usd = _waste_not_rightsized(waste, rightsizing)
         waste_usd += sum(_num(r.get("estMonthlySavingsUsd")) or 0.0 for r in rightsizing or [])
     waste_detail = None
     if waste_usd is not None:

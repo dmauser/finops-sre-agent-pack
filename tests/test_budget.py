@@ -235,3 +235,40 @@ def test_evaluate_budgets_accepts_full_list_response():
     assert from_response["budget_count"] == 1
     assert evaluate_budgets(one, as_of=AS_OF)["budget_count"] == 1
     assert evaluate_budgets({"value": []}, as_of=AS_OF)["no_budgets"] is True
+
+
+def test_nested_budgets_are_not_double_counted_in_portfolio_totals():
+    # Live lab: three resource-group budgets sit inside the subscription budget; summing all four
+    # reported a $2,330 "portfolio" for one subscription.
+    sub = "/subscriptions/s"
+    parent = _budget("sub-budget", 2000.0, 400.0, forecast=900.0,
+                     scope_id=f"{sub}/providers/Microsoft.Consumption/budgets/sub-budget")
+    child = _budget("rg-budget", 300.0, 350.0, forecast=500.0,
+                    scope_id=f"{sub}/resourceGroups/RG-A/providers/Microsoft.Consumption/budgets/rg-budget")
+    sibling = _budget("other-sub", 100.0, 10.0, forecast=20.0,
+                      scope_id="/subscriptions/s2/providers/Microsoft.Consumption/budgets/other-sub")
+    out = evaluate_budgets([parent, child, sibling], as_of=AS_OF)
+    summary = out["summary"]
+    assert summary["total_amount"] == 2100.0
+    assert summary["total_current"] == 410.0
+    assert summary["total_forecast"] == 920.0
+    assert summary["nested_excluded"] == 1
+    nested = {e["name"]: e["nested_in"] for e in out["budgets"]}
+    assert nested == {"sub-budget": None, "rg-budget": "sub-budget", "other-sub": None}
+    # The nested budget is still evaluated and gated on its own.
+    assert [g["name"] for g in out["gates"]] == ["rg-budget"]
+    # /subscriptions/s is not a parent of /subscriptions/s2 (ARM prefix boundary).
+    assert nested["other-sub"] is None
+
+
+def test_filtered_parent_budget_does_not_hide_a_child():
+    sub = "/subscriptions/s"
+    parent = _budget("filtered", 2000.0, 400.0, forecast=900.0,
+                     scope_id=f"{sub}/providers/Microsoft.Consumption/budgets/filtered")
+    parent["properties"]["filter"] = {"dimensions": {"name": "ResourceGroupName",
+                                                     "operator": "In", "values": ["rg-b"]}}
+    child = _budget("rg-budget", 300.0, 100.0, forecast=200.0,
+                    scope_id=f"{sub}/resourceGroups/rg-a/providers/Microsoft.Consumption/budgets/rg-budget")
+    out = evaluate_budgets([parent, child], as_of=AS_OF)
+    assert out["summary"]["total_amount"] == 2300.0
+    assert out["summary"]["nested_excluded"] == 0

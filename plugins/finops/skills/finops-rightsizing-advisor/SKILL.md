@@ -114,8 +114,10 @@ and pagination rules, and pass it as `existing_resource_ids` in Step 5:
 az graph query --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> -q "Resources | project id" --first 1000 -o json
 ```
 
-UsageDetails still bills resources deleted earlier in the window. Without this list the cost-led
-sweep lists them as "review" even though nothing is left to act on.
+UsageDetails still bills resources deleted earlier in the window, and Azure Advisor keeps serving
+cached recommendations for deleted resources for days. Without this list the cost-led sweep lists
+them as "review" and stale Advisor rows inflate the savings headline even though nothing is left to
+act on.
 
 Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, readySessionInstances, tags}`:
 
@@ -249,7 +251,8 @@ recs = recommend_rightsizing(
   flagged** is surfaced as `kind="review"` (no savings claimed, `validated=None`). This guarantees no
   expensive line item is silently dropped just because we lack a heuristic for its type. Covered types
   that a rule evaluated but did not flag are **not** re-listed as review. When
-  `existing_resource_ids` is passed, resources that no longer exist are skipped.
+  `existing_resource_ids` is passed, resources that no longer exist are skipped here and in the
+  Advisor step (Advisor caches recommendations after a resource is deleted).
 - Signals for the same `resourceId` (Advisor + inventory + utilization) merge into one finding, joined
   case-insensitively.
 

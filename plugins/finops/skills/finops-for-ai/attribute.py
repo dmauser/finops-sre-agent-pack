@@ -59,6 +59,13 @@ _SERVICE_FAMILY = {
 _MODEL_TOKEN = "model_token"        # LLM/embedding token usage (the AOAI/Foundry model spend)
 _COMPUTE = "compute"                # managed compute / endpoints / training (mostly ML)
 _OTHER_COGNITIVE = "other_cognitive"  # Speech/Vision/Language/etc. transaction meters
+_PLATFORM = "platform"              # security & networking add-ons billed to the AI resource
+
+# substrings that mark a line as a security/networking add-on, not model or compute usage.
+# Checked first: "Microsoft Defender for AI Services" bills per token, and a Foundry/ML managed
+# network bills private endpoints and DNS zones under Machine Learning.
+_PLATFORM_HINTS = ("defender", "private endpoint", "private link", "private dns", "dns zone",
+                   "data transfer", "bandwidth", "ip address")
 
 # substrings (lower-cased) that mark a line as token/model usage
 _TOKEN_HINTS = ("token", "tokens")
@@ -139,12 +146,14 @@ def _service_family(consumed_service) -> str:
 
 
 def _meter_type(family, item) -> str:
-    """Classify a line as model-token, compute, or other-cognitive spend."""
+    """Classify a line as platform, model-token, compute, or other-cognitive spend."""
     name = _norm(item.get("meterName"))
     sub = _norm(item.get("meterSubCategory"))
     cat = _norm(item.get("meterCategory"))
     haystack = " ".join((name, sub, cat))
 
+    if any(h in haystack for h in _PLATFORM_HINTS):
+        return _PLATFORM
     if any(h in haystack for h in _TOKEN_HINTS):
         return _MODEL_TOKEN
     if any(h in haystack for h in _COMPUTE_HINTS):
@@ -283,6 +292,7 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
     project_cost = defaultdict(float)               # project tag -> usd
     tagged_project_seen = False
     ft_hosting_cost = defaultdict(float)            # resourceId -> fine-tuned hosting usd
+    res_platform_cost = defaultdict(float)          # resourceId -> security/networking usd
 
     for item in line_items:
         cost = item.get("cost")
@@ -303,6 +313,8 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
         fam_cost[family] += cost
         type_cost[mtype] += cost
         res_cost[rid] += cost
+        if mtype == _PLATFORM:
+            res_platform_cost[rid] += cost
         res_meta.setdefault(rid, {"name": _resource_name(rid), "family": family})
 
         project = _project_tag(item)
@@ -368,6 +380,7 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
         model_direction_cost=model_direction_cost,
         deployment_cost=deployment_cost,
         ft_hosting_cost=ft_hosting_cost,
+        res_platform_cost=res_platform_cost,
     )
 
     return {
@@ -388,7 +401,8 @@ def attribute_ai_costs(line_items=None, *, resource_kinds=None):
 
 
 def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost, direction_cost=None,
-                 model_direction_cost=None, deployment_cost=None, ft_hosting_cost=None):
+                 model_direction_cost=None, deployment_cost=None, ft_hosting_cost=None,
+                 res_platform_cost=None):
     """Light, read-only, COST-ONLY advisory hints. Never claims idle without utilization —
     true idle/under-use detection needs Azure Monitor token metrics (deferred to v2)."""
     hints = []
@@ -396,6 +410,7 @@ def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost, direction_co
     model_direction_cost = model_direction_cost or {}
     deployment_cost = deployment_cost or {}
     ft_hosting_cost = ft_hosting_cost or {}
+    res_platform_cost = res_platform_cost or {}
 
     # 1. Model concentration — one model dominates model-token spend.
     model_total = sum(model_cost.values())
@@ -435,11 +450,18 @@ def _build_hints(*, model_cost, res_cost, res_meta, res_model_cost, direction_co
         if not res_model_cost.get(rid) and not ft_hosting_cost.get(rid):
             meta = res_meta.get(rid, {})
             name = meta.get("name", _resource_name(rid))
+            if res_platform_cost.get(rid, 0.0) >= usd - 0.005:
+                detail = (f"{name} bills ~${round(usd, 2)}/mo only for security/networking add-ons "
+                          f"(private endpoints, DNS, Defender) with no model usage — verify the "
+                          f"workspace is still in use; a deleted or unused hub's managed-network "
+                          f"endpoints keep billing.")
+            else:
+                detail = (f"{name} bills ~${round(usd, 2)}/mo with no model-token usage — verify it "
+                          f"isn't an idle endpoint/compute; confirm with Azure Monitor metrics before acting.")
             hints.append({
                 "type": "compute_no_tokens_verify",
                 "target": name,
-                "detail": (f"{name} bills ~${round(usd, 2)}/mo with no model-token usage — verify it "
-                           f"isn't an idle endpoint/compute; confirm with Azure Monitor metrics before acting."),
+                "detail": detail,
                 "monthly_usd": round(usd, 2),
             })
 

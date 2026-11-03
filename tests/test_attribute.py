@@ -241,3 +241,24 @@ def test_project_tag_attribution_only_when_tag_present():
     out = attribute_ai_costs([tagged, _line(10.0, name="gpt-4o Tokens")])
     by_project = {r["project"]: r["monthly_usd"] for r in out["by_project"]}
     assert by_project == {"support-bot": 30.0, "(untagged)": 10.0}
+
+
+def test_security_and_networking_addons_are_platform_not_model_or_compute():
+    # Live lab: Defender for AI Services bills per token and was filed as model_token; a Foundry
+    # hub's managed-network private endpoint and DNS zone were filed as ML compute.
+    rows = [
+        _line(1.10, sub="Azure OpenAI GPT5", name="gpt 5 inp glbl Tokens"),
+        _line(0.06, cat="Microsoft Defender for AI Services", sub="Microsoft Defender for AI Services",
+              name="Standard Tokens"),
+        _line(21.38, consumed="Microsoft.MachineLearningServices", cat="Virtual Network",
+              sub="", name="Standard Private Endpoint", rid=ML_ID),
+        _line(0.38, consumed="Microsoft.MachineLearningServices", cat="Azure DNS",
+              sub="", name="Private DNS Zone", rid=ML_ID),
+    ]
+    out = attribute_ai_costs(rows)
+    types = {r["meter_type"]: r["monthly_usd"] for r in out["by_meter_type"]}
+    assert types == {"platform": 21.82, "model_token": 1.1}
+    assert all("Defender" not in m["model"] for m in out["by_model"])
+    hint = next(h for h in out["hints"] if h["target"] == "myml")
+    assert hint["type"] == "compute_no_tokens_verify"
+    assert "security/networking" in hint["detail"]

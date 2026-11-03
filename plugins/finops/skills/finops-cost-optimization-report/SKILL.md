@@ -60,7 +60,9 @@ Run each existing skill and keep its structured output. Follow each skill's own 
 pull and call — do **not** re-implement their logic here:
 
 1. **finops-cost-anomaly-detection** → `detect_anomalies(line_items)` → a list of anomalies.
-2. **finops-rightsizing-advisor** → `recommend_rightsizing(...)` → a list of findings.
+2. **finops-rightsizing-advisor** → `recommend_rightsizing(..., existing_resource_ids=...)` → a list
+   of findings. Always pass the live `Resources | project id` list so stale Advisor recommendations
+   for deleted resources are dropped.
 3. **finops-waste-finder** → `find_waste(resources, costs=...)` → a waste dict.
 4. **finops-commitment-advisor** → `analyze_commitments(...)` → a rate-optimization dict.
 5. **finops-cost-allocation** → `allocate_costs(costs, tags, dimension=...)` → an allocation dict.

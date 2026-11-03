@@ -39,6 +39,24 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `owner` (14.8%), grouping spend by environment rather than by owner.
 - **Unit economics source**: the KPI scorecard documents Azure OpenAI/Foundry `TotalCalls` and
   `TotalTokens` platform metrics as a real unit metric for AI spend.
+- **Rightsizing stale Advisor rows**: Advisor keeps recommendations for days after a resource is
+  deleted. When the caller passes `existing_resource_ids`, those rows are now dropped, and Cost
+  Optimization passes the live inventory. On the lab, a deleted VM's $351/month row made up 66% of
+  the $535 rightsizing headline.
+- **Monthly Review double counting**: a resource flagged by both waste and rightsizing (an idle VPN
+  gateway) is counted once in waste % and appears once per owner, with both sources listed.
+  Anomaly impact is a cost per day, so it is labeled "/day" and kept out of owner monthly totals.
+  Anomalies on a resource group or meter category are shown as scope-level rows instead of "needs
+  an owner tag". Owner actions and movers show the resource name with its resource group.
+- **Budget portfolio totals**: a resource-group budget inside an unfiltered subscription budget is
+  still evaluated and gated, but no longer added to the portfolio total, current, and forecast. The
+  lab's $2,330 portfolio counted three resource-group budgets twice. Each budget reports `nested_in`.
+- **AI spend meter types**: Defender for AI Services, private endpoints, private DNS, and data
+  transfer billed to an AI resource are now `platform` spend instead of model tokens or compute. A
+  Foundry hub billing only private networking gets a specific "verify the workspace is in use" hint.
+- **Default analysis window**: managed-scope requests the trailing 30 complete days when a report
+  does not set a window, instead of the current billing period (the lab's SRE Agent Spend analyzed
+  3 days).
 
 ### Changed
 
