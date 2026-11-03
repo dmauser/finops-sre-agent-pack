@@ -8,8 +8,25 @@ All reports are **read-only and advisory**. They recommend actions; they never c
 Each report also shows a data-quality panel and a refresh time, so you can tell how complete and how
 current the data is.
 
+## Reading the layout
+
+Every report follows the same layout, top to bottom:
+
+- **Header**: the last-refreshed time, the scope, and status chips. **Complete data** or **Partial
+  data** tells you whether every source answered; **N needs action** and **N to watch** count the
+  headline metrics marked Action or Watch; **N data notes** counts the caveats listed further down.
+- **Partial-data banner**: appears only when some data couldn't be read. Treat the figures as a lower
+  bound until the next refresh.
+- **Headline metrics**: cards marked **Good** (green), **Watch** (amber), or **Action** (red).
+- **Chart**: red bars cross a limit; a dashed line marks a threshold, such as 100% of budget.
+- **Data quality and methodology notes**: expand this panel before acting on the figures. It lists
+  every caveat, for example billing lag or unvalidated estimates.
+- **Tables**: status values show as colored badges. Azure resource IDs show the resource name; expand
+  them for the full ID. Long tables show 15 rows; select **Show N more rows** for the rest.
+
 ## Contents
 
+- [Reading the layout](#reading-the-layout)
 - [Cost Overview](#cost-overview)
 - [Cost Anomalies](#cost-anomalies)
 - [Budget Status](#budget-status)

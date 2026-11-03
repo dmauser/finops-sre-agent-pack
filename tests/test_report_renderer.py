@@ -2,8 +2,10 @@
 
 import copy
 import hashlib
+import html
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -777,43 +779,43 @@ def test_all_adapters_render_empty_states(builder, empty):
             models.build_cost_overview_model,
             _overview,
             "21012f2aa4f1e6c78e446a02c205f6042038262d4ba60b92a52b6e41205477fe",
-            "2ecc86c52a4964bcd514eced1a6c08b5c6fc3ecec3e2369ca6855ad99b4182fe",
+            "02bd6c290ad33daece51e7783635b856ad3535344bf6639f1f1ba6a81d89999a",
         ),
         (
             models.build_rightsizing_savings_model,
             _rightsizing,
             "a97c5a522f5d8653f5d6b15162d1f33dae15c49799aba80a66acdd8cdb1f9277",
-            "8b7783935d3120dc13ffb49166298e6addaaebc894aeb41595e87bd0f599c91f",
+            "cc96a7a98563d38c9b4c91d42ac742b05133476312d8b2fce9f79cb4c2c8b391",
         ),
         (
             models.build_budget_status_model,
             _budgets,
-            "07f8af03e2ff258a9252aa7ef8697235ec6379ddf6ad10bf6ab031ef929c4732",
-            "906181ad67ceb11de9cebcfabd653cb226e0c268abd731abb642c3e2ee200aca",
+            "9061e8e697f70554f60b8f5117ccae9b2cf8495067e8ff2cc716de657b416d36",
+            "bd64c7dc2550bd2908c197d03a4a5ab48b4b796849b2f4a54e3ebcd9b4c20347",
         ),
         (
             models.build_cost_optimization_model,
             _optimization,
             "f79dc3af86ced160438f1935f8b3b1e44b57bcf21a23783a91befc6bb7fd8de8",
-            "36e0aafb2b0ef5a2b9477d85f39040e1ed451d8bec40417b8c8701dec550049c",
+            "eccb507668efde2f0f657152fc9532691842d638338b673b6a7c25f615392133",
         ),
         (
             models.build_ai_spend_model,
             _ai_spend,
             "ec0c391f9b5454c1f86bcf5db3c5c2489d7a5a32c0ccda2681afb827045142ff",
-            "28333931172c135d3e34ae3ddf6c113ec2b063f7537b3b006a747bc21472340e",
+            "ec75400a01de258a11bc7e9da7a3cf0d9a2cff6d4164bc7daba3bee12ac8e1a1",
         ),
         (
             models.build_cost_vs_reliability_model,
             _reliability,
             "d6443b5bd04a7c7766e12ac4d1fe2805cb439609a603d6d5be307100e6beffee",
-            "697146eb4eeb92e19d2504242fdfce3ae166bf2c8f2117b124076cd8910d7f9f",
+            "884221a4027660418891354a54b30cc819546b1735c1a98a1c9ca2d412fa0ead",
         ),
         (
             models.build_monthly_review_model,
             _monthly,
-            "85657923896814482a757fc3a3f78f7b66a858fb59a6bb9594ef5c958b5b1d65",
-            "c3efa78279dfd0184140ef8f933c37effc0f94d8ab5a11cd6085b48fa0ae4285",
+            "971f3f194d949a1ebdc5fb0ba8aea3764abe2ccd6f4beefa4c90df78742c1fbb",
+            "9f3fd9c1a6b13d06918e83c158cdcb05e2a221f70f63c9e1341e0bb4012c9600",
         ),
     ],
 )
@@ -1051,8 +1053,180 @@ def test_table_cells_keep_numbers_whole_and_wrap_long_ids():
     assert renderer._cell("$508.05") == '<td class="num">$508.05</td>'
     assert renderer._cell("98.1%") == '<td class="num">98.1%</td>'
     rid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.App/agents/a"
-    assert renderer._cell(rid).startswith('<td class="long">')
+    cell = renderer._cell(rid)
+    assert cell.startswith('<td class="rid" title="' + rid + '">')
+    assert '<span class="rid-name">a</span>' in cell
+    assert "rg · Microsoft.App/agents" in cell
+    assert f"<code>{rid}</code>" in cell
+    assert renderer._cell("x" * 40).startswith('<td class="long">')
     assert renderer._cell("governance") == "<td>governance</td>"
+
+
+def test_status_cells_render_as_badges_without_changing_text():
+    assert renderer._cell("forecast_over") == (
+        '<td><span class="badge critical">forecast over</span></td>'
+    )
+    assert renderer._cell("Pass") == '<td><span class="badge good">Pass</span></td>'
+    assert renderer._cell("at_risk") == '<td><span class="badge warning">at risk</span></td>'
+    assert renderer._cell("Sev4") == '<td><span class="badge neutral">Sev4</span></td>'
+    # Badges only apply to whole-cell status words, never to sentences.
+    assert renderer._cell("fail to tag") == "<td>fail to tag</td>"
+    assert renderer._cell("linear_trend") == '<td title="linear_trend">linear trend</td>'
+
+
+def test_resource_id_cells_escape_every_attribute_and_text_part():
+    hostile = '/subscriptions/s/resourceGroups/rg/providers/Microsoft.X/y/a"onmouseover=alert(1)'
+    cell = renderer._cell(hostile)
+    assert 'title="' in cell
+    assert '"onmouseover' not in cell
+    assert "&quot;onmouseover=alert(1)" in cell
+    assert "<script" not in renderer._cell("<script>alert(1)</script>")
+
+
+def _presentation_model(**overrides):
+    model = {
+        "title": "FinOps: Presentation",
+        "description": "Presentation guard test.",
+        "refreshedAt": REFRESHED_AT,
+        "scopeSummary": ["/subscriptions/00000000-0000-0000-0000-000000000000"],
+        "metrics": [
+            {"label": "Spend", "value": "$1.00", "tone": "critical"},
+            {"label": "Coverage", "value": "50%", "tone": "warning"},
+            {"label": "Savings", "value": "$2.00", "tone": "good"},
+        ],
+        "sections": [],
+    }
+    model.update(overrides)
+    return model
+
+
+def test_every_warning_is_rendered_and_counted():
+    warnings = [f"Data note {i} <b>{i}</b>" for i in range(7)]
+    output = renderer.render_report(_presentation_model(warnings=warnings))
+    for warning in warnings:
+        assert html.escape(warning) in output
+    assert "Data quality and methodology notes (7)" in output
+    assert "7 data notes" in output
+    assert "1 needs action" in output and "1 to watch" in output
+    assert '<span class="tone-label">Action</span>' in output
+    assert '<span class="tone-label">Watch</span>' in output
+    assert '<span class="tone-label">Good</span>' in output
+
+
+def test_partial_reports_show_a_banner_and_default_note():
+    output = renderer.render_report(_presentation_model(partial=True))
+    assert '<aside class="banner partial" role="status">' in output
+    assert '<span class="chip warning">Partial data</span>' in output
+    assert "Partial data: one or more source pulls were incomplete." in output
+    assert "Data quality and methodology notes (1)" in output
+
+    complete = renderer.render_report(_presentation_model())
+    assert 'class="banner partial"' not in complete
+    assert '<span class="chip good">Complete data</span>' in complete
+    assert "Data quality and methodology notes" not in complete
+
+
+def test_long_tables_collapse_but_keep_every_row():
+    rows = [[f"row-{i:02d}", f"${i}.00"] for i in range(25)]
+    section = {"title": "Rows", "columns": ["Name", "Cost"], "rows": rows}
+    output = renderer.render_report(_presentation_model(sections=[section]))
+    assert "Show 10 more rows" in output
+    assert "25 rows" in output
+    for name, _ in rows:
+        assert f"<td>{name}</td>" in output
+    assert output.index("row-14") < output.index("Show 10 more rows") < output.index("row-15")
+    assert '<th scope="col" class="num">Cost</th>' in output
+
+    short = renderer.render_report(
+        _presentation_model(sections=[dict(section, rows=rows[:20])])
+    )
+    assert "more rows" not in short
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"tones": ["good"]}, "chart tones and values must have equal length"),
+        ({"tones": ["good", "loud"]}, "chart.tones entries must be null or a valid tone"),
+        ({"referenceValue": True}, "chart.referenceValue must be a number"),
+        ({"referenceValue": "100"}, "chart.referenceValue must be a number"),
+        ({"orientation": "diagonal"}, "chart.orientation must be vertical or horizontal"),
+        ({"valueFormat": "euros"}, "chart.valueFormat must be currency, percent, or number"),
+    ],
+)
+def test_chart_presentation_fields_are_validated(extra, message):
+    chart = {"type": "bar", "label": "Cost (USD)", "labels": ["a", "b"], "values": [1, 2]}
+    chart.update(extra)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        renderer.render_report(_presentation_model(chart=chart))
+
+
+def test_chart_presentation_fields_reach_the_script():
+    chart = {
+        "type": "bar", "label": "Percent of budget", "labels": ["a", "b"], "values": [50, 120],
+        "tones": [None, "critical"], "referenceValue": 100, "referenceLabel": "Budget limit",
+    }
+    output = renderer.render_report(_presentation_model(chart=chart))
+    assert "finopsReference" in output
+    assert '"reference":100' in output
+    assert '"format":"percent"' in output
+    assert '"tones":[null,"critical"]' in output
+    assert '"horizontal":false' in output
+
+
+def test_budget_chart_marks_the_limit_and_over_budget_bars():
+    chart = models.build_budget_status_model(_budgets(), **_context())["chart"]
+    assert chart["referenceValue"] == 100
+    assert chart["valueFormat"] == "percent"
+    assert chart["tones"] == [
+        "critical" if value >= 100 else None for value in chart["values"]
+    ]
+    assert "critical" in chart["tones"]
+
+
+def test_monthly_chart_falls_back_to_kpi_status_without_owner_deltas():
+    with_owners = models.build_monthly_review_model(_monthly(), **_context())["chart"]
+    assert with_owners["label"] == "Month-over-month change by owner (USD)"
+    assert set(with_owners["tones"]) <= {"warning", "good", None}
+
+    data = _monthly()
+    data["month_over_month"]["by_owner"] = []
+    chart = models.build_monthly_review_model(data, **_context())["chart"]
+    assert chart["label"] == "KPI status (count of KPIs)"
+    assert chart["labels"] == ["Pass", "Warn", "Fail", "Unknown"]
+    assert chart["values"] == [2, 1, 1, 1]
+    assert "No data points for this period." not in renderer.render_report(
+        models.build_monthly_review_model(data, **_context())
+    )
+
+
+def _contrast(foreground, background):
+    def luminance(color):
+        channels = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    high, low = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+@pytest.mark.parametrize(
+    ("foreground", "background"),
+    [
+        ("text", "#ffffff"), ("muted", "#ffffff"), ("brand", "#ffffff"),
+        ("#ffffff", "brand"), ("#ffffff", "brand_dark"),
+        ("good", "#ffffff"), ("good", "good_bg"),
+        ("warning", "#ffffff"), ("warning", "warning_bg"),
+        ("critical", "#ffffff"), ("critical", "critical_bg"),
+        ("muted", "neutral_bg"), ("muted", "good_bg"), ("muted", "warning_bg"),
+        ("muted", "critical_bg"), ("muted", "info_bg"), ("brand_dark", "info_bg"),
+        ("text", "canvas"),
+    ],
+)
+def test_palette_text_pairs_meet_wcag_aa(foreground, background):
+    fg = renderer.PALETTE.get(foreground, foreground)
+    bg = renderer.PALETTE.get(background, background)
+    assert _contrast(fg, bg) >= 4.5, f"{foreground} on {background}: {_contrast(fg, bg):.2f}"
 
 
 def test_threshold_cells_stay_on_one_line():
