@@ -2501,15 +2501,17 @@ def build_monthly_review_model(
     score = _decimal(scorecard.get("score_pct"), "review.scorecard.score_pct", optional=True)
     maturity = _text(scorecard.get("maturity"), "review.scorecard.maturity", default="unknown")
 
+    kpi_names = {row[8]: row[2] for row in kpis if row[8] and row[2]}
     actions = []
     for index, row in enumerate(_objects(scorecard.get("actions"), "review.scorecard.actions")):
         prefix = f"review.scorecard.actions[{index}]"
         status = _text(row.get("status"), f"{prefix}.status")
+        kpi_id = _text(row.get("kpi"), f"{prefix}.kpi")
         actions.append(
             (
                 _KPI_STATUS_ORDER.get(status, 99),
                 status,
-                _text(row.get("kpi"), f"{prefix}.kpi"),
+                _text(row.get("name"), f"{prefix}.name") or kpi_names.get(kpi_id) or kpi_id,
                 _text(row.get("action"), f"{prefix}.action"),
             )
         )

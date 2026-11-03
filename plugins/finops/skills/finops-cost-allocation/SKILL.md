@@ -104,13 +104,20 @@ read_skill_file(skill_name="finops-cost-allocation", file_path="allocate.py")
 ```
 
 ```python
-from allocate import allocate_costs
+from allocate import allocate_costs, choose_dimension
+pick = choose_dimension(costs, tags)   # same inherited_tags= as below when you use inheritance
 result = allocate_costs(
     costs=costs,               # from Step 1  {resourceId: monthly_usd}
     tags=tags,                 # from Step 2  {resourceId: {tagKey: tagVal}}
-    dimension="team",          # or env / service / costCenter / app / owner
+    dimension=pick["dimension"],  # or the key the user asked for: team / owner / costCenter / app / service / env
 )
 ```
+
+Unless the user names a dimension, use `choose_dimension`: it scores the ownership keys
+(`team / owner / costCenter / app / service`, in that order on ties) by the spend each allocates and
+returns the best one with its `reason` and per-key `candidates`. Report that reason, so a 0% for a
+`team` tag nobody uses is never presented as the allocation result. `env` is a recommended tag but
+not an owner, so it is never chosen automatically.
 
 `allocate_costs` handles all grouping and governance:
 
@@ -188,12 +195,14 @@ Pull two monthly windows (same Step 1 procedure, each aggregated to `{resourceId
 
 ```python
 from allocate import month_over_month
+# rg_tags: the same {scopeId: {tagKey: tagVal}} passed to allocate_costs (or None)
 mom = month_over_month(current_costs, previous_costs, dimension_tags=tags, dimension="team",
-                       min_delta_usd=10.0, top_n=25)
+                       min_delta_usd=10.0, top_n=25, inherited_tags=rg_tags)
 ```
 
 Returns `current_usd`, `previous_usd`, `delta_usd`, `delta_pct`, `by_owner` variance (same
-case-insensitive tag lookup; missing owner -> `(unallocated)`), and `movers` split into `new`
+case-insensitive tag lookup and the same `inherited_tags` fallback as `allocate_costs`, so owners
+match the allocation view; missing owner -> `(unallocated)`), and `movers` split into `new`
 (only in current), `removed` (only in previous), `increased`, `decreased` — each with
 `previous_usd`, `current_usd`, `delta_usd`, `delta_pct`, sorted by absolute delta and filtered by
 `min_delta_usd`. `bridge` buckets (`new_usd`, `removed_usd`, `increased_usd`, `decreased_usd`,

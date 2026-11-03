@@ -102,7 +102,7 @@ skill:
 | Item | What | Status |
 |------|------|--------|
 | **Usage examples per analysis skill** | Each of the eight analysis/planning skills has sample input, an offline invocation, and representative output under its `examples/` directory. The examples use placeholder resource IDs; live retrieval is always governed by `finops-managed-scope`. | ✅ complete |
-| **Cost-pull recipe simplification** | Lead with bounded `$top`, minimal `--query` field projection, and complete `nextLink` pagination; lower `$top` on `413`, then use verified date-windowing only as a fallback because the `usageStart` filter is not reliably applied. | ✅ complete |
+| **Cost-pull recipe simplification** | Lead with bounded `$top`, minimal `--query` field projection, and complete `nextLink` pagination; lower `$top` on `413`. Request every window with the `startDate`/`endDate` query parameters (a `$filter` on dates is ignored and returns only the current billing period); shorter `startDate`/`endDate` slices are the timeout fallback. | ✅ complete |
 | **Make repo public** | The repository is public, so installs need no PAT (only private forks do). | ✅ complete |
 
 All engineering waves (1–8) listed in the Skills table are built.

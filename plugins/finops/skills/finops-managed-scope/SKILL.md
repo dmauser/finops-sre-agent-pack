@@ -116,7 +116,9 @@ Use this canonical UsageDetails transport contract in every consuming FinOps ski
   `metric=AmortizedCost` for analysis (showback, anomaly, rightsizing, AI, reliability, cost
   overview) so reservation/savings plan purchases are spread across the resources that used them
   instead of appearing as one-time spikes with $0 covered usage. Use `metric=ActualCost` only when
-  matching invoice/budget cash flow (for example `finops-budget-editor`). Start at `%24top=1000`;
+  matching invoice/budget cash flow (for example `finops-budget-editor`). Request the analysis
+  window with `startDate=<YYYY-MM-DD>&endDate=<YYYY-MM-DD>` (inclusive; §5) — never a `%24filter`
+  on dates. Start at `%24top=1000`;
   never use the POST Cost Management Query API.
   Note: `$` must be URL-encoded as `%24` in `az rest` URLs to avoid shell escaping issues with the
   agent's read-only CLI tool (e.g. `%24top=1000`, `%24filter=...`, `%24skiptoken=...`). Never write
@@ -143,8 +145,8 @@ Use this canonical UsageDetails transport contract in every consuming FinOps ski
 - If any request returns 413, retry that request with `%24top=100`, then `20`. If a request
   **times out** (exit code 124), do not drop straight to `%24top=100` (that multiplies the page
   count tenfold): retry with `%24top=500`, then `250`, and if it still times out split the window
-  into calendar-month `usageStart` slices at `%24top=1000`, one chain per slice. Use verified,
-  half-open `usageStart` date slices only if bounded pages still fail, and de-duplicate the
+  into calendar-month `startDate`/`endDate` slices (§5) at `%24top=1000`, one chain per slice. Use
+  shorter, non-overlapping `startDate`/`endDate` slices only if bounded pages still fail, and de-duplicate the
   combined rows with `filter_usage_details(..., sources=[slice label per row])` (never by `id`
   or `(resourceId, date, meter)` alone — distinct rows share those).
 - If retrieval remains incomplete, retain the available rows only with an explicit partial-cost
@@ -240,29 +242,39 @@ Retrieve analysis data for each effective scope independently, then pass rows to
 or date slice) so only cross-retrieval overlap is removed. Include excluded and unattributed
 coverage in the final report; do not broaden a query merely because RBAC permits it.
 
-## 5. MOSP and MCA subscriptions ignore UsageDetails date filters
+## 5. Request a date range with `startDate` and `endDate` (never `$filter`)
 
-For **Microsoft Online Services Program (MOSP / pay-as-you-go)** and **Microsoft Customer
-Agreement (MCA)** subscriptions, the subscription-scoped Consumption UsageDetails API silently
-ignores **every** date filter: `properties/usageStart`, `properties/usageEnd`,
-`properties/usageDate`, and `properties/date` in `%24filter`, as well as other API versions. It
-returns the **current open billing period only**, whatever range was requested. The
-`billingPeriods` endpoint returns an empty `[]` for these subscription types, so
-billing-period-scoped URLs (`.../billingPeriods/<name>/providers/Microsoft.Consumption/usageDetails`)
-are not a fallback either. Production runs wasted ~10 tool calls retrying filter formats and API
-versions.
+UsageDetails takes the date range as two **query parameters**, `startDate` and `endDate`
+(`YYYY-MM-DD`, both inclusive). With neither, it returns the **current billing period** only.
+`$filter` does **not** support dates: it accepts only `properties/resourceGroup`,
+`properties/resourceName`, `properties/resourceId`, `properties/chargeType`,
+`properties/reservationId`, `properties/publisherType`, and tags. A `properties/usageStart` /
+`usageEnd` / `date` filter is silently ignored, which is why earlier runs on MOSP and MCA
+subscriptions saw only the current month and wrongly concluded those subscriptions cannot be
+queried by date. Sources:
+[working with billing periods and date ranges](https://learn.microsoft.com/rest/api/consumption/#working-with-billing-periods-and-date-ranges)
+and [Usage Details - List](https://learn.microsoft.com/rest/api/consumption/usage-details/list).
 
-- **Detect once, then stop.** After the first page of a chain, compare the row `date` values
-  with the requested window. If the page contains dates outside the requested range, or none of
-  the requested earlier months, the filter is being ignored. Do not retry other filter syntaxes,
-  API versions, or `billingPeriods` URLs. Finish paging that chain normally.
-- **Fallback.** Accept the current billing period's rows, filter them by `date` client-side after
-  retrieval (half-open: `start <= date < end`), and run the analysis on what remains.
-- **Label it partial.** Report the requested range against the range actually obtained (min/max
-  `date` of the retained rows). Mark every total, forecast, and month-over-month comparison
-  derived from the missing period as partial or `unknown`. Never fill the gap with estimates.
-- Enterprise Agreement subscriptions honour the date filters and expose `billingPeriods`; this
-  section does not apply to them.
+```
+https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&startDate=2026-09-01&endDate=2026-10-31&%24top=1000
+```
+
+Verified live on an MCA subscription (api-version 2023-05-01 and 2024-08-01): a
+`startDate=2026-10-01&endDate=2026-10-31` request returned all 31 days of a closed month across 39
+pages, and the `nextLink` chain keeps the range. A closed month at `%24top=1000` can time out, so
+keep the `500` then `250` fallback. The `billingPeriods` endpoint is empty for MOSP/MCA; do not use
+billing-period URLs.
+
+- **Every window is a `startDate`/`endDate` pair.** Trailing 30 days, month-to-date, a closed
+  month, and the month before it are all requested this way. Date slices (the timeout fallback in
+  §4) are consecutive non-overlapping `startDate`/`endDate` pairs.
+- **Still verify the first page.** Compare its row `date` values with the request. If rows fall
+  outside the window, the parameters were dropped (for example the `&` was lost by the shell):
+  fix the URL once, then stop retrying. Do not try `$filter` syntaxes or other API versions.
+- **If a period is still missing, label it partial.** Filter rows by `date` client-side
+  (`start <= date <= end`), report the requested range against the range obtained (min/max
+  `date`), and mark every total, forecast, and month-over-month comparison derived from the
+  missing period as partial or `unknown`. Never fill the gap with estimates.
 
 **Cost data at scale (Microsoft guidance).** This pack reads UsageDetails because the agent's
 tools are read-only and have no storage. Microsoft's guidance for larger estates is different:

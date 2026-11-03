@@ -193,13 +193,14 @@ falls back to `resourceId`. Ids are matched
 case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
-Start with the complete trailing window using `%24top=1000`, project only the needed fields with
+Start with the complete trailing window (`startDate=<START>&endDate=<END>` query parameters,
+`finops-managed-scope` §5 — without them only the current billing period is returned) using `%24top=1000`, project only the needed fields with
 `--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType,
 subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup,
 instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"`,
 and paginate every `nextLink`. If a request returns `413 Request Too Large`, retry with `%24top=100`,
-then `20`. Only if bounded pages still fail, use short half-open `usageStart` date slices as a
-fallback; live runs showed that filter is not reliably applied, so verify returned dates and
+then `20`. Only if bounded pages still fail, use short, non-overlapping `startDate`/`endDate` slices as a
+fallback; verify returned dates and
 de-duplicate the combined rows. `--query` is client-side and does not itself prevent a server 413,
 but it keeps the retained sandbox payload small. If the pull still cannot complete, keep partial rows
 but **label the savings totals "partial — cost pull truncated"** so the biggest line items aren't

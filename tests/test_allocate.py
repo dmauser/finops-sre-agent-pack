@@ -322,3 +322,69 @@ def test_month_over_month_empty_previous():
     out = allocate.month_over_month({A: 50.0}, {})
     assert out["delta_pct"] is None
     assert out["movers"]["new"][0]["delta_usd"] == 50.0
+
+# ---- choose_dimension --------------------------------------------------------------------------
+
+_SUB = "/subscriptions/000"
+
+
+def _rid(rg, name):
+    return f"{_SUB}/resourceGroups/{rg}/providers/Microsoft.Compute/disks/{name}"
+
+
+def test_choose_dimension_picks_best_populated_ownership_tag_not_team():
+    costs = {_rid("app", "a"): 60.0, _rid("app", "b"): 30.0, _rid("net", "c"): 10.0}
+    tags = {
+        _rid("app", "a"): {"owner": "alice", "env": "prod", "costCenter": "CC100"},
+        _rid("app", "b"): {"owner": "alice", "env": "prod"},
+        _rid("net", "c"): {"env": "prod", "costCenter": "CC200"},
+    }
+    pick = allocate.choose_dimension(costs, tags)
+    assert pick["dimension"] == "owner"
+    assert pick["allocated_pct"] == 90.0
+    assert "owner" in pick["reason"]
+    scored = {c["key"]: c["allocated_usd"] for c in pick["candidates"]}
+    assert scored == {"team": 0.0, "owner": 90.0, "costCenter": 70.0, "app": 0.0, "service": 0.0}
+    # env covers 100% but is an environment, not an owner.
+    assert "env" not in scored
+
+
+def test_choose_dimension_counts_resource_group_inheritance():
+    costs = {_rid("app", "disk1"): 80.0, _rid("net", "vnet"): 20.0}
+    tags = {_rid("app", "disk1"): {}, _rid("net", "vnet"): {"owner": "bob"}}
+    inherited = {f"{_SUB}/resourceGroups/app": {"costCenter": "CC100"}}
+    assert allocate.choose_dimension(costs, tags)["dimension"] == "owner"
+    pick = allocate.choose_dimension(costs, tags, inherited_tags=inherited)
+    assert pick["dimension"] == "costCenter"
+    assert pick["allocated_pct"] == 80.0
+
+
+def test_choose_dimension_ties_keep_candidate_order_and_defaults_when_untagged():
+    costs = {_rid("app", "a"): 10.0}
+    both = {_rid("app", "a"): {"owner": "x", "team": "y"}}
+    assert allocate.choose_dimension(costs, both)["dimension"] == "team"
+    none = allocate.choose_dimension(costs, {_rid("app", "a"): {"env": "prod"}})
+    assert none["dimension"] == "team" and none["allocated_pct"] == 0.0
+    assert "no ownership tag" in none["reason"]
+    assert allocate.choose_dimension({}, {})["dimension"] == "team"
+    custom = allocate.choose_dimension(costs, {}, candidates=("owner", "app"), default="team")
+    assert custom["dimension"] == "team"
+
+
+def test_month_over_month_uses_resource_group_inheritance_like_allocation():
+    cur = {_rid("app", "disk1"): 30.0, _rid("net", "vnet"): 50.0}
+    prev = {_rid("app", "disk1"): 10.0, _rid("net", "vnet"): 50.0}
+    tags = {_rid("net", "vnet"): {"owner": "bob"}}
+    inherited = {f"{_SUB}/resourceGroups/app": {"owner": "alice"}}
+    plain = allocate.month_over_month(cur, prev, dimension_tags=tags, dimension="owner")
+    assert {o["owner"] for o in plain["by_owner"]} == {"bob", allocate.UNALLOCATED_OWNER}
+    mom = allocate.month_over_month(cur, prev, dimension_tags=tags, dimension="owner",
+                                    inherited_tags=inherited)
+    owners = {o["owner"]: o for o in mom["by_owner"]}
+    assert set(owners) == {"alice", "bob"}
+    assert owners["alice"]["delta_usd"] == 20.0
+    assert mom["movers"]["increased"][0]["owner"] == "alice"
+    # The resource's own tag wins over the resource group's.
+    own = allocate.month_over_month(cur, prev, dimension="owner", inherited_tags=inherited,
+                                    dimension_tags={_rid("app", "disk1"): {"owner": "dave"}})
+    assert "dave" in {o["owner"] for o in own["by_owner"]}

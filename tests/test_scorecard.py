@@ -313,3 +313,42 @@ def test_anomaly_kpi_uses_period_days_or_run_rate():
                                       forecast={"available": True, "run_rate_30d": 900.0})
     kpi = next(k for k in by_rate["kpis"] if k["id"] == "anomaly_impact_pct")
     assert kpi["value"] == 100.0  # 30 / (900 / 30)
+
+
+def test_waste_pct_normalizes_partial_period_spend_to_monthly():
+    # $900 over 3 days is $9,000 a month; $300/month of waste is 3.3% of that, not 33%.
+    card = sc.kpi_scorecard(allocation={"total_usd": 900.0},
+                            waste={"headline": {"potential_monthly_savings": 300.0}},
+                            period_days=3)
+    kpi = next(k for k in card["kpis"] if k["id"] == "waste_pct")
+    assert kpi["value"] == 3.3
+    assert kpi["detail"] == {"monthly_usd": 300.0, "monthly_spend_usd": 9000.0}
+    # Two months of spend are halved to one month.
+    two = sc.kpi_scorecard(allocation={"total_usd": 20000.0},
+                           waste={"headline": {"potential_monthly_savings": 300.0}},
+                           period_days=60)
+    assert next(k for k in two["kpis"] if k["id"] == "waste_pct")["value"] == 3.0
+
+
+def test_anomaly_impact_counts_each_day_once_across_dimensions():
+    same_spike = [
+        {"date": "2026-11-03", "dimension": "meterCategory", "value": "VM", "impact_usd": 40.0, "direction": "up"},
+        {"date": "2026-11-03", "dimension": "resourceGroup", "value": "rg", "impact_usd": 38.0, "direction": "up"},
+        {"date": "2026-11-03", "dimension": "resource", "value": "vm1", "impact_usd": 25.0, "direction": "up"},
+        {"date": "2026-11-03", "dimension": "resource", "value": "vm2", "impact_usd": 20.0, "direction": "up"},
+        {"date": "2026-11-02", "dimension": "meterCategory", "value": "Storage", "impact_usd": 10.0, "direction": "up"},
+        {"date": "2026-11-02", "dimension": "resource", "value": "sa", "impact_usd": 99.0, "direction": "down"},
+    ]
+    card = sc.kpi_scorecard(allocation={"total_usd": 3000.0}, anomalies=same_spike, period_days=30)
+    kpi = next(k for k in card["kpis"] if k["id"] == "anomaly_impact_pct")
+    # 11-03: resource 45 > meter 40 > RG 38 -> 45; 11-02: 10 (the drop is ignored). 55 / 100 per day.
+    assert kpi["value"] == 55.0
+    bench = {b["id"]: b["value"] for b in card["benchmarks"]}
+    assert bench["anomaly_impact_usd"] == 55.0
+
+
+def test_scorecard_actions_carry_kpi_names():
+    card = sc.kpi_scorecard(allocation={"total_usd": 1000.0, "unallocated_pct": 80.0})
+    action = next(a for a in card["actions"] if a["kpi"] == "allocated_pct")
+    kpi = next(k for k in card["kpis"] if k["id"] == "allocated_pct")
+    assert action["name"] == kpi["name"] != action["kpi"]
