@@ -814,8 +814,8 @@ def test_all_adapters_render_empty_states(builder, empty):
         (
             models.build_monthly_review_model,
             _monthly,
-            "971f3f194d949a1ebdc5fb0ba8aea3764abe2ccd6f4beefa4c90df78742c1fbb",
-            "9f3fd9c1a6b13d06918e83c158cdcb05e2a221f70f63c9e1341e0bb4012c9600",
+            "fa0b607480d3a50735bdb88e34139643ca31bbc7c5940edf45dd36cf0989aaf5",
+            "4bb91ce6cef62225ca7d866acd5c3d6f5137d674e3d908b3adb95a68a814da97",
         ),
     ],
 )
@@ -1014,6 +1014,21 @@ def test_monthly_review_adapter_orders_kpis_owners_and_flags_missing_inputs():
     assert sections["Next FinOps iteration"]["rows"] == [["1", "Allocation"], ["2", "Forecasting"]]
     assert sections["Benchmarks"]["rows"][0] == ["Impact", "$40.00"]
     assert "Forecast record" not in sections
+
+
+def test_monthly_review_actions_show_kpi_names_not_ids():
+    review = _monthly()
+    legacy = models.build_monthly_review_model(review, **_context())
+    rows = {s["title"]: s for s in legacy["sections"]}["Ordered actions"]["rows"]
+    # Older scorecards have no action name: fall back to the KPI row's name.
+    assert rows[0][:2] == ["fail", "Managed scopes with a budget"]
+    assert rows[1][:2] == ["warn", "Spend allocated"]
+
+    review["scorecard"]["actions"][0]["name"] = "Spend allocated to an owner"
+    named = models.build_monthly_review_model(review, **_context())
+    rows = {s["title"]: s for s in named["sections"]}["Ordered actions"]["rows"]
+    assert rows[1][1] == "Spend allocated to an owner"
+    assert all(r[1] not in {"allocated_pct", "budget_coverage_pct"} for r in rows)
 
 
 def test_monthly_review_forecast_record_round_trips_through_scorecard_parser():

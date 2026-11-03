@@ -47,6 +47,9 @@ from collections import defaultdict
 # NOT define whether a resource is "tagged" (that is now "has any tag at all").
 RECOMMENDED_TAG_KEYS = ("team", "env", "service", "costCenter", "app", "owner")
 DEFAULT_DIMENSION = "team"
+# Keys that name an accountable owner. `env` is a recommended tag but describes an environment,
+# not who pays, so it is never chosen as the showback dimension.
+OWNERSHIP_TAG_KEYS = ("team", "owner", "costCenter", "app", "service")
 
 
 def _key(resource_id) -> str:
@@ -379,6 +382,53 @@ def allocate_costs(
     }
 
 
+def choose_dimension(
+    costs=None,
+    tags=None,
+    *,
+    inherited_tags=None,
+    candidates=OWNERSHIP_TAG_KEYS,
+    default: str = DEFAULT_DIMENSION,
+):
+    """Pick the ownership tag key that allocates the most spend, so showback uses the tag the
+    organization actually applies (e.g. `owner` or `costCenter`) instead of reporting 0% for a
+    `team` tag nobody uses.
+
+    Each candidate is scored with allocate_costs (tag inheritance included when supplied); ties
+    keep the candidate order. When no candidate allocates anything, `default` is returned.
+
+    Returns {"dimension", "allocated_pct", "reason", "candidates": [{"key", "allocated_usd",
+    "allocated_pct"}...]} with candidates in the given order.
+    """
+    scored = []
+    for key in candidates:
+        result = allocate_costs(costs, tags, dimension=key, inherited_tags=inherited_tags)
+        allocated = result["total_usd"] - result["unallocated_usd"]
+        scored.append({
+            "key": key,
+            "allocated_usd": round(allocated, 2),
+            "allocated_pct": round(100.0 - result["unallocated_pct"], 1) if result["total_usd"] else 0.0,
+        })
+    best = None
+    for item in scored:
+        if item["allocated_usd"] > 0 and (best is None or item["allocated_usd"] > best["allocated_usd"]):
+            best = item
+    if best is None:
+        return {
+            "dimension": default,
+            "allocated_pct": 0.0,
+            "reason": f"no ownership tag ({', '.join(candidates)}) allocates any spend; "
+                      f"using '{default}'",
+            "candidates": scored,
+        }
+    return {
+        "dimension": best["key"],
+        "allocated_pct": best["allocated_pct"],
+        "reason": f"'{best['key']}' allocates the most spend ({best['allocated_pct']}%)",
+        "candidates": scored,
+    }
+
+
 def _sum_by_key(costs):
     """{resourceId: usd} -> {normalized id: (display id, usd)}; non-numeric values are ignored."""
     out = {}
@@ -402,6 +452,7 @@ def month_over_month(
     dimension: str = DEFAULT_DIMENSION,
     min_delta_usd: float = 10.0,
     top_n: int = 25,
+    inherited_tags=None,
 ):
     """Month-over-month cost variance by owner and by resource (pure, offline).
 
@@ -410,6 +461,9 @@ def month_over_month(
     dimension                       the ownership tag key (default "team"); missing -> "(unallocated)"
     min_delta_usd                   resource movers with |delta| below this are not listed
     top_n                           cap per mover list
+    inherited_tags                  optional {scopeId: {tagKey: tagVal}}, as in allocate_costs: a
+                                    resource without the dimension tag takes its resource group's,
+                                    then its subscription's, so owners match the allocation view
 
     Returns a dict:
       {
@@ -425,6 +479,9 @@ def month_over_month(
     cur = _sum_by_key(current_costs)
     prev = _sum_by_key(previous_costs)
     tags_by_id = {_key(rid): _tags_ci(t) for rid, t in (dimension_tags or {}).items()}
+    inherited_by_scope = {
+        _scope_key(scope): _tags_ci(t) for scope, t in (inherited_tags or {}).items()
+    }
     dim = str(dimension).strip()
 
     owner_cur = defaultdict(float)
@@ -440,6 +497,8 @@ def month_over_month(
         p = prev[k][1] if k in prev else 0.0
         delta = c - p
         raw = _lookup_tag(tags_by_id.get(k, {}), dim)
+        if raw is None and inherited_by_scope:
+            raw, _ = _inherited_value(display, inherited_by_scope, dim)
         owner = str(raw).strip() if raw is not None else UNALLOCATED_OWNER
         norm = _norm_val(raw) if raw is not None else None  # None = unallocated
         owner_cur[norm] += c

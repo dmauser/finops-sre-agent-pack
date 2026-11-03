@@ -565,8 +565,9 @@ def kpi_scorecard(
                    the KPI detail
     advisor_cost_score  Azure Advisor Cost score (0-100) for the scope; reported as a benchmark,
                    not scored, because Microsoft publishes no target for it
-    period_days    days covered by allocation total_usd; sets the daily-spend denominator of the
-                   anomaly KPI. Without it the forecast's 30-day run rate is used, then total/30
+    period_days    days covered by allocation total_usd; scales that total to a 30-day month for
+                   the waste KPI and sets the daily-spend denominator of the anomaly KPI. Without
+                   it the forecast's 30-day run rate is used, then total/30
 
     Each KPI: {id, name, capability, value, unit, target, higher_is_better, status, action,
     detail}. status is pass | warn | fail | unknown (source not provided). The maturity indication
@@ -685,21 +686,34 @@ def kpi_scorecard(
         round(sum(utils) / len(utils), 1) if utils else None, "%",
         "Exchange or re-scope under-utilized reservations, or move eligible workloads onto them.")
 
-    # Usage optimization (waste + rightsizing)
+    # Usage optimization (waste + rightsizing). Savings are monthly, so compare them with monthly
+    # spend: scale a partial or multi-month total by period_days rather than dividing a month of
+    # savings by a few days of spend.
+    days = _num(period_days)
+    monthly_total = (total / days * 30.0) if (total and days and days > 0) else total
     waste_usd = None
     if waste is not None or rightsizing is not None:
         waste_usd = _num(((waste or {}).get("headline") or {}).get("potential_monthly_savings")) or 0.0
         waste_usd += sum(_num(r.get("estMonthlySavingsUsd")) or 0.0 for r in rightsizing or [])
+    waste_detail = None
+    if waste_usd is not None:
+        waste_detail = {"monthly_usd": round(waste_usd, 2)}
+        if monthly_total and monthly_total != total:
+            waste_detail["monthly_spend_usd"] = round(monthly_total, 2)
     add("waste_pct", "Addressable waste as % of spend", "Workload optimization",
-        _pct(waste_usd, total) if (waste_usd is not None and total) else None, "%",
-        "Work the waste and rightsizing lists by owner (route_to_owners).",
-        {"monthly_usd": round(waste_usd, 2)} if waste_usd is not None else None)
+        _pct(waste_usd, monthly_total) if (waste_usd is not None and monthly_total) else None, "%",
+        "Work the waste and rightsizing lists by owner (route_to_owners).", waste_detail)
 
-    # Anomaly management: only cost increases count against the KPI.
+    # Anomaly management: only cost increases count against the KPI. detect_anomalies reports the
+    # same spike once per dimension (meter category, resource group, resource), so count each day
+    # once: per date, sum the increases within each dimension and keep the largest dimension.
     impact = None
     if anomalies is not None:
-        impact = sum(_num(a.get("impact_usd")) or 0.0 for a in anomalies
-                     if _is_increase(a))
+        per_day = defaultdict(lambda: defaultdict(float))
+        for a in anomalies:
+            if _is_increase(a):
+                per_day[a.get("date")][a.get("dimension")] += _num(a.get("impact_usd")) or 0.0
+        impact = sum(max(dims.values()) for dims in per_day.values())
     run_rate = _num((forecast or {}).get("run_rate_30d")) if (forecast or {}).get("available") else None
     if total and _num(period_days):
         daily_spend = total / _num(period_days)
@@ -731,7 +745,7 @@ def kpi_scorecard(
         maturity = "crawl"
     severity = {"fail": 0, "warn": 1}
     actions = [
-        {"kpi": k["id"], "status": k["status"], "action": k["action"]}
+        {"kpi": k["id"], "name": k["name"], "status": k["status"], "action": k["action"]}
         for k in sorted(kpis, key=lambda k: severity.get(k["status"], 2))
         if k["action"]
     ]

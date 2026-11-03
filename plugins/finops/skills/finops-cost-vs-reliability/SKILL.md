@@ -58,11 +58,11 @@ De-duplicate recommendations from overlapping scopes.
 ### Step 1 — Pull monthly cost line items (UsageDetails GET only)
 
 Follow the canonical Consumption UsageDetails transport contract in `finops-managed-scope` for the
-complete trailing ~30-day result, using this skill's needed fields:
+complete trailing ~30-day result (`startDate`/`endDate` query parameters, `finops-managed-scope` §5), using this skill's needed fields:
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&%24top=1000" \
+  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&startDate=<START>&endDate=<END>&%24top=1000" \
   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, pretaxCost: properties.pretaxCost, consumedService: properties.consumedService, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId}, nextLink: nextLink}"
 ```
 

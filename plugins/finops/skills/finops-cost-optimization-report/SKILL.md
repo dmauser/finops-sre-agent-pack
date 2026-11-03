@@ -99,12 +99,12 @@ In the report's data-quality notes, state each gap with its fix: partial cost �
 `remaining_next_link`; unvalidated rightsizing → count beyond the metric bound or metric errors;
 commitment inventory → the Reservations Reader / Savings plan Reader grant.
 
-**Shared cost pull — exact shape.** One `az rest` GET per effective subscription (URL-encode `$` as
+**Shared cost pull — exact shape.** One `az rest` GET per effective subscription for the trailing 30 days (`<START>` = today minus 30 days, `<END>` = today, `YYYY-MM-DD`; `finops-managed-scope` §5) (URL-encode `$` as
 `%24`; never use `||` in `--query`, project candidate fields separately):
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&%24top=1000" \
+  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&startDate=<START>&endDate=<END>&%24top=1000" \
   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, pricingModel: properties.pricingModel, meterCategory: properties.meterCategory, meterName: properties.meterName, consumedService: properties.consumedService, quantity: properties.quantity, unitOfMeasure: properties.unitOfMeasure, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}" \
   -o json
 ```

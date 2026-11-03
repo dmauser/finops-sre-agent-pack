@@ -43,10 +43,11 @@ blocked by the read-only gate and is **not needed** — detection happens client
 trailing window large enough for a baseline plus the current period (default: 35 days).
 
 **Start with a bounded page size, minimal field projection, and full pagination.** Request the
-trailing window directly with `%24top=1000`, project only the fields the detector needs with
-`--query`, and follow every `nextLink`. Do not lead with `usageStart` slicing: live runs showed that
-the service does not reliably apply that filter, so slicing is a fallback rather than the primary
-retrieval strategy.
+trailing window directly with the `startDate`/`endDate` query parameters (`YYYY-MM-DD`, inclusive;
+`finops-managed-scope` §5) and `%24top=1000`, project only the fields the detector needs with
+`--query`, and follow every `nextLink`. Without `startDate`/`endDate` the API returns only the
+current billing period, so on the 3rd of a month the baseline would be 2 days. Never put dates in
+`%24filter`: it does not support date properties and silently ignores them.
 
 The controls solve different problems:
 
@@ -57,10 +58,11 @@ The controls solve different problems:
    itself prevent a server 413. It does keep the JSON stored, concatenated, and passed to the sandbox
    limited to the fields the analysis uses.
 3. **Date slicing is the final fallback.** If bounded pages still fail, split the trailing window into
-   short half-open `usageStart` slices, paginate each slice, and de-duplicate the combined rows.
+   short, non-overlapping `startDate`/`endDate` slices, paginate each slice, and de-duplicate the
+   combined rows.
 
 ```bash
-az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&%24top=1000" \
+az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=AmortizedCost&startDate=<START>&endDate=<END>&%24top=1000" \
   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, costInBillingCurrency: properties.costInBillingCurrency, billingCost: properties.cost, billingCurrencyCode: properties.billingCurrencyCode, billingCurrency: properties.billingCurrency, chargeType: properties.chargeType, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, instanceName: properties.instanceName, resourceId: properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
@@ -71,9 +73,8 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
 - **Paginate the complete result:** follow `nextLink` until absent. `nextLink` already carries the
   skip token — GET it as-is (don't re-add parameters). Note the
   `nextLink` in the raw body is HTML-escaped (`&amp;`) — decode `&amp;`→`&` before following it.
-- **Date-slice fallback:** only if smaller pages still 413, retry with short
-  `%24filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'`
-  windows. Because the filter is not reliably applied, verify returned dates and de-duplicate the
+- **Date-slice fallback:** only if smaller pages still 413, retry with short, non-overlapping
+  `startDate=<SLICE_START>&endDate=<SLICE_END>` windows. Verify returned dates and de-duplicate the
   concatenated slices with `finops-managed-scope`'s `filter_usage_details(..., sources=...)`
   (one label per slice); never key on `id` or `(resourceId, date, meterId)`, which distinct rows share.
 - **Never proceed on silently-partial cost.** If the pull cannot complete after all fallbacks,

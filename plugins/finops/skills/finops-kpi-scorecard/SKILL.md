@@ -74,10 +74,10 @@ the analysis: Advisor → `tmp/finops-data/advisor.json`, Resource Graph invento
 `inventory.json`, budgets → `budgets.json`, tags → `tags.json`. UsageDetails pages are rebuilt
 with `find_usage_tool_output_chains(..., after_timestamp=run_start, thread_id=<this run's thread id>, request_url_prefix=...)`.
 
-The forecast and month-over-month inputs need earlier months. For MOSP/MCA subscriptions the
-UsageDetails date filter is ignored and only the current billing period is returned
-(`finops-managed-scope` section 5): do not retry other filters; label the forecast and
-month-over-month as partial with the requested vs obtained date range.
+The forecast and month-over-month inputs need earlier months. Request them with the UsageDetails
+`startDate`/`endDate` query parameters (`finops-managed-scope` section 5) — a `$filter` on dates is
+ignored and returns only the current billing period. If a requested month is still missing, label
+the forecast and month-over-month as partial with the requested vs obtained date range.
 
 For **unit economics**, take business volume from the customer (orders, active users, GB processed)
 or, for web workloads, from Application Insights request counts in a managed resource group:
@@ -87,6 +87,22 @@ az monitor app-insights metrics show --app <APP_INSIGHTS_NAME> \
   --resource-group <EFFECTIVE_RESOURCE_GROUP> --metrics requests/count \
   --aggregation sum --interval P30D --offset 30D -o json
 ```
+
+For **AI workloads**, Azure OpenAI and Foundry (`Microsoft.CognitiveServices/accounts`) emit
+platform metrics with no extra setup: `TotalCalls` (API calls) and `TotalTokens` (input + output
+tokens). Sum them for exactly the cost window, per account in a managed resource group:
+
+```bash
+az monitor metrics list --resource <ACCOUNT_RESOURCE_ID> --metric TotalTokens \
+  --aggregation Total --interval P1D \
+  --start-time <START>T00:00:00Z --end-time <END_EXCLUSIVE>T00:00:00Z -o json
+```
+
+Pair the summed units with the cost of those same accounts (`meterCategory` *Cognitive Services* /
+*Foundry Models* rows for their resource ids), e.g.
+`unit_economics(ai_cost, tokens, unit_name="token", per=1000, previous_cost=..., previous_units=...)`
+for cost per 1,000 tokens. Pull the previous month the same way to get the trend; without it the
+trend stays `unknown`.
 
 Use the same period and the same scope for cost and units (e.g. the cost of the resource groups
 behind that app). Never invent a unit metric; if none is available, leave `unit_costs` out.

@@ -15,6 +15,27 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Contributor guide**: development setup, issue and PR guidance, skill/report change surfaces,
   testing expectations, and safe synthetic customer scenarios, with a dedicated README section.
 
+### Fixed
+
+- **UsageDetails date ranges** (affects every report that looks back): skills and task prompts now
+  request each window with the documented `startDate`/`endDate` query parameters. The previous
+  `$filter=properties/usageStart ...` is not a supported filter and is silently ignored, so pulls
+  returned only the current billing period. That made the Monthly Review on the 1st-3rd of a month
+  cover 1-3 days with no month-over-month, gave the anomaly detector a 2-day baseline early in a
+  month, and made Cost Overview "30 days" month-to-date. It also corrects the earlier claim that
+  MOSP/MCA subscriptions ignore date filters; verified live on MCA for a full closed month.
+- **Monthly Review KPIs**: waste % now divides monthly savings by monthly-normalized spend (a
+  3-day period reported 300%); anomaly impact counts each date once, using its largest dimension
+  instead of summing meter, resource-group, and resource views of the same spike (reported 248%);
+  ordered actions show the KPI name instead of its id.
+- **Allocation dimension**: new `choose_dimension` picks the ownership tag (`team`, `owner`,
+  `costCenter`, `app`, `service`) that allocates the most spend, with resource-group tag
+  inheritance. The Monthly Review and Cost Allocation tasks use it instead of a fixed `team` tag
+  that reported 0% allocated when the organization tags by `owner`. `month_over_month` accepts
+  the same `inherited_tags`, so variance by owner matches the allocation view.
+- **Unit economics source**: the KPI scorecard documents Azure OpenAI/Foundry `TotalCalls` and
+  `TotalTokens` platform metrics as a real unit metric for AI spend.
+
 ### Changed
 
 - **Professional Live Report design** (presentation only; no figure, row, or warning changes): all

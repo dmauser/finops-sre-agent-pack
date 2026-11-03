@@ -129,12 +129,13 @@ containing subscription endpoint without a resource-group server filter, follow 
 combined rows to retain only the exact managed RG. Never use an RG UsageDetails endpoint and never
 trust `properties/resourceGroup eq ...` as a server-side filter: live responses may ignore it.
 
-Use a bounded subscription URL of this form. Lower `$top` on 413, verify returned dates, and
+Use a bounded subscription URL of this form (`startDate`/`endDate` are inclusive `YYYY-MM-DD` query
+parameters; `$filter` does not support dates — see `finops-managed-scope` §5). Lower `$top` on 413, verify returned dates, and
 disclose/stop on missing pages:
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&%24filter=properties/usageStart ge '<START>' and properties/usageEnd le '<END>'&%24top=1000" \
+  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&startDate=<START>&endDate=<END>&%24top=1000" \
   --query "{value:value[].{id:id,date:properties.date,cost:properties.costInUSD,costInBillingCurrency:properties.costInBillingCurrency,billingCost:properties.cost,billingCurrencyCode:properties.billingCurrencyCode,billingCurrency:properties.billingCurrency,chargeType:properties.chargeType,subscriptionId:properties.subscriptionId,resourceGroup:properties.resourceGroup,instanceName:properties.instanceName,resourceId:properties.resourceId},nextLink:nextLink}" \
   -o json
 ```
