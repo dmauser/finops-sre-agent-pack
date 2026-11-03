@@ -38,6 +38,7 @@ the [Microsoft FinOps Framework](https://learn.microsoft.com/en-us/cloud-computi
   - [Permissions](#permissions)
 - [Repository layout](#repository-layout)
 - [Test](#test)
+- [Contributing](#contributing)
 - [Contributing another plugin](#contributing-another-plugin)
 - [Background](#background)
 - [Acknowledgments](#acknowledgments)
@@ -435,7 +436,16 @@ pip install -r requirements-dev.txt
 pytest tests/          # offline: scope guard, usage pipeline, renderer, installers, every skill helper
 ```
 
-## Contributing another plugin
+## Contributing
+
+Contributions are welcome: bug fixes, skill and report improvements, synthetic customer scenarios,
+tests, and documentation. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, issue and PR
+guidance, testing expectations, safe example data, and the changelog/release process.
+
+Start with a focused customer question and reproducible expected behavior. Never publish raw customer
+billing data, logs, credentials, or live report snapshots in issues, PRs, or fixtures.
+
+### Contributing another plugin
 
 This section is for repository contributors, not an extra installation step:
 
@@ -449,8 +459,8 @@ This section is for repository contributors, not an extra installation step:
 Every Azure data source the skills use was validated against a deployed SRE Agent, and the Live
 Reports were reconciled with Azure Cost Management. Guidance is aligned with the
 [Microsoft FinOps documentation](https://learn.microsoft.com/en-us/cloud-computing/finops/). See
-[CHANGELOG.md](CHANGELOG.md) for release history, [CONTRIBUTING.md](CONTRIBUTING.md) for the changelog
-and release process, and [SECURITY.md](SECURITY.md) to report issues.
+[CHANGELOG.md](CHANGELOG.md) for release history, [CONTRIBUTING.md](CONTRIBUTING.md) for contribution
+and release guidance, and [SECURITY.md](SECURITY.md) to report security issues.
 
 ## Acknowledgments
 

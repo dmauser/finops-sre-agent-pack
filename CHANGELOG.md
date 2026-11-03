@@ -10,6 +10,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Contributor guide**: development setup, issue and PR guidance, skill/report change surfaces,
+  testing expectations, and safe synthetic customer scenarios, with a dedicated README section.
+
 ### Changed
 
 - Restored the pre-Astra v0.2.0 implementation at `d586b1b` through normal reversions.
