@@ -123,11 +123,14 @@ ingestion = ingestion_gb_per_day(rows, days=30)    # {workspaceId: GB/day}; Log 
 `unitOfMeasure` contains `GB` (retention `GB/Month` excluded; `100 GB` units scaled), keyed by
 workspace id, divided by the window length. Pass it to `find_waste(..., ingestion_gb_per_day=ingestion)`.
 
-**Allocation dimension.** Run `allocate_costs(costs, tags, dimension="team")` first. Then pick the
-`recommended_coverage` entry with `present == True` and the highest `pct` (cost share); if it is not
-`team`, rerun `allocate_costs` with that key. Name the chosen dimension and its coverage in the
-report. If no recommended key is present, keep `team` (the report then shows 100% unallocated,
-which is the correct governance finding).
+**Allocation dimension.** Use the same rule as the Cost Allocation report and the Monthly Review:
+`pick = choose_dimension(costs, tags, inherited_tags=scope_tags)`, then
+`allocate_costs(costs, tags, dimension=pick["dimension"], inherited_tags=scope_tags)`.
+`scope_tags` holds the resource-group and subscription tags (`finops-cost-allocation`, "tag
+inheritance"). If they cannot be read, omit `inherited_tags` in both calls. `choose_dimension` picks
+the ownership tag that allocates the most spend; ties keep `team` first and `env` is never chosen.
+Name the chosen dimension and its `reason` in the report. If no ownership tag allocates anything, it
+keeps `team`, and the report then shows 100% unallocated, which is the correct governance finding.
 
 **Commitment inventory 403.** Never fail the report. Prefer calling
 `analyze_commitments(..., inventory_unavailable=[...])` so coverage, unused-commitment cost, and
