@@ -122,6 +122,13 @@ model = {
         "title": "Daily cost trend",  # optional section heading; defaults to label
         "labels": ["Aug 1", "Aug 2"],
         "values": [12.3, 14.8],
+        # Optional presentation fields (presentation only; never change values):
+        # "tones": [None, "critical"],      # per value: null, neutral, good, warning, critical
+        # "valueFormat": "currency",        # currency, percent, or number; inferred from label
+        # "orientation": "horizontal",      # vertical or horizontal; bars auto-switch to
+        #                                   # horizontal with > 8 labels or a label > 14 chars
+        # "referenceValue": 100,            # draws a dashed reference line, e.g. a budget limit
+        # "referenceLabel": "Budget limit (100%)",
     },
     "sections": [
         {
@@ -137,6 +144,30 @@ model = {
 
 All displayed values must already be computed by deterministic analysis code. The renderer does not
 derive FinOps totals or recommendations.
+
+Invalid optional chart fields raise `ValueError`: `tones` must match `values` in length, `valueFormat`
+and `orientation` must use the listed values, and `referenceValue` must be a number.
+
+## Presentation
+
+Every report uses the same Azure executive layout. Presentation never changes a value, row, or warning:
+
+1. **Header**: report title, description, last-refreshed time, scope, and status chips (Complete or
+   Partial data, the number of metrics needing action or to watch, and the number of data notes).
+2. **Partial-data banner**: shown only when `partial` is true, above the metrics.
+3. **Metrics**: KPI cards; a `tone` adds a colored accent and a Good/Watch/Action label.
+4. **Chart**: tones color individual bars; a reference line marks thresholds such as 100% of budget.
+5. **Data quality and methodology notes**: every warning, in a collapsible panel whose summary shows
+   the count.
+6. **Sections**: tables. Whole-cell status values (for example `validated`, `fail`, `over`) render as
+   badges with their original text; snake_case values are humanized with the original kept as a
+   tooltip; Azure resource IDs show the resource name with the full ID expandable. Tables with more
+   than 20 rows show the first 15 and keep the rest under "Show N more rows".
+7. **Footer**: managed scope and provenance, stating that the page is a static snapshot that refreshes
+   only when its scheduled task runs.
+
+Text colors meet WCAG AA contrast, and the layout collapses to one column below 640 px. CSP, nonce
+placement, and Chart.js SRI are unchanged.
 
 ## Rendering API
 

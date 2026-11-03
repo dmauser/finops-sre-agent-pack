@@ -822,6 +822,10 @@ def build_budget_status_model(
             "label": "Percent of budget (100% = budget limit)",
             "labels": chart_labels,
             "values": chart_values,
+            "tones": ["critical" if value >= 100 else None for value in chart_values],
+            "valueFormat": "percent",
+            "referenceValue": 100,
+            "referenceLabel": "Budget limit (100%)",
         },
         [
             {
@@ -2780,6 +2784,21 @@ def build_monthly_review_model(
             "label": "Month-over-month change by owner (USD)",
             "labels": [row[0] for row in chart_rows],
             "values": [_chart_number(row[3]) for row in chart_rows],
+            "tones": [
+                "warning" if _chart_number(row[3]) > 0 else "good" if _chart_number(row[3]) < 0 else None
+                for row in chart_rows
+            ],
+            "valueFormat": "currency",
+        }
+        if chart_rows or not kpis
+        else {
+            "type": "bar",
+            "label": "KPI status (count of KPIs)",
+            "labels": ["Pass", "Warn", "Fail", "Unknown"],
+            "values": [counts["pass"], counts["warn"], counts["fail"], counts["unknown"]],
+            "tones": ["good", "warning", "critical", "neutral"],
+            "valueFormat": "number",
+            "orientation": "vertical",
         },
         [
             {

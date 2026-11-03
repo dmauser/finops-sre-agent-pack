@@ -11,48 +11,176 @@ img-src 'self' data: blob: https:;
 connect-src 'self';">
 <title>FinOps: Cost Overview</title>
 <style nonce="sample">
-:root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#172033; background:#f5f7fb; }
+:root { color-scheme: light; font-family: "Segoe UI","Segoe UI Web (West European)",-apple-system,BlinkMacSystemFont,Roboto,"Helvetica Neue",sans-serif; color:#242424; background:#f5f5f5; font-size:15px; line-height:1.45; }
 * { box-sizing:border-box; }
 body { margin:0; padding:24px; }
-main { max-width:1200px; margin:0 auto; }
-header,section,.metric,.warnings { background:#fff; border:1px solid #dce3ef; border-radius:12px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
-header,section { padding:20px; margin-bottom:16px; }
+main { max-width:1240px; margin:0 auto; }
 h1,h2,p { margin-top:0; }
-.subtitle,.section-description,.refreshed { color:#596780; }
-.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
-.metric { padding:16px; border-top:4px solid #94a3b8; }
-.metric.good { border-top-color:#16a34a; } .metric.warning { border-top-color:#d97706; } .metric.critical { border-top-color:#dc2626; }
-.metric-label,.metric-detail { color:#596780; font-size:.88rem; } .metric-value { font-size:1.65rem; font-weight:700; margin:6px 0; }
-.warnings { padding:16px; margin-bottom:16px; border-color:#f59e0b; background:#fffbeb; }
-.warnings ul { margin-bottom:0; }
-.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; }
-th,td { padding:10px; text-align:left; border-bottom:1px solid #e5eaf2; } th { color:#44516a; font-size:.84rem; text-transform:uppercase; }
-.chart-wrap { height:320px; } .empty { color:#718096; font-style:italic; }
-code,td.long { overflow-wrap:anywhere; } td.num { white-space:nowrap; }
+.hero { background:linear-gradient(120deg,#0c3b5e 0%,#0f6cbd 100%); color:#fff; border-radius:10px; padding:24px 28px; margin-bottom:16px; }
+.eyebrow { font-size:.78rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; opacity:.92; margin-bottom:6px; }
+.hero h1 { font-size:1.9rem; font-weight:600; margin-bottom:6px; }
+.hero .subtitle { color:#fff; max-width:860px; margin-bottom:14px; }
+.meta { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; font-size:.86rem; }
+.meta-item { color:#fff; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+.chip { display:inline-block; padding:3px 10px; border-radius:999px; font-size:.8rem; font-weight:600; background:#fff; }
+.chip.good { color:#0e700e; } .chip.warning { color:#8a3707; } .chip.critical { color:#b10e1c; } .chip.neutral { color:#5c5c5c; }
+.banner { border-radius:8px; padding:12px 16px; margin-bottom:16px; border:1px solid; border-left-width:4px; }
+.banner.partial { background:#fff9f5; border-color:#f4bfab; border-left-color:#8a3707; color:#242424; }
+.banner strong { color:#8a3707; }
+.card { background:#fff; border:1px solid #e0e0e0; border-radius:8px; box-shadow:0 1px 2px rgba(0,0,0,.06); padding:20px 22px; margin-bottom:16px; }
+.section-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+h2 { font-size:1.15rem; font-weight:600; margin-bottom:6px; color:#242424; }
+.count { color:#5c5c5c; font-size:.8rem; white-space:nowrap; }
+.section-description { color:#5c5c5c; font-size:.9rem; margin-bottom:12px; }
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:16px; }
+.metric { background:#fff; border:1px solid #e0e0e0; border-left:4px solid #c8c8c8; border-radius:8px; padding:14px 16px; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+.metric.good { border-left-color:#0e700e; background:#f1faf1; }
+.metric.warning { border-left-color:#8a3707; background:#fff9f5; }
+.metric.critical { border-left-color:#b10e1c; background:#fdf3f4; }
+.metric-label { color:#5c5c5c; font-size:.84rem; font-weight:600; display:flex; justify-content:space-between; gap:8px; }
+.metric-value { font-size:1.7rem; font-weight:700; margin:4px 0 2px; color:#242424; font-variant-numeric:tabular-nums; }
+.metric-detail { color:#5c5c5c; font-size:.82rem; }
+.tone-label { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; }
+.metric.good .tone-label { color:#0e700e; } .metric.warning .tone-label { color:#8a3707; } .metric.critical .tone-label { color:#b10e1c; }
+.notes { background:#ebf3fc; border:1px solid #b4d6fa; border-radius:8px; padding:12px 16px; margin-bottom:16px; }
+.notes summary { cursor:pointer; font-weight:600; color:#0c3b5e; }
+.notes .hint { font-weight:400; color:#5c5c5c; font-size:.86rem; }
+.notes ul { margin:10px 0 0; padding-left:20px; font-size:.88rem; } .notes li { margin-bottom:6px; }
+.table-wrap { overflow-x:auto; border:1px solid #e0e0e0; border-radius:6px; }
+table { width:100%; border-collapse:collapse; font-size:.88rem; }
+th,td { padding:8px 12px; text-align:left; border-bottom:1px solid #ededed; vertical-align:top; }
+thead th { position:sticky; top:0; background:#fafafa; color:#5c5c5c; font-size:.76rem; font-weight:600; text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid #e0e0e0; }
+tbody tr:nth-child(even) { background:#fcfcfc; } tbody tr:hover { background:#ebf3fc; }
+tbody tr:last-child td { border-bottom:none; }
+th.num,td.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:.76rem; font-weight:600; white-space:nowrap; border:1px solid; }
+.badge.good { color:#0e700e; background:#f1faf1; border-color:#9fd89f; }
+.badge.warning { color:#8a3707; background:#fff9f5; border-color:#f4bfab; }
+.badge.critical { color:#b10e1c; background:#fdf3f4; border-color:#eeacb2; }
+.badge.neutral { color:#5c5c5c; background:#f5f5f5; border-color:#e0e0e0; }
+td.rid details summary { cursor:pointer; list-style:none; }
+td.rid summary::-webkit-details-marker { display:none; }
+.rid-name { display:block; font-weight:600; color:#0c3b5e; }
+.rid-meta { display:block; color:#5c5c5c; font-size:.78rem; }
+td.rid code { display:block; margin-top:4px; font-size:.75rem; color:#5c5c5c; overflow-wrap:anywhere; }
+.more-rows { margin-top:10px; } .more-rows > summary { cursor:pointer; color:#0f6cbd; font-weight:600; font-size:.88rem; margin-bottom:8px; }
+.chart-wrap { height:320px; position:relative; }
+.empty { color:#5c5c5c; font-style:italic; margin-bottom:0; }
+code,td.long { overflow-wrap:anywhere; }
+code { font-family:Consolas,"Cascadia Mono",monospace; }
+.provenance { color:#5c5c5c; font-size:.84rem; }
+.provenance h2 { font-size:1rem; }
+.provenance ul { margin:0 0 10px; padding-left:20px; }
+.provenance p { margin-bottom:0; }
 @media (max-width:640px) {
-  body { padding:12px; } header,section { padding:14px; } h1 { font-size:1.5rem; }
-  .metrics { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
-  .metric-value { font-size:1.35rem; } th,td { padding:8px 6px; font-size:.86rem; }
-  table { min-width:720px; } td.long { min-width:180px; }
-  .chart-wrap { height:240px; }
+  body { padding:10px; } .hero { padding:18px; } .hero h1 { font-size:1.45rem; } .card { padding:14px; }
+  .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .metric { padding:10px 12px; } .metric-value { font-size:1.3rem; }
+  th,td { padding:7px 8px; }
+  table { min-width:680px; } td.long,td.rid { min-width:180px; }
+  .chart-wrap { height:260px; }
+}
+@media print {
+  body { padding:0; background:#fff; } :root { background:#fff; }
+  .hero,.metric,.badge,.chip { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .card,.metric { box-shadow:none; break-inside:avoid; }
+  details::details-content { content-visibility:visible; display:block; }
+  .more-rows > summary,td.rid summary::after { display:none; }
+  thead th { position:static; }
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
 </head>
 <body>
 <main>
-<header><h1>FinOps: Cost Overview</h1><p class="subtitle">Daily-refreshed Azure AmortizedCost snapshot of up to 30 days; recent UsageDetails can still be settling. Sample data (fictional).</p><p class="refreshed">Last refreshed: 2026-10-23 15:00 UTC</p></header>
+<header class="hero"><div class="eyebrow">Azure FinOps · Live Report</div><h1>FinOps: Cost Overview</h1><p class="subtitle">Daily-refreshed Azure AmortizedCost snapshot of up to 30 days; recent UsageDetails can still be settling. Sample data (fictional).</p><div class="meta"><span class="meta-item refreshed">Last refreshed: 2026-10-23 15:00 UTC</span><span class="meta-item">Subscription 00000000-0000-0000-0000-000000000000</span></div><div class="chips"><span class="chip good">Complete data</span></div></header>
 
 <div class="metrics"><article class="metric neutral"><div class="metric-label">Period spend</div><div class="metric-value">$42,093.65</div><div class="metric-detail">AmortizedCost, 2026-10-01 to 2026-10-22 (22 days)</div></article><article class="metric neutral"><div class="metric-label">Days represented</div><div class="metric-value">22</div><div class="metric-detail">Daily cost points</div></article><article class="metric neutral"><div class="metric-label">Services represented</div><div class="metric-value">9</div><div class="metric-detail">Ranked service totals</div></article></div>
-<section><h2>Daily AmortizedCost (USD)</h2><div class="chart-wrap"><canvas id="finops-chart"></canvas></div></section>
-<section><h2>Managed scope</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul></section>
-<section><h2>Top services</h2><p class="section-description">Service totals ranked by cost.</p><div class="table-wrap"><table><thead><tr><th>Service</th><th>Cost</th></tr></thead><tbody><tr><td>Virtual Machines</td><td class="num">$10,807.50</td></tr><tr><td>Azure Kubernetes Service</td><td class="num">$9,120.40</td></tr><tr><td>SQL Database</td><td class="num">$7,480.15</td></tr><tr><td>Azure Cosmos DB</td><td class="num">$5,210.80</td></tr><tr><td>Azure OpenAI</td><td class="num">$3,925.60</td></tr><tr><td>Application Gateway</td><td class="num">$1,640.25</td></tr><tr><td>Log Analytics</td><td class="num">$1,515.90</td></tr><tr><td>Storage</td><td class="num">$1,288.70</td></tr><tr><td>Azure AI Foundry</td><td class="num">$1,104.35</td></tr></tbody></table></div></section><section><h2>Top resource groups</h2><p class="section-description">Resource-group totals ranked by cost.</p><div class="table-wrap"><table><thead><tr><th>Resource group</th><th>Cost</th></tr></thead><tbody><tr><td>rg-data-prod</td><td class="num">$18,359.65</td></tr><tr><td>rg-web-prod</td><td class="num">$15,140.65</td></tr><tr><td>rg-ai-prod</td><td class="num">$5,029.95</td></tr><tr><td>rg-shared-network</td><td class="num">$1,928.20</td></tr><tr><td>rg-finance-prod</td><td class="num">$980.00</td></tr><tr><td>rg-dev</td><td class="num">$655.20</td></tr></tbody></table></div></section><section><h2>Scope coverage</h2><p class="section-description">Included, excluded, and unattributed results by managed scope.</p><div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Included</th><th>Excluded</th><th>Unattributed</th><th>Cost</th><th>Detail</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td>complete</td><td class="num">1840</td><td class="num">0</td><td class="num">12</td><td class="num">$42,093.65</td><td>Contoso Production (sample data)</td></tr></tbody></table></div></section>
+<section class="card chart-card"><h2>Daily AmortizedCost (USD)</h2><div class="chart-wrap"><canvas id="finops-chart" role="img" aria-label="Daily AmortizedCost (USD)"></canvas></div></section>
+
+<section class="card"><div class="section-head"><h2>Top services</h2><span class="count">9 rows</span></div><p class="section-description">Service totals ranked by cost.</p><div class="table-wrap"><table><thead><tr><th scope="col">Service</th><th scope="col" class="num">Cost</th></tr></thead><tbody><tr><td>Virtual Machines</td><td class="num">$10,807.50</td></tr><tr><td>Azure Kubernetes Service</td><td class="num">$9,120.40</td></tr><tr><td>SQL Database</td><td class="num">$7,480.15</td></tr><tr><td>Azure Cosmos DB</td><td class="num">$5,210.80</td></tr><tr><td>Azure OpenAI</td><td class="num">$3,925.60</td></tr><tr><td>Application Gateway</td><td class="num">$1,640.25</td></tr><tr><td>Log Analytics</td><td class="num">$1,515.90</td></tr><tr><td>Storage</td><td class="num">$1,288.70</td></tr><tr><td>Azure AI Foundry</td><td class="num">$1,104.35</td></tr></tbody></table></div></section><section class="card"><div class="section-head"><h2>Top resource groups</h2><span class="count">6 rows</span></div><p class="section-description">Resource-group totals ranked by cost.</p><div class="table-wrap"><table><thead><tr><th scope="col">Resource group</th><th scope="col" class="num">Cost</th></tr></thead><tbody><tr><td>rg-data-prod</td><td class="num">$18,359.65</td></tr><tr><td>rg-web-prod</td><td class="num">$15,140.65</td></tr><tr><td>rg-ai-prod</td><td class="num">$5,029.95</td></tr><tr><td>rg-shared-network</td><td class="num">$1,928.20</td></tr><tr><td>rg-finance-prod</td><td class="num">$980.00</td></tr><tr><td>rg-dev</td><td class="num">$655.20</td></tr></tbody></table></div></section><section class="card"><div class="section-head"><h2>Scope coverage</h2><span class="count">1 row</span></div><p class="section-description">Included, excluded, and unattributed results by managed scope.</p><div class="table-wrap"><table><thead><tr><th scope="col">Scope</th><th scope="col">Status</th><th scope="col" class="num">Included</th><th scope="col" class="num">Excluded</th><th scope="col" class="num">Unattributed</th><th scope="col" class="num">Cost</th><th scope="col">Detail</th></tr></thead><tbody><tr><td class="long">/subscriptions/00000000-0000-0000-0000-000000000000</td><td><span class="badge good">complete</span></td><td class="num">1840</td><td class="num">0</td><td class="num">12</td><td class="num">$42,093.65</td><td>Contoso Production (sample data)</td></tr></tbody></table></div></section>
+<footer class="card provenance"><h2>Managed scope and provenance</h2><ul><li><code>/subscriptions/00000000-0000-0000-0000-000000000000</code></li></ul><p>Static snapshot generated deterministically by the FinOps SRE Agent pack. Figures refresh only when the scheduled task runs again; last refreshed 2026-10-23 15:00 UTC.</p></footer>
 </main>
 
 <script nonce="sample">
-const chartData = {"type":"line","label":"Daily AmortizedCost (USD)","labels":["2026-10-01","2026-10-02","2026-10-03","2026-10-04","2026-10-05","2026-10-06","2026-10-07","2026-10-08","2026-10-09","2026-10-10","2026-10-11","2026-10-12","2026-10-13","2026-10-14","2026-10-15","2026-10-16","2026-10-17","2026-10-18","2026-10-19","2026-10-20","2026-10-21","2026-10-22"],"values":[1970.9,2018.08,1823.57,1855.74,2111.07,2114.45,2102.03,2075.18,2036.85,1754.74,1706.91,1898.61,1861.77,1836.93,1826.84,1832.62,1617.1,1651.01,1930.61,1978.13,2024.86,2065.65]};
+const chartData = {"type":"line","label":"Daily AmortizedCost (USD)","labels":["2026-10-01","2026-10-02","2026-10-03","2026-10-04","2026-10-05","2026-10-06","2026-10-07","2026-10-08","2026-10-09","2026-10-10","2026-10-11","2026-10-12","2026-10-13","2026-10-14","2026-10-15","2026-10-16","2026-10-17","2026-10-18","2026-10-19","2026-10-20","2026-10-21","2026-10-22"],"values":[1970.9,2018.08,1823.57,1855.74,2111.07,2114.45,2102.03,2075.18,2036.85,1754.74,1706.91,1898.61,1861.77,1836.93,1826.84,1832.62,1617.1,1651.01,1930.61,1978.13,2024.86,2065.65],"tones":null,"format":"currency","horizontal":false,"reference":null,"referenceLabel":"","palette":{"brand":"#0f6cbd","good":"#0e700e","warning":"#da3b01","critical":"#b10e1c","neutral":"#8a8886","grid":"#ededed","text":"#5c5c5c"}};
 const chartCanvas = document.getElementById('finops-chart');
 if (chartCanvas && window.Chart) {
+  const p = chartData.palette;
+  const fmt = (v) => {
+    const n = Number(v);
+    if (chartData.format === 'currency') {
+      return '$' + n.toLocaleString('en-US', {maximumFractionDigits: Math.abs(n) < 10 ? 2 : 0});
+    }
+    if (chartData.format === 'percent') { return n.toLocaleString('en-US', {maximumFractionDigits: 1}) + '%'; }
+    return n.toLocaleString('en-US', {maximumFractionDigits: 2});
+  };
+  const toneColor = (t) => (t && p[t]) ? p[t] : p.brand;
+  const series = ['#0f6cbd', '#5c2e91', '#038387', '#ca5010', '#4f6bed', '#8764b8', '#00b7c3', '#c239b3'];
+  let colors;
+  if (chartData.type === 'doughnut') {
+    colors = chartData.values.map((_, i) => series[i % series.length]);
+  } else if (chartData.tones) {
+    colors = chartData.tones.map(toneColor);
+  } else {
+    colors = chartData.values.map(() => p.brand);
+  }
+  const isLine = chartData.type === 'line';
+  const valueAxis = chartData.horizontal ? 'x' : 'y';
+  const scales = {};
+  if (chartData.type !== 'doughnut') {
+    const axisCommon = {grid: {color: p.grid}, ticks: {color: p.text}, border: {display: false}};
+    scales.x = Object.assign({}, axisCommon);
+    scales.y = Object.assign({}, axisCommon);
+    scales[valueAxis] = Object.assign({}, axisCommon, {beginAtZero: true, ticks: {color: p.text, callback: (v) => fmt(v)}});
+    const categoryAxis = chartData.horizontal ? 'y' : 'x';
+    scales[categoryAxis].grid = {display: false};
+    // Truncate long category labels on narrow screens; the tooltip keeps the full label.
+    scales[categoryAxis].ticks = {color: p.text, autoSkip: !chartData.horizontal, maxRotation: isLine ? 0 : 50, callback: function (value) {
+      const label = String(this.getLabelForValue(value));
+      const limit = chartCanvas.parentElement.clientWidth < 560 ? 20 : 36;
+      if (label.length <= limit) return label;
+      const tail = Math.floor((limit - 1) / 2);
+      return label.slice(0, limit - 1 - tail) + '…' + label.slice(label.length - tail);
+    }};
+    if (chartData.reference !== null) {
+      const peak = Math.max.apply(null, chartData.values.map(Number).concat([chartData.reference]));
+      scales[valueAxis].suggestedMax = peak * 1.08;
+    }
+  }
+  const referenceLine = {
+    id: 'finopsReference',
+    afterDatasetsDraw(chart) {
+      if (chartData.reference === null) return;
+      const scale = chart.scales[valueAxis];
+      const area = chart.chartArea;
+      const at = scale.getPixelForValue(chartData.reference);
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = p.critical;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      if (chartData.horizontal) { ctx.moveTo(at, area.top); ctx.lineTo(at, area.bottom); }
+      else { ctx.moveTo(area.left, at); ctx.lineTo(area.right, at); }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = p.critical;
+      ctx.font = '600 12px "Segoe UI", sans-serif';
+      const text = chartData.referenceLabel || fmt(chartData.reference);
+      if (chartData.horizontal) {
+        const fitsRight = at + 6 + ctx.measureText(text).width <= area.right;
+        ctx.textAlign = fitsRight ? 'left' : 'right';
+        ctx.fillText(text, fitsRight ? at + 6 : at - 6, area.top - 6);
+      }
+      else { ctx.textAlign = 'right'; ctx.fillText(text, area.right, at - 6); }
+      ctx.restore();
+    }
+  };
+  if (chartData.horizontal) {
+    chartCanvas.parentElement.style.height = Math.max(240, chartData.labels.length * 34 + 60) + 'px';
+  }
   new Chart(chartCanvas, {
     type: chartData.type,
     data: {
@@ -60,13 +188,30 @@ if (chartCanvas && window.Chart) {
       datasets: [{
         label: chartData.label,
         data: chartData.values,
-        borderColor: '#2563eb',
-        backgroundColor: 'rgba(37, 99, 235, 0.18)',
-        borderWidth: 2,
+        borderColor: isLine ? p.brand : colors,
+        backgroundColor: isLine ? 'rgba(15, 108, 189, 0.12)' : colors,
+        pointBackgroundColor: p.brand,
+        pointRadius: chartData.values.length > 45 ? 0 : 3,
+        fill: isLine,
+        borderWidth: isLine ? 2 : 0,
+        borderRadius: isLine ? 0 : 4,
+        maxBarThickness: 36,
         tension: 0.25
       }]
     },
-    options: {responsive: true, maintainAspectRatio: false, animation: false}
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: {padding: {top: chartData.reference !== null && chartData.horizontal ? 18 : 0}},
+      animation: false,
+      indexAxis: chartData.horizontal ? 'y' : 'x',
+      scales: chartData.type === 'doughnut' ? {} : scales,
+      plugins: {
+        legend: {display: chartData.type === 'doughnut', position: 'right'},
+        tooltip: {callbacks: {label: (c) => ' ' + fmt(chartData.type === 'doughnut' ? c.parsed : (chartData.horizontal ? c.parsed.x : c.parsed.y))}}
+      }
+    },
+    plugins: [referenceLine]
   });
 }
 </script>

@@ -17,6 +17,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Professional Live Report design** (presentation only; no figure, row, or warning changes): all
+  twelve reports share an Azure executive layout. It has a header with status chips, KPI cards marked
+  Good/Watch/Action, and a partial-data banner above the metrics. Data-quality notes move into a
+  counted panel. Tables show status badges, readable Azure resource IDs, and collapse when long. Text
+  colors meet WCAG AA contrast. Budget Status marks over-budget bars and a 100% budget line. Monthly
+  Review colors owner increases and decreases, and falls back to a KPI status chart instead of "No
+  data points". The renderer accepts optional chart fields `tones`, `valueFormat`, `orientation`,
+  `referenceValue`, and `referenceLabel`. Samples and gallery images were regenerated.
 - Restored the pre-Astra v0.2.0 implementation at `d586b1b` through normal reversions.
   The complete deferred hardening is preserved on
   [`archive/astra-hardening-20261030`](https://github.com/dmauser/finops-sre-agent-pack/tree/archive/astra-hardening-20261030)
