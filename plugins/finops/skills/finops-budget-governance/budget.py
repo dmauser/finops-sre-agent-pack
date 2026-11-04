@@ -184,8 +184,11 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
                       breached_notifications: [{name, threshold, type}],
                       mtd_crosscheck: {agent_mtd, azure_current, delta, delta_pct} | None } ... ],
         "summary": {currency, total_amount, total_current, total_forecast,
-                    totals_by_currency, over_budget, forecast_over, at_risk, on_track},
+                    totals_by_currency, nested_excluded, over_budget, forecast_over, at_risk,
+                    on_track},
                    # total_* are None when budgets span currencies (see totals_by_currency)
+                   # total_* leave out budgets nested inside another budget's scope; each such
+                   # budget carries nested_in=<parent name> (None otherwise)
         "gates": [ {name, reason, status} ... ],   # budgets needing a human decision
         "no_budgets": bool,                          # True + guidance when nothing is defined
       }
@@ -214,6 +217,7 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
         }
 
     evaluated = []
+    unfiltered = []
     tally = defaultdict(int)
     totals_by_currency = {}
 
@@ -260,12 +264,28 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
         })
 
         tally[status] += 1
-        bucket = totals_by_currency.setdefault(
-            currency, {"total_amount": 0.0, "total_current": 0.0, "total_forecast": 0.0}
+        unfiltered.append(not props.get("filter"))
+
+    # A resource-group budget inside a subscription budget is the same money counted twice, so
+    # nested budgets are evaluated individually but left out of the portfolio totals. Only an
+    # unfiltered parent is known to cover its children; a filtered parent may not.
+    scopes = [str(e["scope"]).rstrip("/").casefold() for e in evaluated]
+    for i, e in enumerate(evaluated):
+        e["nested_in"] = next(
+            (evaluated[j]["name"] for j, parent in enumerate(scopes)
+             if j != i and unfiltered[j] and parent.startswith("/")
+             and scopes[i].startswith(parent + "/")),
+            None,
         )
-        bucket["total_amount"] += amount or 0.0
-        bucket["total_current"] += current
-        bucket["total_forecast"] += forecast or 0.0
+        if e["nested_in"] is not None:
+            continue
+        bucket = totals_by_currency.setdefault(
+            e["currency"], {"total_amount": 0.0, "total_current": 0.0, "total_forecast": 0.0}
+        )
+        bucket["total_amount"] += e["amount"] or 0.0
+        bucket["total_current"] += e["current_spend"]
+        bucket["total_forecast"] += e["forecast_spend"] or 0.0
+    nested = sum(1 for e in evaluated if e["nested_in"] is not None)
 
     for bucket in totals_by_currency.values():
         for key in bucket:
@@ -290,6 +310,7 @@ def evaluate_budgets(budgets=None, *, as_of=None, mtd_spend=None):
             "total_current": single["total_current"] if single else None,
             "total_forecast": single["total_forecast"] if single else None,
             "totals_by_currency": dict(sorted(totals_by_currency.items())),
+            "nested_excluded": nested,
             "over_budget": tally["over_budget"],
             "forecast_over": tally["forecast_over"],
             "at_risk": tally["at_risk"],

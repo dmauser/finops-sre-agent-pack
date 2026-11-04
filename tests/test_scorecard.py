@@ -303,6 +303,69 @@ def test_route_to_owners_never_leaves_action_blank():
     assert actions["rg-x"].startswith("Confirm the cost drop")
 
 
+def test_route_to_owners_merges_one_resource_reported_twice():
+    # Live lab: vpngw-lab was both a waste finding ($153.22) and a rightsizing finding ($25.60);
+    # summing them gave the owner a $178.82 action list for one gateway.
+    gw = "/subscriptions/0/resourceGroups/net/providers/Microsoft.Network/virtualNetworkGateways/gw"
+    findings = [
+        {"resourceId": gw, "kind": "idle", "estMonthlySavings": 153.22},
+        {"resourceId": gw.upper(), "kind": "rightsizing", "estMonthlySavingsUsd": 25.60},
+        {"resourceId": "", "kind": "idle", "estMonthlySavings": 1.0},
+        {"resourceId": "", "kind": "idle", "estMonthlySavings": 2.0},
+    ]
+    out = sc.route_to_owners(findings)
+    items = {i["resourceId"]: i for i in out["unrouted"]}
+    assert items[gw]["amount_usd"] == 153.22
+    assert items[gw]["source"] == "idle + rightsizing"
+    assert len(out["unrouted"]) == 3  # blank ids are never merged together
+    assert out["unrouted_usd"] == 156.22
+
+
+def test_route_to_owners_keeps_daily_anomalies_out_of_monthly_totals():
+    vm = "/subscriptions/0/resourceGroups/app/providers/Microsoft.Compute/virtualMachines/vm1"
+    findings = [
+        {"resourceId": vm, "estMonthlySavingsUsd": 30.0, "tags": {"team": "web"}},
+        {"dimension": "resourceId", "value": vm, "kind": "spike", "direction": "up",
+         "impact_usd": 12.5, "tags": {"team": "web"}},
+        {"dimension": "resourceGroup", "value": "app", "kind": "spike", "direction": "up",
+         "impact_usd": 40.0},
+        {"dimension": "meterCategory", "value": "Virtual Machines", "kind": "new_spend",
+         "direction": "up", "impact_usd": 9.0},
+    ]
+    out = sc.route_to_owners(findings)
+    group = out["owners"][0]
+    assert group["total_usd"] == 30.0  # the $12.50/day spike is not monthly savings
+    assert [(i["amount_basis"], i["amount_usd"]) for i in group["items"]] == [
+        ("monthly", 30.0), ("daily", 12.5)]
+    assert out["unrouted"] == [] and out["unrouted_usd"] == 0.0
+    assert out["routed_pct"] == 100.0
+    assert [(i["dimension"], i["resourceId"], i["amount_basis"]) for i in out["scope_level"]] == [
+        ("resourceGroup", "app", "daily"), ("meterCategory", "Virtual Machines", "daily")]
+
+
+def test_waste_pct_does_not_count_a_resource_twice():
+    gw = "/subscriptions/0/resourceGroups/net/providers/Microsoft.Network/virtualNetworkGateways/gw"
+    waste = {
+        "headline": {"potential_monthly_savings": 163.22},
+        "findings": [
+            {"resourceId": gw, "kind": "idle", "estMonthlySavings": 153.22},
+            {"resourceId": "/subscriptions/0/x/disk", "kind": "orphan", "estMonthlySavings": 10.0},
+            {"resourceId": "/subscriptions/0/x/tag", "kind": "hygiene", "estMonthlySavings": 0.0},
+        ],
+    }
+    rightsizing = [{"resourceId": gw.upper() + "/", "estMonthlySavingsUsd": 25.60}]
+    card = sc.kpi_scorecard(allocation={"total_usd": 1000.0}, waste=waste,
+                            rightsizing=rightsizing, period_days=30)
+    kpi = next(k for k in card["kpis"] if k["id"] == "waste_pct")
+    assert kpi["detail"]["monthly_usd"] == 35.6  # 25.60 rightsizing + 10.00 disk, gw once
+    # A headline-only waste input cannot be de-duplicated and is used as-is.
+    legacy = sc.kpi_scorecard(allocation={"total_usd": 1000.0},
+                              waste={"headline": {"potential_monthly_savings": 163.22}},
+                              rightsizing=rightsizing, period_days=30)
+    kpi = next(k for k in legacy["kpis"] if k["id"] == "waste_pct")
+    assert kpi["detail"]["monthly_usd"] == 188.82
+
+
 def test_anomaly_kpi_uses_period_days_or_run_rate():
     alloc = {"total_usd": 660.0}
     anomalies = [{"impact_usd": 30.0, "direction": "up"}]

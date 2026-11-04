@@ -118,7 +118,11 @@ Use this canonical UsageDetails transport contract in every consuming FinOps ski
   instead of appearing as one-time spikes with $0 covered usage. Use `metric=ActualCost` only when
   matching invoice/budget cash flow (for example `finops-budget-editor`). Request the analysis
   window with `startDate=<YYYY-MM-DD>&endDate=<YYYY-MM-DD>` (inclusive; §5) — never a `%24filter`
-  on dates. Start at `%24top=1000`;
+  on dates. When the task or skill names no window, request the trailing 30 complete days
+  (`startDate` = today − 30, `endDate` = yesterday, UTC), never the API's default billing
+  period: early in a month that default holds only a few days and makes monthly figures,
+  run rates and anomaly baselines meaningless. Say which window was analyzed.
+  Start at `%24top=1000`;
   never use the POST Cost Management Query API.
   Note: `$` must be URL-encoded as `%24` in `az rest` URLs to avoid shell escaping issues with the
   agent's read-only CLI tool (e.g. `%24top=1000`, `%24filter=...`, `%24skiptoken=...`). Never write

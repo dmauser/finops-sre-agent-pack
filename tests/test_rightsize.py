@@ -341,6 +341,19 @@ def test_review_sweep_skips_resources_that_no_longer_exist():
     assert [f["resourceId"] for f in out] == [live]
 
 
+def test_stale_advisor_rec_for_deleted_resource_is_dropped():
+    # Advisor serves cached recommendations for days after a resource is deleted; the live lab
+    # showed a $351/mo "shut down LocalBox-Client" rec for a VM whose RG had just been deleted.
+    gone = "/subscriptions/s/resourceGroups/old/providers/Microsoft.Compute/virtualMachines/gone"
+    advisor = [
+        {"resourceId": gone, "problem": "Right-size or shutdown underutilized virtual machines", "savingsUsd": 351},
+        {"resourceId": VM, "problem": "Right-size or shutdown underutilized virtual machines", "savingsUsd": 20},
+    ]
+    assert {f["resourceId"] for f in recommend(advisor=advisor)} == {gone, VM}
+    out = recommend(advisor=advisor, existing_resource_ids=[VM.upper()])
+    assert [f["resourceId"] for f in out] == [VM]
+
+
 def test_advisor_only_finding_gets_type_from_resource_id():
     rid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/expressRouteCircuits/er1"
     out = recommend(advisor=[{"resourceId": rid, "problem": "Delete unused", "savingsUsd": 19.2}])

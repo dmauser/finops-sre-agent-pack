@@ -151,8 +151,9 @@ def recommend_rightsizing(
     apps (minReplicas>=1) that keep billing while receiving no requests.
 
     `existing_resource_ids` is an optional iterable of every resource id that still exists in
-    scope (a `Resources | project id` Resource Graph pull). When given, the cost-led review
-    sweep skips ids that no longer exist: their cost is history, not a live opportunity.
+    scope (a `Resources | project id` Resource Graph pull). When given, Advisor recommendations
+    and the cost-led review sweep skip ids that no longer exist: Advisor keeps serving cached
+    recommendations for deleted resources, and their cost is history, not a live opportunity.
 
     Returns a list of finding dicts sorted by estimated monthly savings (descending);
     findings whose savings can be quantified below `min_monthly_savings_usd` are dropped,
@@ -277,6 +278,8 @@ def recommend_rightsizing(
         rid = rec.get("resourceId")
         if not rid or _is_rate_recommendation(rec):
             continue
+        if existing is not None and _key(rid) not in existing:
+            continue  # Advisor caches recs for days after a resource is deleted
         f = finding_for(rid, types_by_id.get(_key(rid)))
         f.add_source("advisor")
         if f.kind is None:

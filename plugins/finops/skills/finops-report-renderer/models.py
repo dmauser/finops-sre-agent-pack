@@ -792,13 +792,23 @@ def build_budget_status_model(
     )
     at_risk = _integer(summary.get("at_risk"), "result.summary.at_risk")
     on_track = _integer(summary.get("on_track"), "result.summary.on_track")
+    nested = _integer(summary.get("nested_excluded"), "result.summary.nested_excluded")
+    if mixed_currency:
+        portfolio_detail = "Mixed currencies"
+    elif nested:
+        portfolio_detail = (
+            f"Top-level budgets only; {nested} nested budget{'s' if nested != 1 else ''} "
+            "not double-counted"
+        )
+    else:
+        portfolio_detail = "Configured amount"
 
     return _model(
         "FinOps: Budget Status",
         "Daily Azure budget-governance snapshot; currentSpend is updated asynchronously.",
         context,
         [
-            {"label": "Portfolio budget", "value": _money(total_amount, summary_currency), "detail": "Configured amount" if not mixed_currency else "Mixed currencies"},
+            {"label": "Portfolio budget", "value": _money(total_amount, summary_currency), "detail": portfolio_detail},
             {"label": "Current spend", "value": _money(total_current, summary_currency), "detail": "Azure currentSpend"},
             {
                 "label": "Forecast spend",
@@ -2665,11 +2675,15 @@ def build_monthly_review_model(
 
     def routed_item(row, prefix):
         amount = _decimal(row.get("amount_usd"), f"{prefix}.amount_usd", optional=True)
+        basis = _text(row.get("amount_basis"), f"{prefix}.amount_basis", default="monthly")
+        if basis not in ("monthly", "daily"):
+            raise ValueError(f"{prefix}.amount_basis must be monthly or daily")
         return (
             amount,
             _text(row.get("source"), f"{prefix}.source"),
             _text(row.get("resourceId"), f"{prefix}.resourceId"),
             _text(row.get("action"), f"{prefix}.action"),
+            basis,
         )
 
     action_rows = []
@@ -2687,20 +2701,29 @@ def build_monthly_review_model(
             action_rows.append(
                 (1, Decimal(0), "needs an owner tag", *routed_item(item, f"review.routing.unrouted[{index}]"))
             )
+        for index, item in enumerate(_objects(routing.get("scope_level"), "review.routing.scope_level")):
+            prefix = f"review.routing.scope_level[{index}]"
+            dimension = _text(item.get("dimension"), f"{prefix}.dimension", default="scope")
+            action_rows.append(
+                (2, Decimal(0), f"{dimension}-level (no single owner)", *routed_item(item, prefix))
+            )
         unrouted_usd = _decimal(routing.get("unrouted_usd"), "review.routing.unrouted_usd")
         routed_pct = _decimal(routing.get("routed_pct"), "review.routing.routed_pct", optional=True)
         routing_metric = {
             "label": "Owner-routed findings",
             "value": _percent(routed_pct),
-            "detail": f"{_money(unrouted_usd)} needs an owner tag",
+            "detail": f"{_money(unrouted_usd)}/month needs an owner tag",
             "tone": "warning" if unrouted_usd > 0 else "good",
         }
     action_rows.sort(
         key=lambda r: (
-            r[0], r[1], r[2].casefold(), r[2], r[3] is None, -(r[3] or Decimal(0)),
+            r[0], r[1], r[2].casefold(), r[2], r[7] != "monthly", r[3] is None, -(r[3] or Decimal(0)),
             r[5].casefold(), r[5], r[4], r[6].casefold(), r[6],
         )
     )
+
+    def impact(amount, basis):
+        return f"{_money(amount)}/day" if basis == "daily" and amount is not None else _money(amount)
 
     context = _context(
         review,
@@ -2839,7 +2862,8 @@ def build_monthly_review_model(
                 "description": "Largest absolute resource changes (top 20).",
                 "columns": ["Change type", "Resource", "Owner", "Previous", "Current", "Change"],
                 "rows": [
-                    [r[0], _short_resource(r[1]), r[2], _money(r[3]), _money(r[4]), _money(r[5])]
+                    [r[0], _display_resource(r[1]) if r[1] else "(unknown)", r[2], _money(r[3]),
+                     _money(r[4]), _money(r[5])]
                     for r in mover_rows
                 ],
                 "emptyMessage": "No resource moved above the threshold.",
@@ -2853,10 +2877,14 @@ def build_monthly_review_model(
             },
             {
                 "title": "Owner actions",
-                "description": "One action list per owner; unrouted items need an owner tag.",
-                "columns": ["Owner", "Source", "Resource", "Action", "Est. monthly impact"],
+                "description": (
+                    "One action list per owner; unrouted items need an owner tag. Savings are per "
+                    "month; anomaly impact is the extra cost per day."
+                ),
+                "columns": ["Owner", "Source", "Resource", "Action", "Est. impact"],
                 "rows": [
-                    [r[2], r[4], _short_resource(r[5]), r[6], _money(r[3])]
+                    [r[2], r[4], _display_resource(r[5]) if r[5] else "(unknown)", r[6],
+                     impact(r[3], r[7])]
                     for r in action_rows
                 ],
                 "emptyMessage": "No findings were routed.",

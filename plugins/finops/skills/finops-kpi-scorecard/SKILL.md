@@ -159,6 +159,16 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
   as candidates for the next FinOps iteration (see the practice guide).
 - `route_to_owners` checks the `owner`, `team`, `costCenter`, `service`, `app` tags (case-insensitive,
   first match wins). Unrouted findings are themselves a tag-governance action.
+  - The same resource reported by several sources (waste + rightsizing) becomes one item with the
+    larger amount and both sources, so an owner's total never counts one resource twice.
+  - Anomaly rows from `detect_anomalies` carry a one-day `impact_usd`. Their items are marked
+    `amount_basis: "daily"` and excluded from `total_usd`, `unrouted_usd` and `routed_pct`, which
+    are monthly. Show them as "$X/day".
+  - Anomalies on a `resourceGroup` or `meterCategory` dimension have no single resource to tag, so
+    they are returned in `scope_level`, not `unrouted`.
+- `waste_pct` counts each resource once: waste findings already reported by rightsizing are
+  skipped, matching the Cost Optimization report. Pass the full `find_waste` result (with
+  `findings`); a headline-only waste input cannot be de-duplicated.
 
 ### Step 3 — Report
 
@@ -172,7 +182,8 @@ owners = route_to_owners(waste["findings"] + rightsizing, tags=resource_tags, so
 4. **Unit economics**: cost per unit, change vs previous period, and the interpretation. A rising
    total with a falling unit cost is healthy growth.
 5. **Owner action lists**: one section per owner with total monthly savings and items; then the
-   `unrouted` items as "needs an owner tag".
+   `unrouted` items as "needs an owner tag"; then `scope_level` anomalies (per day) as
+   "resource-group or meter-level, no single owner".
 
 Report the excluded resources, missing inputs and warnings. Recommend only — read-only only.
 

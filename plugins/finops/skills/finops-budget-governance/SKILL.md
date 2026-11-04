@@ -121,6 +121,10 @@ result = evaluate_budgets(budgets)   # the value[] array from Step 1
   currency the `total_*` fields are `null` and `totals_by_currency` carries one total per currency.
   Run-rate forecasts use the real calendar length of the budget's current Monthly/Quarterly/Annual
   reset window, anchored at `timePeriod.startDate`.
+  A budget whose scope sits inside another unfiltered budget's scope (a resource-group budget
+  under a subscription budget) is the same spend counted twice. It is still evaluated and gated,
+  but it is left out of the `total_*` fields; it carries `nested_in` (the parent's name) and
+  `summary.nested_excluded` counts them. Say so when presenting the portfolio total.
 - **gates**: the budgets in `over_budget` / `forecast_over` — the ones that warrant a **process gate**
   (a human decision before more is spent), each with a one-line reason.
 - **no_budgets**: `True` when nothing is defined — report it and recommend creating a budget.
